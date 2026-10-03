@@ -31,13 +31,13 @@
  * shallowest band covering it (as depthSampler() reads it) less the lake's measured offset. Land,
  * uncharted water, the charted shore line and keep-out zones are closed.
  *
- * NEVER OVER WATER THE DEEPEST BAIT WOULD TOUCH. `floorFt` comes in from the day (the fish band's
- * deep edge, as trollDay gets it). No cell shallower than that is on the line at all.
- *
- * HIS LINE IS THE CONTOUR ONE STEERING BAND DEEPER THAN THE FLOOR. He hand-steers and puts 5 ft of
- * error in himself ("i would probably give at least 5 ft offset because i am hand steering",
- * 2026-08-26 -- HAND_STEER_BAND_FT). A line on the floor contour would put half his wander over water
- * the baits touch; one band deeper keeps all of it off. Water farther than one band off that line
+ * HIS LINE IS THE CONTOUR ONE STEERING BAND DEEPER THAN `floorFt`, AND NOTHING SHALLOWER THAN THE
+ * FLOOR IS ON IT. He hand-steers and puts 5 ft of error in himself ("i would probably give at least
+ * 5 ft offset because i am hand steering", 2026-08-26 -- HAND_STEER_BAND_FT), so the caller hands in
+ * the floor as the line less that band. WHERE THE LINE COMES FROM IS THE CALLER'S (trollForMe()):
+ * the water under his own catches of the species on this water first. It used to be the fish
+ * band's deep edge, which made the band cut the water again -- on Moultrie a 40-50 ft table guess put
+ * the line on 55 ft, past the water 12 of his 17 stripers there came from. Water farther than one band off that line
  * costs more to troll over, by the square of how many bands -- so the line rides the edge and only
  * crosses deep water where it has to, the way his tracks cross the channel to come home on the
  * other side.
@@ -59,7 +59,7 @@
  * Pure: no DOM, no fetch. The caller hands in parsed GeoJSON.
  */
 import { metresBetween, minutesFor } from './plan-candidates.js';
-import { TROLL_MPH, TRANSIT_MPH, reasons, shallowSide, shoreAspect } from './plan-water.js';
+import { TROLL_MPH, TRANSIT_MPH, reasons, shallowSide, shoreAspect, todayFt } from './plan-water.js';
 import { HAND_STEER_BAND_FT } from './plan-tracks.js';
 
 const M_PER_DEG_LAT = 110540.0;
@@ -69,6 +69,59 @@ const mPerDegLon = (lat) => 111320.0 * Math.cos((lat * Math.PI) / 180);
 export const LOOP_CORRIDOR_M = 50;
 /** The app's "same water" distance (selectCandidates() dedupeCorridorM). */
 export const SAME_WATER_M = 100;
+
+/**
+ * WHAT DEPTH OF WATER THE DAY'S LINE RIDES, AND WHERE THAT CAME FROM.
+ *
+ * Ryan, 2026-10-03, on Moultrie: "what is stating that stripers are only 40-50ft on moultrie?... i
+ * have absolutely caught fish in shallower water", and "from my fish locations you should be able to
+ * figure out where i run". Nothing sourced said 40-50: it was the built-in table's summer line, read
+ * because Marion's thermometer made October summer, and the loop took the band's deep edge as a floor
+ * -- the band cutting water, which he ruled out on 9/26 ("the 50-70ft cannot cut lanes"). So, in order:
+ *   1. the middle of the water under HIS catches of the species on this water -- the chart under each
+ *      catch photo, in today's water. His 17 Moultrie stripers sit over 19-58 ft, middle 30; his 18
+ *      Wateree stripers over 7-41 ft, middle 26, where the band had put the line on 25.
+ *   2. the middle of the water the research says the fish are over this season;
+ *   3. only then the fish band: its deep edge (its shallow edge on a bottom day) as the deepest bait,
+ *      one steering band under it.
+ * The floor -- no line over water shallower -- is the line less the band he steers within. Every catch
+ * counts whatever its month: they are where he fishes this water, and the answer says how many.
+ *
+ * @param {object}   o
+ * @param {object[]} [o.catches]  [{at:[lon,lat]}] his catches of the day's species
+ * @param {function} [o.depthAt]  chart depth at a point on THIS water, null off it
+ * @param {number}   [o.offsetFt] the lake below its chart, ft
+ * @param {number[]} [o.waterFt]  [lo, hi] the water the research says the fish are over
+ * @param {number[]} [o.band]     [lo, hi] the fish band
+ * @param {string}   [o.holding]  'bottom' puts the deepest bait at the band's shallow edge
+ * @param {number}   [o.steerFt]  his steering band (HAND_STEER_BAND_FT)
+ * @returns {{lineFt:number, floorFt:number, from:'catches'|'research'|'band', n?:number, rangeFt?:number[]}|null}
+ */
+export function loopLine(o = {}) {
+  const steer = Number.isFinite(o.steerFt) ? o.steerFt : HAND_STEER_BAND_FT;
+  const ft = (o.catches || [])
+    .map((c) => (c && Array.isArray(c.at) && o.depthAt ? o.depthAt(c.at) : null))
+    .filter((d) => d != null && Number.isFinite(Number(d)))
+    .map((d) => todayFt(Number(d), o.offsetFt))
+    .sort((a, b) => a - b);
+  const pair = (v) => (Array.isArray(v) && v.length === 2 && v.every((x) => Number.isFinite(Number(x))) ? v.map(Number) : null);
+  if (ft.length) {
+    const mid = ft.length % 2 ? ft[(ft.length - 1) / 2] : (ft[ft.length / 2 - 1] + ft[ft.length / 2]) / 2;
+    const lineFt = Math.round(mid);
+    return { lineFt, floorFt: lineFt - steer, from: 'catches', n: ft.length, rangeFt: [ft[0], ft[ft.length - 1]] };
+  }
+  const water = pair(o.waterFt);
+  if (water) {
+    const lineFt = Math.round((water[0] + water[1]) / 2);
+    return { lineFt, floorFt: lineFt - steer, from: 'research', rangeFt: water };
+  }
+  const band = pair(o.band);
+  if (band) {
+    const floorFt = o.holding === 'bottom' ? band[0] : band[1];
+    return { lineFt: floorFt + steer, floorFt, from: 'band', rangeFt: band };
+  }
+  return null;
+}
 
 // ── THE CHART AS A GRID ─────────────────────────────────────────────────────────────────────────
 
@@ -645,6 +698,13 @@ export function* trollLoopSteps(o) {
       yield 'petal';
       const pt = yield* petal(pm, used, taken, vias[p], petals.map((q) => q.coords));
       if (!pt) break;
+      // A LOOP ADDED TO THE DAY IS MOSTLY NEW WATER, OR IT IS A DOUBLE BACK. Where the water near
+      // the ramp runs out, the next loop could only go out and come home over water the day already
+      // trolled -- on Moultrie from Short Stay, a fourth loop with 5.0 of its 9.2 km trolled twice --
+      // and a line that comes back on itself is what he threw the stitched day out for. The day stops
+      // at the loops before it; the time left is his, for going back over what produced. A loop he
+      // asked for by ticking where it turns is kept.
+      if (petals.length && !vias[p] && pt.sharedM > pt.newM) break;
       petals.push(pt);
       left -= pt.m;
       for (const a of marksAlong(pt.coords, marks, corridorM)) taken.add(a.mark);
@@ -759,7 +819,10 @@ export function loopPieces(loop, o) {
     const near = marksAlong(leg.coords, o.spots || [], SAME_WATER_M)
       .map((a) => ({ s: a.atM, t: a.mark.type, d: a.offM, ft: Number.isFinite(a.mark.depthFt) ? a.mark.depthFt : undefined }));
     const piece = {
-      runId: `${o.slug || 'water'}#loop${k + 1}`,
+      // Named for its loop and its half, so "loop 1, back" is the second leg of the first loop and
+      // not a second loop. The plan of 10/4 called its four legs loop1-loop4, and the model wrote
+      // "on loop3" about the second loop's way out.
+      runId: `${o.slug || 'water'}#loop${leg.petal + 1}-${leg.half}`,
       key: `L${k + 1}`,
       loop: { petal: leg.petal + 1, half: leg.half },
       holdsFt,

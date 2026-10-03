@@ -27,13 +27,19 @@
 //      trolled, does not fill the day with it, however many of his fish it passes: his 10/3 Wateree day laid live (the lake 3.2 ft down) was four loops, and
 //      three came home within 100 m of the way out for 81-88% of the way;
 //   9. the lines go in where a loop fits: the nearest deep-enough water to Short Stay on Moultrie at
-//      a 40 ft floor was one cell of a hole, and the day said no loop fits.
+//      a 40 ft floor was one cell of a hole, and the day said no loop fits;
+//  10. the line rides the water HIS catches of the fish are over on this lake, then the research's
+//      water, and only then the fish band -- the band's deep edge as a floor put Moultrie's line on
+//      55 ft, past the water 12 of his 17 stripers there came from (Ryan, 10/3);
+//  11. a leg is named for its loop and its half: the plan of 10/4 called its four legs loop1-loop4,
+//      and the model wrote "on loop3" about the second loop's way out;
+//  12. a loop added to the day is mostly new water, or it is a double back and the day stops before it.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { trollLoop, trollLoopAsync, depthGrid, loopPieces, loopSteps, marksAlong, densify, sharedWaterM, SAME_WATER_M } from '../js/modules/plan-troll-loop.js';
+import { trollLoop, trollLoopAsync, depthGrid, loopPieces, loopSteps, marksAlong, densify, sharedWaterM, loopLine, SAME_WATER_M } from '../js/modules/plan-troll-loop.js';
 import { metresBetween } from '../js/modules/plan-candidates.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -192,4 +198,48 @@ test('9. the lines go in where a loop fits, not in a hole nearer the ramp', () =
   assert.ok(!r.error, r.error);
   assert.ok(yAt(r.start) < W - 150, `started at y ${yAt(r.start).toFixed(0)} -- in the hole`);
   assert.ok(r.trolledM > 0.85 * r.budgetMin * M_PER_MIN - 2 * r.coveM - 1000, `trolled ${r.trolledM} m`);
+});
+
+test('10. the line rides the water his catches are over, then the research\'s water, then the band', () => {
+  // Moultrie, 10/3: his 17 stripers there sit over 19-58 ft of charted water, middle 30; the built-in
+  // table said 40-50 ft, and its deep edge made a 50 ft floor and a 55 ft line.
+  const moultrie = [19, 19, 19, 21, 22, 23, 24, 30, 30, 31, 38, 40, 41, 47, 57, 57, 58];
+  const catches = moultrie.map((ft, i) => ({ at: [i, 0], ft }));
+  const depthAt = ([i]) => (moultrie[i] ?? null);
+  const fromCatches = loopLine({ catches, depthAt, offsetFt: 0, waterFt: [30, 45], band: [40, 50] });
+  assert.deepEqual(fromCatches, { lineFt: 30, floorFt: 25, from: 'catches', n: 17, rangeFt: [19, 58] });
+  // In today's water: the lake 2 ft below its chart takes 2 ft off every catch.
+  assert.equal(loopLine({ catches, depthAt, offsetFt: 2 }).lineFt, 28);
+  // A catch on another lake reads no depth on this one and does not count.
+  const elsewhere = [...catches, { at: [99, 0] }];
+  assert.equal(loopLine({ catches: elsewhere, depthAt }).n, 17);
+  // No catches here: the water the research names, then the band.
+  assert.deepEqual(loopLine({ catches: [{ at: [99, 0] }], depthAt, waterFt: [19, 22], band: [10, 20] }),
+    { lineFt: 21, floorFt: 16, from: 'research', rangeFt: [19, 22] });
+  assert.deepEqual(loopLine({ band: [40, 50] }), { lineFt: 55, floorFt: 50, from: 'band', rangeFt: [40, 50] });
+  assert.equal(loopLine({ band: [40, 50], holding: 'bottom' }).floorFt, 40);
+  assert.equal(loopLine({}), null);
+  // And Troll it for me takes its floor from it, needing no fish band when he has fish here.
+  const ui = read('js/modules/plan-water-ui.js');
+  assert.match(ui, /const line = loopLine\(\{ catches, depthAt: T\.depthAt, offsetFt: T\.offsetFt, waterFt: guide, band,/);
+  assert.match(ui, /const \{ lineFt, floorFt \} = line;/);
+  assert.doesNotMatch(ui, /const floorFt = bottom \? band\[0\] : band\[1\];/);
+});
+
+test('11. a leg is named for its loop and its half', () => {
+  const r = trollLoop({ ...BASE, maxPetals: 2, windowMin: 300 });
+  const depthAt = (pt) => { const v = grid.at(pt); return Number.isFinite(v) ? v : null; };
+  const pieces = loopPieces(r, { depthAt, slug: 'test_lake' });
+  assert.deepEqual(pieces.map((p) => p.runId),
+    ['test_lake#loop1-out', 'test_lake#loop1-back', 'test_lake#loop2-out', 'test_lake#loop2-back']);
+});
+
+test('12. a loop added to the day is mostly new water, or the day stops before it', () => {
+  // Every loop after the first trolls more new water than old, whatever the water allows.
+  for (const windowMin of [180, 300, 420]) {
+    const r = trollLoop({ ...BASE, maxPetals: 4, windowMin });
+    for (const p of r.petals.slice(1)) assert.ok(p.sharedM <= p.m - p.sharedM, `${p.sharedM} of ${p.m} m trolled twice`);
+  }
+  // The rule, where the loops are assembled: a loop he ticked a turn for is kept.
+  assert.match(read('js/modules/plan-troll-loop.js'), /if \(petals\.length && !vias\[p\] && pt\.sharedM > pt\.newM\) break;/);
 });

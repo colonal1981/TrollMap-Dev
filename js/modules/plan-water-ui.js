@@ -60,7 +60,7 @@ import { offerWaterAsync, dayCost, dayOrder, priceSpots, waterRange, reasons, TR
 import { joinedPiece } from './plan-pieces.js';
 import { planFromWater } from './plan-from-water.js';
 import { trollShape, asTrolled } from './plan-troll-day.js';
-import { trollLoopAsync, loopPieces, loopSteps } from './plan-troll-loop.js';
+import { trollLoopAsync, loopPieces, loopSteps, loopLine } from './plan-troll-loop.js';
 import { DEFAULT_STOP_MIN } from './plan-assemble.js';
 import { buildSmartPlanV2, modelAsker, waterRouter } from './smart-plan-v2.js';
 import { claudeFirstAsker } from './claude-bridge.js';
@@ -71,7 +71,7 @@ import { renderSmartPlanUI, syncSpread } from './smart-plan-ui.js';
 import { lightFactsFrom, patternFactsFrom } from './plan-prompt.js';
 import { syncClarityIntelData } from './lake-intel.js';
 import { planIssuesHtml } from './plan-issues.js';
-import { materialisePlan } from './plan-tracks.js';
+import { materialisePlan, HAND_STEER_BAND_FT } from './plan-tracks.js';
 import { loadSessionFromPlan, isEnabled, launchFrom } from './notifications.js';
 import { renderAll } from '../core/map-init.js';
 import { TACKLE_INVENTORY } from '../data/tackle-inventory.js';
@@ -1346,9 +1346,6 @@ export async function trollForMe() {
              + 'read. Tick the water by hand.', true);
   }
   const band = Array.isArray(T.band) && T.band.length === 2 ? T.band : null;
-  if (!band) return say('No fish band for this species here, so nothing says how deep the deepest bait runs. Tick the water by hand.', true);
-  const bottom = T.holding === 'bottom';
-  const floorFt = bottom ? band[0] : band[1];
   const guide = Array.isArray(T.waterDepthFt) ? T.waterDepthFt : null;
 
   // The water Find water laid out, without a loop from an earlier press.
@@ -1364,6 +1361,26 @@ export async function trollForMe() {
     .filter((c) => c && String(c.species || '').trim().toLowerCase() === want
       && Number.isFinite(parseFloat(c.lat)) && Number.isFinite(parseFloat(c.lon)))
     .map((c) => ({ at: [parseFloat(c.lon), parseFloat(c.lat)], date: c.date || null }));
+
+  // WHAT DEPTH OF WATER THE LINE RIDES: his catches here, then the research's water, then the band.
+  // See loopLine() in plan-troll-loop.js for why, in his words.
+  const steer = HAND_STEER_BAND_FT;
+  const line = loopLine({ catches, depthAt: T.depthAt, offsetFt: T.offsetFt, waterFt: guide, band,
+                          holding: T.holding, steerFt: steer });
+  if (!line) {
+    return say('No catches of this fish on this lake, no water the research names and no fish band, so nothing '
+             + 'says what depth to troll. Tick the water by hand.', true);
+  }
+  const { lineFt, floorFt } = line;
+  const lineFrom = line.from === 'catches'
+    ? `the middle of the water under your ${line.n} ${T.species || ''} catch${line.n === 1 ? '' : 'es'} on this lake `
+      + `(${line.rangeFt[0]}–${line.rangeFt[1]} ft)`
+    : line.from === 'research'
+      ? `the middle of the ${line.rangeFt[0]}–${line.rangeFt[1]} ft of water the research says the fish are over `
+        + '— you have no catches of this fish here'
+      : `one steering band under the ${line.rangeFt[0]}–${line.rangeFt[1]} ft fish band, where the deepest bait runs`
+        + `${T.holding === 'bottom' ? ' with fish on the bottom' : ''} — you have no catches of this fish here and `
+        + 'the research names no water';
 
   say(`Laying the loop from ${T.rampName || 'the ramp'}…`);
   await new Promise((res) => setTimeout(res, 0));
@@ -1401,10 +1418,9 @@ export async function trollForMe() {
     // Where a line had to come back within 100 m of water the day already trolled, it says how much.
     + (loop.sharedM > 0 ? `; ${fmtMi(loop.sharedM)} of it is back over water the day already trolled` : '')
     + '. '
-    + `On the ${Math.round(loop.lineFt)} ft contour, never over water under ${floorFt} ft — `
-    + (bottom ? 'the top of the band, where a bait on the bottom with these fish runs'
-              : `the bottom of the ${band[0]}–${band[1]} ft fish band, where the deepest bait runs`)
-    + (zones ? `, and out of ${zones} keep-out zone${zones === 1 ? '' : 's'}` : '')
+    + `On the ${Math.round(loop.lineFt)} ft contour — ${lineFrom} — and never over water under ${floorFt} ft, `
+    + `the line less the ${steer} ft you steer within`
+    + (zones ? `, out of ${zones} keep-out zone${zones === 1 ? '' : 's'}` : '')
     + `. It passes ${loop.score.fish} of your ${catches.length} ${T.species || ''} catch${catches.length === 1 ? '' : 'es'} in the journal`
     + ` and ${loop.score.structure} charted mark${loop.score.structure === 1 ? '' : 's'}`
     + (via.length ? `, and turns at the ${via.length === 1 ? 'water' : `${via.length} places`} you ticked` : '')
