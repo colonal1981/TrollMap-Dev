@@ -59,6 +59,7 @@ import { depthSampler, shorelineIndex, waterMask } from './plan-water-index.js';
 import { offerWaterAsync, dayCost, dayOrder, priceSpots, waterRange, reasons, TROLL_MPH, TRANSIT_MIN_DEPTH_FT, SPOT_KINDS, todayFt } from './plan-water.js';
 import { joinedPiece } from './plan-pieces.js';
 import { planFromWater } from './plan-from-water.js';
+import { trollDay, barrierIndex } from './plan-troll-day.js';
 import { DEFAULT_STOP_MIN } from './plan-assemble.js';
 import { buildSmartPlanV2, modelAsker, waterRouter } from './smart-plan-v2.js';
 import { claudeFirstAsker } from './claude-bridge.js';
@@ -549,8 +550,16 @@ function total() {
   // 2026-09-26 Wateree pick read 466 min here and came out at 639: this showed the cheapest
   // ordering while the plan used the search order, and it left out the stops he had asked for.
   const wanted = stopsWanted();
-  const od = dayOrder(picked, { ramp: T.ramp, usableAh: T.usableAh, windowMin: T.windowMin,
-                                windByHour: T.windByHour, stopMin: wanted * DEFAULT_STOP_MIN });
+  const trolled = trollOrderOf(picked);
+  const od = trolled
+    ? (() => {
+        const cost = dayCost(picked, { ramp: T.ramp, usableAh: T.usableAh, windowMin: T.windowMin,
+                                       windByHour: T.windByHour, stopMin: wanted * DEFAULT_STOP_MIN,
+                                       order: trolled });
+        return { order: trolled, cost, cheapest: cost };
+      })()
+    : dayOrder(picked, { ramp: T.ramp, usableAh: T.usableAh, windowMin: T.windowMin,
+                         windByHour: T.windByHour, stopMin: wanted * DEFAULT_STOP_MIN });
   const d = od.cost;
   // THE MOVING NUMBERS ARE FLOORS AND THEY NOW LOOK LIKE FLOORS.
   //
@@ -578,7 +587,9 @@ function total() {
     notes.push(`<span class="wg-stop">Over the battery — ${esc(od.cheapest.reason)}. `
              + `Shortest order is ${order} and it still does not fit; drop one.</span>`);
   } else {
-    notes.push(`<span class="wg-ok">Built shortest-first: ${order}.</span>`);
+    notes.push(trolled
+      ? `<span class="wg-ok">Trolled in one line, in this order: ${order}.</span>`
+      : `<span class="wg-ok">Built shortest-first: ${order}.</span>`);
   }
   if (d.overWindowMin > 0) {
     notes.push(`<span class="wg-warn">${fmtHm(d.overWindowMin)} past your return time — `
@@ -868,7 +879,7 @@ export async function findWater() {
   // I offered twice before checking the bucket. 385 packs carry a shoreline against 543 carrying
   // runs, so the shoreline is genuinely absent a lot and its absence must stay silent rather than
   // become a claim of open water.
-  const [fcAll, daFc, slFc, wfAll, stAll, poAll, dkAll, poolsFile] = await Promise.all([
+  const [fcAll, daFc, slFc, wfAll, stAll, poAll, dkAll, poolsFile, koFc] = await Promise.all([
     get(`/${r2Key}/trolling_runs.geojson`),
     get(`/${r2Key}/depth_areas.geojson`).catch(() => null),
     get(`/${r2Key}/garmin_shoreline.geojson`).catch(() => null),
@@ -884,6 +895,9 @@ export async function findWater() {
     get(`/${r2Key}/docks.geojson`).catch(() => null),
     // WHICH WATER THIS RAMP CAN REACH -- Scripts/build_pools.py, lakes only; see lake-pools.js.
     get(`/${r2Key}/pools.json`).catch(() => null),
+    // THE WATER BEHIND A DAM'S BUOYS -- Scripts/build_keep_out_zones.py. Most packs have none, and
+    // "none" is the answer then, not a failure: trollForMe() just has no zone to keep out of.
+    get(`/${r2Key}/keep_out.geojson`).catch(() => null),
   ]);
   // ── THE WATER THIS RAMP LAUNCHES ONTO, AND NOTHING BEHIND A DIKE ──────────────────────────────
   //
@@ -1030,6 +1044,8 @@ export async function findWater() {
     reasons: 'Measuring the water… writing the reasons',
     spots: 'Measuring the water… the cast spots',
   };
+  // ONE SAMPLER, KEPT. The joins sound their gaps with it, and so does trollForMe() later.
+  const depthAt = daFc && daFc.features ? depthSampler(daFc.features) : null;
   let out;
   try {
     out = await offerWaterAsync(lanes, {
@@ -1038,7 +1054,7 @@ export async function findWater() {
       holding: depth ? depth.holding : null,
       todayOffsetFt: offsetFt,
       windByHour: forecast ? forecast.windByHour : null,
-      depthAt: daFc && daFc.features ? depthSampler(daFc.features) : null,
+      depthAt,
       // WATER-VERSUS-LAND, COARSE AND FAST. Same layer, a different question -- see waterMask().
       // trimDeadEnd() walks sixteen bearings off every lane end, which the exact sampler cannot
       // afford at sixty microseconds a lookup.
@@ -1078,6 +1094,17 @@ export async function findWater() {
     // dropped the moment the numbers came out of them -- which is why the map was a black box.
     daFeatures: (daFc && daFc.features) || [],
     shoreFeatures: (slFc && slFc.features) || [],
+    // FOR trollForMe(): the sampler the joins used, the zones a hop may not enter, which lanes are
+    // structure chords rather than contours, how often the pack sounded its lanes, and the water the
+    // research says the fish are over. A new Find starts the troll over.
+    depthAt,
+    koFeatures: (koFc && koFc.features) || [],
+    chordRuns: new Set(lanes.filter((f) => f && f.properties && f.properties.seed_kind)
+                            .map((f) => f.properties.id)),
+    stepM: (lanes.find((f) => f && f.properties && f.properties.envelope_step_m) || {})
+      .properties?.envelope_step_m || 40,
+    waterDepthFt: depth && Array.isArray(depth.waterDepthFt) ? depth.waterDepthFt : null,
+    trollOrder: null,
     // WHERE TWO OF THESE ARE ONE RUN -- see joinsFor() in plan-pieces.js. Held whole because
     // joinedPiece() indexes into the piece array these were measured against, so the pair and
     // the array have to stay together.
@@ -1256,10 +1283,126 @@ export async function findWater() {
 /** The water he ticked, in the order the app would fish it. Exported so a test can read it. */
 export function pickedWater() {
   const picked = T.pieces.filter((p) => T.picked.has(p.key));
-  const order = dayOrder(picked, { ramp: T.ramp, usableAh: T.usableAh, windowMin: T.windowMin,
-                                   windByHour: T.windByHour }).order;
+  const order = trollOrderOf(picked) || dayOrder(picked, { ramp: T.ramp, usableAh: T.usableAh,
+                                                           windowMin: T.windowMin,
+                                                           windByHour: T.windByHour }).order;
   return { lake: T.lake, ramp: T.ramp, rampName: T.rampName, band: T.band, holding: T.holding,
            order, pieces: order.map((i) => picked[i]), spots: T.spots };
+}
+
+/**
+ * The troll's order as indexes into `picked`, while what is ticked is still exactly the set
+ * trollForMe() ticked; otherwise null, and the tab goes back to shortest-first.
+ */
+function trollOrderOf(picked) {
+  const order = T.trollOrder;
+  if (!Array.isArray(order) || order.length !== picked.length) return null;
+  const at = new Map(picked.map((p, i) => [p.key, i]));
+  const idx = order.map((k) => at.get(k));
+  return idx.every((i) => i !== undefined) ? idx : null;
+}
+
+/**
+ * THE DAY TROLLED THE WAY HE TROLLS IT, ticked for him. See plan-troll-day.js.
+ *
+ * Ryan, 2026-10-03: *"my problem is i am basically having to draw out how i troll for every lake we
+ * talk about... there doesn't seem to be an automated way to troll"*. So this ticks it: one
+ * continuous troll out of the pieces Find water laid out, starting on the piece he ticked -- or the
+ * one nearest the ramp when he ticked none -- and every tick stays his to change. "Build the day"
+ * then rigs it in this order.
+ *
+ * WHICH WATER IS THE DAY'S, from what the tab already knows and nothing new:
+ *   the deepest bait  the deep edge of the fish band: the spread is stacked through the band and the
+ *                     deepest rod touches first. On a day the research says the fish are ON THE
+ *                     BOTTOM the bait is down there with them, so it is the band's shallow edge.
+ *   the water         what the research says the fish are over (`waterDepthFt`) when it says; the
+ *                     band itself on a bottom day; otherwise any water deep enough for the bait.
+ *   his slider        the tab's depth filter, if he set one.
+ *   contours          pieces on structure chords are left out -- he follows the contour lines.
+ */
+export function trollForMe() {
+  const say = (m, bad) => {
+    const el = $('wgStatus');
+    if (el) { el.textContent = m; el.style.color = bad ? 'var(--warn)' : 'var(--muted)'; }
+  };
+  if (!T.pieces.length) return say('Press Find water first — this strings a day together out of the water it lays out.', true);
+  if (!T.depthAt) {
+    return say(`${T.lake || 'This lake'}'s pack has no depth areas, so a hop with the baits in cannot be `
+             + 'sounded. Tick the water by hand.', true);
+  }
+  const band = Array.isArray(T.band) && T.band.length === 2 ? T.band : null;
+  if (!band) return say('No fish band for this species here, so nothing says how deep the deepest bait runs. Tick the water by hand.', true);
+  const bottom = T.holding === 'bottom';
+  const floorFt = bottom ? band[0] : band[1];
+  const over = Array.isArray(T.waterDepthFt) ? T.waterDepthFt : (bottom ? band : null);
+  const onWater = (p) => {
+    if (!over) return true;
+    const c = corridorOf(p);
+    if (c.fromFt == null) return true;
+    return !(c.fromFt > over[1] || c.toFt < over[0]);
+  };
+  const ticked = T.pieces.filter((p) => T.picked.has(p.key));
+  const startKey = ticked.length === 1 ? ticked[0].key : undefined;
+  let day;
+  try {
+    day = trollDay(T.pieces, {
+      ramp: T.ramp, floorFt, depthAt: T.depthAt,
+      barriers: barrierIndex(T.shoreFeatures, T.koFeatures),
+      windowMin: T.windowMin, stopMin: stopsWanted() * DEFAULT_STOP_MIN, usableAh: T.usableAh,
+      windByHour: T.windByHour, startKey, stepM: T.stepM,
+      keep: (p) => !T.chordRuns.has(p.runId) && inDepthBand(p) && onWater(p),
+    });
+  } catch (e) { return say(e.message, true); }
+  const where = over ? ` on ${over[0]}–${over[1]} ft of water` : '';
+  if (!day.keys.length) {
+    return say(startKey
+      ? `The piece you ticked does not hold ${floorFt} ft of water${where}, so the deepest bait would `
+        + 'touch on it. Tick a deeper one, or none to start nearest the ramp.'
+      : `No contour piece here holds ${floorFt} ft of water${where} — the deepest bait in a `
+        + `${band[0]}–${band[1]} ft band would touch everywhere. Tick the water by hand.`, true);
+  }
+  T.picked = new Set(day.keys);
+  T.trollOrder = day.keys.slice();
+  paint();
+  const zones = T.koFeatures.length;
+  say(`One troll from ${startKey ? 'the piece you ticked' : 'the piece nearest the ramp'}: `
+    + `${day.pieces} piece${day.pieces === 1 ? '' : 's'}, ${fmtMi(day.trolledM)} trolled in one line `
+    + `(${fmtMi(day.hopTrolledM)} of it between pieces with the baits in), ${fmtMi(day.runM)} with the `
+    + `lines up. Never over water under ${floorFt} ft — `
+    + (bottom ? 'the top of the band, where a bait on the bottom with these fish runs'
+              : `the bottom of the ${band[0]}–${band[1]} ft fish band, where the deepest bait runs`)
+    + where
+    + (zones ? `, and out of ${zones} keep-out zone${zones === 1 ? '' : 's'}` : '')
+    + (day.droppedForBattery ? `; ${day.droppedForBattery} piece${day.droppedForBattery === 1 ? '' : 's'} `
+                               + 'left off the end for the battery' : '')
+    + '. Every tick is still yours — change one and the day goes back to shortest-first.');
+}
+
+/**
+ * THE SMART PLAN TAB'S "PLAN IT AS ONE TROLL": Find water, Troll it for me, Build the day, in a row.
+ *
+ * The same form drives both tabs, so this is nothing new -- the three buttons he would otherwise
+ * press on the Pick Water tab, pressed for him, with the Pick Water status line shown on this tab
+ * while they run. The water comes out ticked on the Pick Water tab, so he can open it and change any
+ * of it and build again.
+ */
+export async function trollPlan() {
+  const show = () => {
+    const src = $('wgStatus'), dst = $('smartPlanStatus');
+    if (src && dst) { dst.textContent = src.textContent; dst.style.color = src.style.color; }
+  };
+  const watch = setInterval(show, 250);
+  try {
+    const before = T.pieces;
+    await findWater();
+    if (T.pieces === before || !T.pieces.length) return;     // Find water said why, on the status line
+    trollForMe();
+    if (!T.trollOrder || !T.picked.size) return;
+    await buildFromPicked();
+  } finally {
+    clearInterval(watch);
+    show();
+  }
 }
 
 /**
@@ -1311,6 +1454,9 @@ export async function buildFromPicked() {
   try {
     r = await planFromWater({
       picked,
+      // THE TROLL'S ORDER, while what is ticked is still exactly what trollForMe() ticked. Change
+      // one tick and this is undefined, and planFromWater() goes back to shortest-first.
+      order: trollOrderOf(picked) || undefined,
       spots: T.spots,
       // WHAT HE TICKED, not what the app thinks is nearby. A spot he chose is a commitment the day
       // has to carry; the rest are still sent so the model can suggest one, but only these are his.
@@ -1654,6 +1800,8 @@ export function initWaterTab() {
   total();
   $('wgFind')?.addEventListener('click', () => findWater());
   $('wgBuild')?.addEventListener('click', () => buildFromPicked());
+  $('wgTroll')?.addEventListener('click', () => trollForMe());
+  $('runTrollPlanBtn')?.addEventListener('click', () => trollPlan());
   $('wgSort')?.addEventListener('change', (e) => { T.sortBy = e.target.value; paint(); });
   // The total counts the stops he asks for, so it moves when he changes them.
   $('wgStops')?.addEventListener('input', () => total());
