@@ -4830,7 +4830,22 @@ export function chartDatumShape(b, sources = {}) {
         + ' — both are shown, the difference is not, because across datums it can flip sign';
     }
     if (out.below_full_pool_ft == null) {
-      const gl = fromGaugeLine(out, sources.gaugeFullPool, stage, gd, fp);
+      // A REGISTRY FULL POOL THAT WAS SETTLED FROM THE OPERATOR IS NOT OVERRULED BY A GAUGE LINE
+      // THAT DISAGREES WITH IT. Lake Lure, 2026-10-03: the town that owns the dam publishes "Full
+      // pond in Lake Lure is 990.5 MSL"; LRDN7's NWS page says "990: FULL POOL STAGE". Which of the
+      // two the gauge's zero agrees with is not known, so the operator's number stays, the
+      // difference stays withheld, and the gauge's line is said beside it. Moultrie's row was
+      // INHERITED, not settled, and the gauge line is Santee Cooper's own definition: that one wins.
+      const gfp = sources.gaugeFullPool;
+      const settled = /^RESOLVED/i.test(String((fp && fp.status) || ''));
+      if (gfp && Number.isFinite(gfp.ft) && settled && Math.abs(gfp.ft - fp.ft) >= 0.05) {
+        out.gauge_full_pool_ft = gfp.ft;
+        out.datum_note = `${out.datum_note ? `${out.datum_note}; ` : ''}the pool gauge's own page `
+          + `(${[gfp.lid, gfp.name].filter(Boolean).join(', ')}) states full pool at ${gfp.ft} ft on its `
+          + `own scale: "${gfp.statement}"`;
+        return out;
+      }
+      const gl = fromGaugeLine(out, gfp, stage, gd, fp);
       if (gl) return gl;
     }
     return out;
@@ -4892,7 +4907,8 @@ async function chartDatum(b, operator, poolReading, env) {
     const table = await fullPoolTable(env);
     const row = ((table && table.rows) || {})[b.slug];
     if (row && Number.isFinite(row.full_pool_ft)) {
-      fp = { ft: row.full_pool_ft, source: row.source || null, datum: row.datum || null };
+      fp = { ft: row.full_pool_ft, source: row.source || null, datum: row.datum || null,
+             status: row.full_pool_status || null };
     }
   } catch (e) {
     const out = chartDatumShape(b, {});

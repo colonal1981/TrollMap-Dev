@@ -94,6 +94,24 @@ describe('the full pool comes off the gauge, on the gauge\'s own scale', () => {
     expect(r.below_full_pool_ft).toBe(2.56);
   });
 
+  it('an operator-settled full pool that disagrees with the gauge line is kept, and the line is said', () => {
+    // Lake Lure, 2026-10-03: the town publishes 990.5 MSL; LRDN7 says "990: FULL POOL STAGE.".
+    const LURE = { slug: 'lake_lure', display_name: 'Lake Lure (Rutherford Co, NC)', feature_type: 'lake',
+                   pool: { lid: 'LRDN7', datum: null }, levels: { primary: 'nws:HP' } };
+    const TOWN = { ft: 990.5, source: 'Town of Lake Lure (OPERATOR). "Full pond in Lake Lure is 990.5 MSL."',
+                   datum: null, status: 'RESOLVED' };
+    const r = chartDatumShape(LURE, { fullPool: TOWN, gaugeStageFt: 989.42,
+      gaugeFullPool: { ft: 990, statement: 'FULL POOL STAGE.', lid: 'LRDN7', name: 'Lake Lure Dam' } });
+    expect(r.full_pool_ft).toBe(990.5);
+    expect(r.below_full_pool_ft).toBeNull();
+    expect(r.gauge_full_pool_ft).toBe(990);
+    expect(r.datum_note).toContain('FULL POOL STAGE.');
+    // ...and where the two agree, the gauge line earns the difference as on Moultrie.
+    const same = chartDatumShape(LURE, { fullPool: { ...TOWN, ft: 990 }, gaugeStageFt: 989.42,
+      gaugeFullPool: { ft: 990, statement: 'FULL POOL STAGE.', lid: 'LRDN7', name: 'x' } });
+    expect(same.below_full_pool_ft).toBe(0.58);
+  });
+
   it('a lake with no registry row gets its difference from the gauge line alone', () => {
     // Lake Summit's EFLN7, 2026-10-03: "100: FULL POOL - 356 CFS", reading 100.31.
     const SUMMIT = { slug: 'lake_summit', display_name: 'Lake Summit (Henderson Co, NC)', feature_type: 'lake',
