@@ -28,6 +28,7 @@ import { launchReach, listingAt, shallowAt, reachLabel, samePlace, offMainAt }
 import { advisoryRows } from "../data/fish-advisories.js";
 // The band is defined once, where the cue line that carries it is built.
 import { HAND_STEER_BAND_FT } from "./plan-tracks.js";
+import { loopColor, loopOf } from "./plan-to-timeline.js";
 import { ampsAtMph, AMPS_REF_A, AMPS_EXP, TOP_SPEED_MPH, MEASURED_DRAW } from "./plan-candidates.js";
 import { TROLL_MPH, TRANSIT_MPH } from "./plan-water.js";
 import { makePredicate } from "../data/water-filter.js";
@@ -746,7 +747,22 @@ function restorePlanView(p) {
     : (Array.isArray(p.timeline) && p.timeline.length ? p.timeline : null);
   if (!unified || !p.plan || !Array.isArray(p.plan.legs) || !p.plan.legs.length) return false;
 
-  const cardDefs = unified.filter((e) => e.type === 'troll')
+  // A LOOP DAY SAVED BEFORE 2026-10-03 carries one colour a leg, the colours Ryan could not read
+  // ("are the out and back of loops the same color?"). The loop is on each leg's runId in the plan
+  // block, so the colour is put back from it -- one a loop, home the darker shade -- and the card
+  // says which loop. Nothing else of the saved day is touched, and a day that is not loops is not.
+  const legOf = new Map(p.plan.legs.map((l) => [l.id, l]));
+  const asLoop = (e) => {
+    const leg = legOf.get(e.legId || e.key);
+    const lc = loopColor(leg), lp = loopOf(leg);
+    if (!lc) return e;
+    const label = e.label && !/· loop \d/.test(e.label)
+      ? `${e.label} · loop ${lp.n} ${lp.half === 'back' ? 'home' : 'out'}` : e.label;
+    return { ...e, color: lc, label };
+  };
+  const unifiedLoops = unified.map((e) => (e.type === 'troll' ? asLoop(e) : e));
+
+  const cardDefs = unifiedLoops.filter((e) => e.type === 'troll')
     .map((e) => ({ ...e, longDesc: e.longDesc || e.why || '' }));
   const cardFor = new Map(cardDefs.map((c) => [c.legId || c.key, c]));
 
@@ -759,7 +775,7 @@ function restorePlanView(p) {
     stopCandidates: Array.isArray(p.castingStops) ? p.castingStops : [],
     scoutReport: p.rationale || '',
     solunar: (p.meta && p.meta.solunar) || '',
-    cardDefs, unified,
+    cardDefs, unified: unifiedLoops,
   });
 
   // THE LINES AND THE MARKS, owned the way materialisePlan() owns them: flagged as the plan's, so
@@ -773,7 +789,8 @@ function restorePlanView(p) {
       const legId = String(t.name || '').split('·')[0].trim();
       const c = cardFor.get(legId);
       return { name: t.name, pts: t.pts, scoutRoute: true, smartPlan: true, legId,
-               color: c ? c.color : undefined, dashed: !!c && c.legType === 'transit' };
+               color: c ? c.color : undefined, dashed: !!c && c.legType === 'transit',
+               loopHome: (loopOf(legOf.get(legId)) || {}).half === 'back' };
     });
   const waypoints = ((p.gpx && p.gpx.waypointList) || [])
     .filter((w) => Number.isFinite(w.lat) && Number.isFinite(w.lon))
@@ -790,7 +807,7 @@ function restorePlanView(p) {
   // write them for a loaded plan as they do for a built one.
   const routes = ((p.gpx && p.gpx.routeList) || [])
     .filter((r) => Array.isArray(r.pts) && r.pts.length >= 3)
-    .map((r) => ({ ...r, smartPlan: true }));
+    .map((r) => ({ ...r, smartPlan: true, ...(loopColor(legOf.get(r.legId)) ? { color: loopColor(legOf.get(r.legId)) } : {}) }));
   if (routes.length) {
     state.DATA.routes = [...(state.DATA.routes || []).filter((r) => !r.smartPlan), ...routes];
   }

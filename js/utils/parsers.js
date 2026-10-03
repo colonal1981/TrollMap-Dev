@@ -152,6 +152,14 @@ const GARMIN_COLORS = {
   '#ffea00': 'Yellow',
   '#78909c': 'DarkGray',        // a deadhead recedes on the unit exactly as it does on the map
   '#00e676': 'DarkGreen',       // the run home, and nothing else in a normal day
+  // One colour a loop, out bright and home in the same colour's dark twin (LOOP_COLORS,
+  // plan-to-timeline.js). '#ffea00' and '#00e5ff' above are loops 2 and 3 out.
+  '#e040fb': 'Magenta',
+  '#9c27b0': 'DarkMagenta',
+  '#c6a700': 'DarkYellow',
+  '#0097a7': 'DarkCyan',
+  '#ff1744': 'Red',
+  '#c62828': 'DarkRed',
 };
 
 /**

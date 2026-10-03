@@ -99,6 +99,49 @@ import { lightLabel } from '../utils/light-state.js';
  *   1 cyan   2 orange   3 violet   4 green   5 pink   6 yellow
  */
 export const LEG_COLORS = ['#00e5ff', '#ff6d00', '#7c4dff', '#76ff03', '#ff4081', '#ffea00'];
+/**
+ * ONE COLOUR A LOOP, NOT ONE A LEG.
+ *
+ * A day built by "Plan it as one troll" is one to four loops from the ramp, each a leg out and a
+ * leg home (`runId` `<slug>#loopN-out` / `#loopN-back`, plan-troll-loop.js). Coloured one per leg
+ * off LEG_COLORS, every loop's out and home were two unrelated colours, and a four-loop day has
+ * eight legs against six colours, so loop 4 came round in loop 1's cyan and orange. Ryan,
+ * 2026-10-03, on a four-loop Moultrie day: "the color on these lanes confuse me... it is really
+ * hard looking at the map to figure out which lane is which... a bunch look to start and end in
+ * the same place? are the out and back of loops the same color?" Offered one colour a loop, home
+ * dashed and in the darker shade of it: "yeah go ahead".
+ *
+ * Each pair is a Garmin bright colour and its own dark twin (parsers.js GARMIN_COLORS), so the
+ * shade a line has on the map is the shade it has on the ECHOMAP, and the cue lines and ADM
+ * boundaries made from a leg's colour follow without being told about loops. Green is left out
+ * because its dark twin is the run home's. The 8/09 rule -- lanes side by side must not share a
+ * colour family -- still holds BETWEEN loops: in this order every loop is at least 120 degrees of
+ * hue from the next (asserted in plan-tracks.test.js). Within a loop the out and home share a hue
+ * on purpose; that is the change he asked for.
+ *
+ *   loop 1 magenta   loop 2 yellow   loop 3 cyan   loop 4 red      [out, home]
+ */
+export const LOOP_COLORS = [
+  ['#e040fb', '#9c27b0'],
+  ['#ffea00', '#c6a700'],
+  ['#00e5ff', '#0097a7'],
+  ['#ff1744', '#c62828'],
+];
+
+/** `{ n, half }` for a leg of a loop day, from its runId; null for any other leg. */
+export function loopOf(leg) {
+  const m = /#loop(\d+)-(out|back)$/.exec(String((leg && leg.runId) || ''));
+  return m ? { n: Number(m[1]), half: m[2] } : null;
+}
+
+/** The colour a loop's leg draws in -- the loop's colour, the dark shade on the way home -- or null. */
+export function loopColor(leg) {
+  const l = loopOf(leg);
+  if (!l || !(l.n >= 1)) return null;
+  const pair = LOOP_COLORS[(l.n - 1) % LOOP_COLORS.length];
+  return l.half === 'back' ? pair[1] : pair[0];
+}
+
 /** A deadhead: grey, because nothing is in the water and it should recede. */
 export const TRANSIT_COLOR = '#78909c';
 /** The run home: its own colour, and not one the leg cycle reaches in a normal day. */
@@ -554,12 +597,15 @@ export function planToTimeline(plan, o = {}) {
       ? (leg.pass % 2 === 0 ? ' · fished back' : ` · pass ${leg.pass}`)
       : '';
     const samePhrase = leg.pass > 1 ? `same water as Leg ${trollN - 1}, the other way · ` : '';
+    // WHICH LOOP, ON THE CARD AS WELL AS IN THE COLOUR: the card is where he reads which line is which.
+    const lp = loopOf(leg);
+    const loopWord = lp ? ` · loop ${lp.n} ${lp.half === 'back' ? 'home' : 'out'}` : '';
     const card = {
       ...common,
-      label: `Leg ${trollN} — ${mi.toFixed(1)} mi${again}`,
+      label: `Leg ${trollN} — ${mi.toFixed(1)} mi${again}${loopWord}`,
       shortLabel: leg.pass > 1 ? `Leg ${trollN}${leg.pass % 2 === 0 ? ' back' : ` p${leg.pass}`}`
                                : `Leg ${trollN}`,
-      icon: '🎣', color: LEG_COLORS[(trollN - 1) % LEG_COLORS.length],
+      icon: '🎣', color: loopColor(leg) || LEG_COLORS[(trollN - 1) % LEG_COLORS.length],
       desc: samePhrase + (waterPhrase ? `${waterPhrase} · ` : '')
           + `from ${mark} in · ${leg.speedMph} mph · ${leg.batteryAh} Ah`
           // THE LIGHT ON THIS LEG, beside the water and the speed, because it belongs with them.

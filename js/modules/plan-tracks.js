@@ -39,7 +39,7 @@
  */
 
 import { state } from '../core/state.js';
-import { LEG_COLORS, TRANSIT_COLOR, RETURN_COLOR } from './plan-to-timeline.js';
+import { LEG_COLORS, TRANSIT_COLOR, RETURN_COLOR, loopColor, loopOf } from './plan-to-timeline.js';
 import { metresBetween, markLabel } from './plan-candidates.js';
 import { todayDepthFt } from '../utils/water-conditions.js';
 
@@ -69,7 +69,7 @@ const todayOnLeg = (leg, ft) => todayDepthFt(ft, legDrawdown(leg));
 export function legColor(leg, trollOrdinal = 0) {
   if (!leg) return TRANSIT_COLOR;
   if (leg.type === 'transit') return leg.role === 'return' ? RETURN_COLOR : TRANSIT_COLOR;
-  return LEG_COLORS[trollOrdinal % LEG_COLORS.length];
+  return loopColor(leg) || LEG_COLORS[trollOrdinal % LEG_COLORS.length];
 }
 
 /**
@@ -370,6 +370,8 @@ export function planTracks(plan, runId = null) {
       // in the same fallback magenta -- troll, deadhead and the run home indistinguishable.
       color: legColor(leg, leg.type === 'troll' ? trollN : 0),
       dashed: leg.type === 'transit',
+      // A loop's way home: dashed on the map, drawn as fishing (it is), in its loop's darker shade.
+      loopHome: (loopOf(leg) || {}).half === 'back',
       startM: leg.startM, lengthM: leg.lengthM,
     };
     if (leg.type === 'troll') trollN += 1;

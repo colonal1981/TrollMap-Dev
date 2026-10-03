@@ -15,7 +15,7 @@ import { esc } from '../utils/escape.js';
 import { getLoadedRegistry, lakeRecordFor, workerBase } from '../data/lake-registry.js';
 import { describeCatchDepth, ON_CONTOUR_MI } from '../utils/catch-depth.js';
 import { loadAccessIndex, nearestLakeByAccessPoint } from '../data/access-index.js';
-import { LURE_PRESETS } from './spread-builder.js';
+import { TACKLE_INVENTORY } from '../data/tackle-inventory.js';
 import { get as dbGet, tryPut } from '../utils/db.js';
 
 import { callGlobal } from '../utils/call-global.js';
@@ -871,10 +871,25 @@ function renderQueueDetail(el, q) {
   el.querySelector('#prevQueueBtn')?.addEventListener('click', () => { moveRelative(-1); renderCatchSubtab(); });
   el.querySelector('#nextQueueBtn')?.addEventListener('click', () => { moveRelative(1); renderCatchSubtab(); });
 }
+/**
+ * THE LURES THE JOURNAL OFFERS ARE THE LURES THE PLANS USE.
+ *
+ * Ryan, 2026-10-03: "the lure list in the catch journal... where does that list come from as i do
+ * not see all of the possibilities in there?" It came from `LURE_PRESETS` in spread-builder.js, 38
+ * names typed for the old spread builder, while every plan picks from TACKLE_INVENTORY -- 65 lures,
+ * so the lipless baits, the blade bait, the 5" flutter spoon, the P-Line and SPRO jigs, the flukes,
+ * the speedworms and the plastics were never offered. A catch's lure is the one thing that says
+ * which bait in a plan actually caught, so it has to be spelled the way the plan spells it.
+ *
+ * Same filter the planners use (`trollable || castable`, smart-plan-v2-wiring.js and
+ * plan-water-ui.js), which is what leaves the inline trolling weights out: they are in the box,
+ * but nothing is caught on one. Still a free-text box: a lure not in the inventory can be typed.
+ */
+export function journalLureNames() {
+  return TACKLE_INVENTORY.filter((l) => l.trollable || l.castable).map((l) => l.name);
+}
 function lureOptions(current) {
-  // Free-text input backed by a datalist so any lure preset can be picked
-  // quickly, but a lure that isn't in the catalog can still be typed.
-  const options = LURE_PRESETS.filter(l => !l.startsWith('—')).map(l => `<option value="${esc(l)}">`).join('');
+  const options = journalLureNames().map((l) => `<option value="${esc(l)}">`).join('');
   return `<input id="rvLure" list="rvLureList" value="${esc(current)}" placeholder="type or pick lure"><datalist id="rvLureList">${options}</datalist>`;
 }
 function applyDetailEdits(q) {

@@ -252,6 +252,11 @@ export function renderMap() {
       if (isConnector) {
         // Connectors: thin dashed line, dimmed
         L.polyline(t.pts, { color, weight: 1.5, opacity: 0.4, dashArray: '6,8' }).addTo(state.LAYER);
+      } else if (t.loopHome) {
+        // A loop's way home. It is fishing, so it keeps the fishing halo and weight; dashed so the
+        // way out and the way home of one loop -- the same colour, home a shade darker -- read apart.
+        L.polyline(t.pts, { color: '#000', weight: 6, opacity: 0.55 }).addTo(state.LAYER);
+        L.polyline(t.pts, { color, weight: 2.5, opacity: 1, dashArray: '12,6' }).addTo(state.LAYER);
       } else if (t.dashed) {
         // A transit is not fishing. Dashed says that at a glance from across the screen, before
         // the colour has to be read -- and the run home carries its own colour on top of it.
