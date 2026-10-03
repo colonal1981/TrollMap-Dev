@@ -1467,7 +1467,8 @@ def fit_pack(pack, a):
 
     idx, mainset = graph_index(os.path.join(pack, 'water_graph.bin'), slug)
     shore = ChartedShore(pack, lat0)
-    keep = KeepOut(pack, lat0)
+    # NOT `keep`: the shore cut below already uses that name for the pieces it keeps.
+    zones = KeepOut(pack, lat0)
 
     def unfitted_at_shore(coords, min_leg):
         """A run kept as drawn is cut at the shore too, when it is long enough to be offered as a leg
@@ -1489,11 +1490,11 @@ def fit_pack(pack, a):
         has a handful of zones, not 36,849 docks, and the continuous troll strings short runs and
         rings together, so a short one left inside would still be trolled. A run long enough to be
         a leg keeps the pieces that still are; a shorter one keeps whatever is outside."""
-        if not keep.n:
+        if not zones.n:
             return pieces
         out = []
         for c, how in pieces:
-            bits = keep.outside(_xy(c, lat0))
+            bits = zones.outside(_xy(c, lat0))
             if bits is None:
                 out.append((c, how))
                 continue
@@ -1512,7 +1513,7 @@ def fit_pack(pack, a):
           # it was structure, so a run that produced nothing new says so instead of looking normal.
           'seeds_in': len(st_seeds), 'seed_passes': 0, 'seed_kinds': {},
           'shore_lines': len(shore.lines), 'cut_at_shore': 0, 'm_cut_at_shore': 0.0,
-          'keep_out_zones': keep.n, 'cut_at_keep_out': 0, 'm_cut_at_keep_out': 0.0}
+          'keep_out_zones': zones.n, 'cut_at_keep_out': 0, 'm_cut_at_keep_out': 0.0}
 
     for f in runs:
         pr = dict(f['properties'])
@@ -1637,10 +1638,10 @@ def fit_pack(pack, a):
         pieces = cut
         # AND NOT INTO A KEEP-OUT ZONE. See KeepOut: the water behind a dam's buoys is cut out of
         # the pass, and each side is kept if it is still a pass.
-        if keep.n:
+        if zones.n:
             cut = []
             for piece in pieces:
-                bits = keep.outside(piece)
+                bits = zones.outside(piece)
                 if bits is None:
                     cut.append(piece)
                     continue

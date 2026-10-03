@@ -143,7 +143,7 @@ def test_the_fitter_cuts_fitted_passes_and_runs_kept_as_drawn():
     assert src.count('for c2, how in unfitted_at_shore(coords, min_leg):') == 2
     assert 'bits = shore.cut(piece)' in src
     # and the keep-out zones cut the same two paths: fitted passes, and runs kept as drawn
-    assert 'keep = KeepOut(pack, lat0)' in src and 'bits = keep.outside(piece)' in src
+    assert 'zones = KeepOut(pack, lat0)' in src and 'bits = zones.outside(piece)' in src
     assert 'return at_keep_out(pieces, min_leg)' in src
 
 
