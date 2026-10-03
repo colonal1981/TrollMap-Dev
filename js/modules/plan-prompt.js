@@ -491,6 +491,9 @@ export function riverPromptBlock(ws, o = {}) {
  * @param {object} [o.drawnDay]      riverDay()'s `.day` — where the drawn day turns, what stopped
  *                                  it, what is left unspent and which arm was taken first. River
  *                                  only, and the object existed for weeks before anything read it.
+ * @param {boolean} [o.trolled]      Pick Water built the day as ONE TROLL (plan-troll-day.js): the
+ *                                  order is the troll's, each leg runs on into the next where the
+ *                                  gap is trolled (`trollsOnM`), and each piece is fished once.
  * @param {string}   o.water
  * @param {string}   o.ramp
  * @param {string}   o.date
@@ -2450,7 +2453,15 @@ ${o.isRiver ? `THE ORDER IS NOT YOURS HERE AND NEITHER IS THE DEADHEAD. \`transi
 \`transitToMIfFishedBack\` are on the candidates because the same objects describe a lake day, where
 they are a real choice. On a river they are not being offered to you: the app drew the path and the
 order is the order (rule 3). What is yours is what goes in the water, and WHEN.
-${drawnDayBlock(o.drawnDay, candidates)}` : `WHAT THE ORDER COSTS. Each candidate also carries \`transitToM\` — metres of deadhead from the END
+${drawnDayBlock(o.drawnDay, candidates)}` : o.trolled ? `THE DAY IS ONE TROLL, THE WAY HE TROLLS. Ryan: "i don't jump from spot to spot... i keep an eye on
+the map to make sure i do not go to shallow for the baits i am running and i just troll." The app
+strung these pieces into one line: each leg starts where the last one ended. A leg carrying
+\`trollsOnM\` runs on into the next piece -- its last that many metres are the gap between them, trolled
+with the SAME two rods, and its \`maxRunDepthFt\` already covers that gap, which never gets shallower
+than the shallower of the two pieces. Where \`transitToM\` to the next leg is more than nothing, that
+gap is run with the lines up, because nothing could be reached with them in. Each piece is fished
+ONCE: turning back the other way is the next piece over, a bit deeper or shallower, not a second pass
+on this one, so there is no \`trollPasses\` to return.` : `WHAT THE ORDER COSTS. Each candidate also carries \`transitToM\` — metres of deadhead from the END
 of that leg to the START of every other leg — \`transitFromRampM\` from the ramp to its start, and
 \`transitToRampM\` from its end back to the ramp. They say what choosing a leg costs in deadhead.
 The ORDER is not yours: the app puts the legs you choose in the shortest route from the ramp and back
@@ -2477,7 +2488,7 @@ ${o.waterIsChosen ? `
 THE FISHERMAN ALREADY CHOSE THIS WATER, AND THE APP PUT IT IN ORDER.
 He picked these stretches himself, off a map, with the reasons for and against in front of him —
 they are in \`whyThisWater\` on each one, computed from the chart, not written by you. The ORDER
-is the app's: the shortest route through them it could find, which is what he asked for. Do not
+is the app's: ${o.trolled ? 'one continuous troll through them, each piece started where the last one ended' : 'the shortest route through them it could find'}, which is what he asked for. Do not
 re-rank them, do not suggest better water, and do not reorder the day. The list above IS the day,
 first to last.${Number(o.whyThisWaterOffsetFt) ? `
 \`whyThisWater\` IS WRITTEN IN TODAY'S WATER — the chart ${o.whyThisWaterOffsetFt > 0 ? 'less' : 'plus'}
@@ -2549,7 +2560,7 @@ RULES THAT ARE NOT NEGOTIABLE
    WHAT IS LEFT IS THE FISHING: which two baits go in the water on each leg, at what lead, why that
    water at that hour, and what the sonar should show. That is the whole of your job here, and it is
    the part nothing in this app can compute.` : `${o.orderIsChosen
-   ? `THE ORDER IS FIXED AND IT IS NOT YOURS. It is the shortest route the app found through the
+   ? `THE ORDER IS FIXED AND IT IS NOT YOURS. It is ${o.trolled ? 'one continuous troll the app strung through the' : 'the shortest route the app found through the'}
    water he picked, and he asked for exactly that. Fish them in the order given.`
    : `THE APP PUTS YOUR LEGS IN ORDER, AND THE DAY ENDS ON A LANE NEAR THE RAMP. Ryan, 2026-09-29:
    "i want to end a lane close to the ramp... i do not want to waste 3 miles heading back and not
@@ -2568,7 +2579,9 @@ RULES THAT ARE NOT NEGOTIABLE
    \`transitToM\` is here to stop. ${o.orderIsChosen ? 'There is no "out and back": the order given finishes near the ramp.'
    : 'The app can only shorten the route through the water you chose; it cannot bring far water closer.'} Prefer a slightly weaker leg next door to a slightly better one across
    the lake, and if the good water genuinely is far apart, fish fewer legs rather than commuting
-   between them.
+   between them.${o.trolled ? `
+   EACH PIECE ONCE. The troll already turned back where the water turned shallow: that is the next
+   piece in the list. Do not return \`trollPasses\`; it is not read on this day.` : `
    AND FISH THE GOOD ONES BACK. A pass is a piece of water, not an errand to be run once and
    crossed off. When a stretch earns it — it holds the structure the day is built on, the history
    says fish have come off it, it is the best water you have at that hour — set \`trollPasses\` to
@@ -2578,7 +2591,7 @@ RULES THAT ARE NOT NEGOTIABLE
    six stretches each fished once, with a transit between every pair, is the shape this is here to
    break. Do not set it on every leg to run the clock up — set it where the water deserves a
    second look, and say why in \`why\`. The app adds a second pass only while every leg still to
-   come, its stops and the run home still finish by the time he is due back.`}
+   come, its stops and the run home still finish by the time he is due back.`}`}
 4. ${o.isRiver ? `THERE ARE NO STOPS ON A RIVER. Return \`"stops": []\` and mean it.
    Ryan, 2026-09-17: "i do not typically anchor in a river so stop and cast really isn't going to be
    a thing... i am not going to try and hover with either the trolling motor or the pedals." The
@@ -2712,12 +2725,12 @@ RETURN EXACTLY THIS SHAPE
     // Say in \`why\` that you meant it, because the pass coming back may be in different light,
     // against a current that is now behind the boat, and hours from the one going out.
     ${FALLBACK_FIELD}` : `
-    { "runId": "copied exactly", "speedMph": 2.0, "trollPasses": 1,
+    { "runId": "copied exactly", "speedMph": 2.0,${o.trolled ? '' : ' "trollPasses": 1,'}
       "deploy": { "port": "R1", "starboard": "R5" },
       "ifNotProducing": { "rodId": "R2", "insteadOf": "R1", "why": "one sentence" },
       "why": "one sentence on why this water, now" }
-    // \`trollPasses\` is how many times you troll this stretch before moving on — down, back,
-    // down again. Omit it or say 1 for a single pass. See rule 3.
+    ${o.trolled ? '// One troll: every piece is fished once, in the order given. See rule 3.' : `// \`trollPasses\` is how many times you troll this stretch before moving on — down, back,
+    // down again. Omit it or say 1 for a single pass. See rule 3.`}
     ${FALLBACK_FIELD}`}
   ],
   "stops": [${o.isRiver ? `],  // EMPTY, ALWAYS, ON A RIVER. See rule 4 — he cannot hold the boat.` : `

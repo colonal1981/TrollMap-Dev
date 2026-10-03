@@ -38,7 +38,8 @@ import { ampHoursAlong, minutesFor, metresBetween, cumulative, worstWind, resolv
 import { assemblePlan, DEFAULT_STOP_MIN } from './plan-assemble.js';
 import { buildPlanRequest, parsePlanResponse, planArgsFrom, MODEL_LEG_FIELDS, modelAnswer,
          cannotUseBreaks, correctedRequest, withRodsFrom } from './plan-prompt.js';
-import { prefetchTransits } from './smart-plan-v2.js';
+import { prefetchTransits, assembleSettled } from './smart-plan-v2.js';
+import { trollShape, asTrolled } from './plan-troll-day.js';
 import { launchRouteFor } from '../data/launch-reach.js';
 import { dayCost, dayOrder, priceSpots, TROLL_MPH, TRANSIT_MPH } from './plan-water.js';
 
@@ -282,6 +283,56 @@ function legFrom(piece, i, ramp, slug, wind, extra = {}) {
 }
 
 /**
+ * A LEG AS THE TROLL RUNS IT. Ryan's Wateree day for 2026-10-04, built from "Plan it as one troll":
+ * *"definitely doesn't work on wateree"*. The troll had strung eleven pieces into one line -- ten of
+ * the eleven gaps trolled with the baits in, each piece entered at the end nearest the last -- and the
+ * build kept only the ORDER. Every piece went back to its own drawn direction (the app then turned
+ * them for passes that never ran, see assembleSettled()), and every gap the troll had trolled was
+ * priced as a 3.5 mph run with nothing in the water: 23.7 km of 37.5 with the lines up.
+ *
+ * So the leg is built the way the troll ran it:
+ *   - TURNED the way the troll entered it, its marks mirrored with it, and held there
+ *     (`fixedDirection`, see orientLegs());
+ *   - and where the troll trolled the gap to the next piece, RUN ON to that piece's first point. The
+ *     same two rods stay in across the gap, so the gap is part of this leg: its metres, its minutes
+ *     and its amp-hours at trolling speed, and its shallowest charted water -- which trollDay()
+ *     sounded and found no shallower than the shallower of the two pieces -- is this leg's floor if
+ *     it is lower. The next leg then starts where this one ends and nothing is run between them.
+ *
+ * @param {object} leg    legFrom() output, changed in place
+ * @param {object} s      trollShape() entry for its piece
+ */
+function trollLeg(leg, s, ramp, wind) {
+  if (!s) return;
+  if (s.reversed) {
+    const c = leg.coordinates || [];
+    const cum = cumulative(c);
+    const len = cum[cum.length - 1] || 0;
+    leg.coordinates = c.slice().reverse();
+    [leg.start, leg.end] = [leg.end, leg.start];
+    [leg.transitInM, leg.transitOutM] = [leg.transitOutM, leg.transitInM];
+    leg.passes = (leg.passes || []).map((h) => ({ ...h, atM: Math.max(0, Math.round(len - h.atM)) }))
+      .sort((a, b) => a.atM - b.atM);
+    if (Array.isArray(leg.envelope)) leg.envelope = leg.envelope.slice().reverse();
+  }
+  leg.fixedDirection = true;
+  if (!Array.isArray(s.onTo) || !(s.onM > 0)) return;
+  const from = leg.end;
+  leg.coordinates = [...leg.coordinates, s.onTo];
+  leg.end = s.onTo;
+  leg.lengthM = (leg.lengthM || 0) + s.onM;
+  leg.estMin = Math.round(minutesFor(leg.lengthM, TROLL_MPH));
+  leg.batteryAh = Number((leg.batteryAh + ampHoursAlong([from, s.onTo], TROLL_MPH, { wind }).ah).toFixed(2));
+  leg.transitOutM = ramp ? Math.round(metresBetween(s.onTo, ramp)) : 0;
+  leg.trollsOnM = Math.round(s.onM);
+  const low = Number(s.onShallowestFt);
+  if (Number.isFinite(low)) {
+    if (!Number.isFinite(leg.maxRunDepthFt) || leg.maxRunDepthFt > low) leg.maxRunDepthFt = low;
+    if (Number.isFinite(leg.depthMinFt) && leg.depthMinFt > low) leg.depthMinFt = low;
+  }
+}
+
+/**
  * Build the day from the water Ryan ticked.
  *
  * @param {object}   o
@@ -291,6 +342,8 @@ function legFrom(piece, i, ramp, slug, wind, extra = {}) {
  * @param {number}   o.usableAh    LiFePO4 reserve already removed
  * @param {object[]} [o.windByHour] the day's hourly wind; dayCost() costs against its worst hour
  * @param {number[]} [o.order]     a given order, built as given. Absent = shortest-first.
+ * @param {object[]} [o.troll]     trollDay()'s `steps` for that order: each piece turned the way the
+ *                                 troll runs it, and run on to the next where the troll trolls the gap
  * @param {function} o.askModel    ({system,user}) => Promise<string|{content, meta}>
  * @param {function} [o.routeWater] transit router; a straight line is marked `unrouted`
  */
@@ -324,7 +377,16 @@ export async function planFromWater(o) {
   const cheapest = chosen.cheapest;
   // WHAT THE DAY AS BUILT COSTS -- the order above, not the cheapest one. This is the number the
   // prompt quotes as the app's price for the water.
-  const asBuilt = overridden
+  // THE DAY AS ONE TROLL, when that is what was built: trollDay()'s own steps, so each piece is run
+  // the way the troll reaches it and a gap the troll crossed with the baits in is trolled, not run.
+  // Absent, or not matching this order piece for piece, and the day is built exactly as before.
+  const shape = overridden && Array.isArray(o.troll) ? trollShape(o.troll) : null;
+  const trolled = !!(shape && ordered.length && ordered.every((p) => shape.has(p.key)));
+  const asBuilt = trolled
+    ? dayCost(ordered.map((p) => asTrolled(p, shape.get(p.key))),
+              { ramp: o.ramp, usableAh: o.usableAh, windowMin: o.windowMin, wind,
+                order: ordered.map((_, i) => i), stopMin })
+    : overridden
     ? dayCost(picked, { ramp: o.ramp, usableAh: o.usableAh, windowMin: o.windowMin, wind, order,
                         stopMin })
     : chosen.cost;
@@ -369,6 +431,7 @@ export async function planFromWater(o) {
   const legs = ordered.map((p, i) => legFrom(p, i, o.ramp, o.slug, wind, {
     structures: o.structures || null, spots: spotsOn.get(p.key) || [], chosenKeys,
   }));
+  if (trolled) legs.forEach((l, i) => trollLeg(l, shape.get(ordered[i].key), o.ramp, wind));
   // Which pass each spot became, so the prompt's spot lists name a leg and an id the model can
   // return, rather than the tab's own piece key.
   const passOfSpot = new Map();
@@ -388,7 +451,9 @@ export async function planFromWater(o) {
       back[legs[j].runId] = Math.round(metresBetween(co[0], start));
     }
     legs[i].transitToM = to;
-    legs[i].transitToMIfFishedBack = back;
+    // A troll fishes each piece once -- turning back is the next piece over -- so there is no
+    // second-pass table to offer. See trollLeg().
+    legs[i].transitToMIfFishedBack = trolled ? undefined : back;
   }
 
   // THE ROUTER IS ASYNC AND THE ASSEMBLER IS NOT, SO THE ROUTES ARE FETCHED FIRST.
@@ -478,6 +543,9 @@ export async function planFromWater(o) {
       // water afterwards and run a little longer.
       transitToM: l.transitToM,
       transitToMIfFishedBack: l.transitToMIfFishedBack,
+      // THE LAST METRES OF THIS LEG ARE THE GAP TO THE NEXT PIECE, trolled with the same two rods.
+      // `maxRunDepthFt` above already includes it. Only on a day built as one troll.
+      trollsOnM: l.trollsOnM || undefined,
       structures: l.passes.map((h) => ({ id: h.id, type: h.type, atM: h.atM, offM: h.offM,
                                          what: h.what, depthFt: h.depthFt,
                                          worthFishing: h.weight > 0 || undefined,
@@ -493,6 +561,8 @@ export async function planFromWater(o) {
     // length -- a model handed N legs will otherwise rank them out of habit.
     waterIsChosen: true,
     orderIsChosen: true,
+    // AND THE ORDER IS ONE TROLL, not the shortest route, when that is what he pressed.
+    trolled: trolled || undefined,
     // EVERY free spot goes over, not a best-N. Which water is worth stopping on is a fishing
     // judgement -- "There is water that is worth stopping on today and water that is not" -- so
     // the app supplies the positions and the count he asked for, and the model does the choosing.
@@ -647,7 +717,12 @@ export async function planFromWater(o) {
     const c = said.get(l.runId);
     if (!c) return l;
     const out = { ...l };
-    for (const k of MODEL_LEG_FIELDS) if (c[k] !== undefined) out[k] = c[k];
+    for (const k of MODEL_LEG_FIELDS) {
+      // ONE PASS EACH ON A TROLL. A second pass on a leg that runs on into the next piece would
+      // troll back over the gap and leave him a run across the water he just fished.
+      if (trolled && k === 'trollPasses') continue;
+      if (c[k] !== undefined) out[k] = c[k];
+    }
     return out;
   });
 
@@ -663,13 +738,14 @@ export async function planFromWater(o) {
   // railroad canal. build_ramp_reach.py measured that route over the charted water and now
   // writes it into the pack. See prefetchTransits().
   const rampRoute = await launchRouteFor(o.slug, o.ramp && o.ramp[1], o.ramp && o.ramp[0]);
-  const transit = o.transit
-               || await prefetchTransits(candidates, o.ramp, o.routeWater, rampRoute);
+  const routeFor = async (cands) => o.transit
+               || await prefetchTransits(cands, o.ramp, o.routeWater, rampRoute);
 
-  const plan = assemblePlan({
+  // ASSEMBLED, THEN TURNED AND ROUTED AGAIN FOR THE PASSES THAT RAN. See assembleSettled().
+  const { plan } = await assembleSettled(candidates, o.ramp, routeFor, (cands, transit) => assemblePlan({
     // IN THE ORDER ALREADY DECIDED. assemblePlan documents `candidates` as "IN THE ORDER THE MODEL
     // CHOSE"; on this path the model chose nothing and the array is already the day.
-    candidates,
+    candidates: cands,
     launch: o.ramp,
     loadout: args.loadout,
     deploy: args.deploy,
@@ -720,7 +796,7 @@ export async function planFromWater(o) {
     // could never fire. Over 15 sustained is a no-go for a 12.5 ft kayak whichever tab picked
     // the water.
     safety: args.safety,
-  });
+  }));
 
   plan.notes = args.notes;
   // What planArgsFrom() settled while reading the answer goes with what the assembler settled.
@@ -749,6 +825,8 @@ export async function planFromWater(o) {
     // So the UI can say "the app put them in this order, and here is why" rather than silently
     // reordering what he ticked.
     orderWasOverridden: Array.isArray(o.order) && o.order.length === picked.length,
+    // Built as one troll: each piece the way the troll runs it, the trolled gaps trolled.
+    trolled,
     spots,
   };
 }

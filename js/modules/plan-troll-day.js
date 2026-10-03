@@ -309,3 +309,45 @@ export function trollDay(pieces, o) {
     wallsKnown: !!o.barriers,
   };
 }
+
+// ── THE DAY AS BUILT ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * HOW THE TROLL RUNS EACH PIECE, for the plan to be built the same way.
+ *
+ * "Plan it as one troll" on Lake Wateree for 2026-10-04 handed the build only `keys`, the order, and
+ * threw these away -- so the plan ran every piece in its drawn direction and priced every gap the
+ * troll had trolled as a run with the lines up. See trollLeg() in plan-from-water.js.
+ *
+ * @param {object[]} steps  trollDay()'s `steps`
+ * @returns {Map<string, {reversed: boolean, onTo: ?number[], onM: number, onShallowestFt: ?number}>}
+ *          per piece key: whether the troll runs it against its drawn direction, and -- where the
+ *          troll trolls on into the next piece -- that piece's first point, the metres to it and the
+ *          shallowest charted water on the way.
+ */
+export function trollShape(steps) {
+  const out = new Map();
+  const list = Array.isArray(steps) ? steps : [];
+  for (let i = 0; i < list.length; i++) {
+    const s = list[i];
+    if (!s || s.kind !== 'piece') continue;
+    const hop = list[i + 1], next = list[i + 2];
+    const on = !!(hop && hop.kind === 'troll' && next && next.kind === 'piece' && Array.isArray(hop.to));
+    out.set(s.key, {
+      reversed: !!s.reversed,
+      onTo: on ? hop.to : null,
+      onM: on ? Number(hop.m) || 0 : 0,
+      onShallowestFt: on && Number.isFinite(Number(hop.shallowestFt)) ? Number(hop.shallowestFt) : null,
+    });
+  }
+  return out;
+}
+
+/** A piece the way the troll runs it: turned, and run on into the next piece where the gap is trolled. */
+export function asTrolled(piece, s) {
+  if (!piece || !s) return piece;
+  const c = (piece.coords || []).slice();
+  if (s.reversed) c.reverse();
+  if (Array.isArray(s.onTo) && s.onM > 0) c.push(s.onTo);
+  return { ...piece, coords: c, lengthM: (Number(piece.lengthM) || lengthOf(piece.coords || [])) + (s.onTo ? s.onM : 0) };
+}

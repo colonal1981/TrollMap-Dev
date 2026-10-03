@@ -78,9 +78,14 @@ describe('the prompt contract', () => {
   // `whyThisWaterOffsetFt` (2026-09-27) is the drawdown the Water tab's reasons were written in.
   // Those reasons -- `whyThisWater` -- exist only on water he picked; Smart Plan's candidates carry
   // no such field, so there is nothing on that path for the number to describe.
+  //
+  // `trolled` (2026-10-03) says the picked day was strung into one troll by Pick Water's "Troll it
+  // for me" (plan-troll-day.js). The troll is made of Pick Water's pieces, and the Smart Plan tab's
+  // "Plan it as one troll" button builds through Pick Water's planFromWater(), so Smart Plan's own
+  // path never has a troll to say.
   const PICKED_WATER_DIALECT = ['castStopsWanted', 'chosenCastSpots', 'freeCastSpots',
                                 'orderIsChosen', 'waterIsChosen', 'dayMin', 'dayStopMin',
-                                'whyThisWaterOffsetFt'];
+                                'whyThisWaterOffsetFt', 'trolled'];
 
   // AND ONE FIELD PICK WATER CANNOT REACH THE CASE FOR, WHICH IS A DIFFERENT EXEMPTION.
   //

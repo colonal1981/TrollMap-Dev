@@ -429,19 +429,24 @@ export function orientLegs(candidates, launch) {
   const enter = (i, o) => (o ? legs[i].end : legs[i].start);
   const leave = (i, o) => (laps(i) % 2 ? (o ? legs[i].start : legs[i].end) : enter(i, o));
 
+  // A LEG ALREADY DRAWN THE WAY IT IS RUN HAS ONE STATE, NOT TWO. Pick Water's one-troll day
+  // (plan-troll-day.js) turns each piece the way the troll reaches it and runs its line on to the
+  // next piece where the gap is trolled with the baits in; solving the direction again here would
+  // turn a leg away from the piece it trolls into. `fixedDirection` keeps it as drawn.
+  const states = (i) => (legs[i] && legs[i].fixedDirection ? 1 : 2);
   const cost = [], from = [];
   for (let i = 0; i < n; i++) { cost.push([Infinity, Infinity]); from.push([0, 0]); }
-  for (let o = 0; o < 2; o++) cost[0][o] = hop(launch, enter(0, o));
+  for (let o = 0; o < states(0); o++) cost[0][o] = hop(launch, enter(0, o));
   for (let i = 1; i < n; i++) {
-    for (let o = 0; o < 2; o++) {
-      for (let p = 0; p < 2; p++) {
+    for (let o = 0; o < states(i); o++) {
+      for (let p = 0; p < states(i - 1); p++) {
         const t = cost[i - 1][p] + hop(leave(i - 1, p), enter(i, o));
         if (t < cost[i][o]) { cost[i][o] = t; from[i][o] = p; }
       }
     }
   }
   let best = 0, bestCost = Infinity;
-  for (let o = 0; o < 2; o++) {
+  for (let o = 0; o < states(n - 1); o++) {
     const t = cost[n - 1][o] + hop(leave(n - 1, o), launch);
     if (t < bestCost) { bestCost = t; best = o; }
   }

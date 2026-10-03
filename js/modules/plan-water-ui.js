@@ -59,7 +59,7 @@ import { depthSampler, shorelineIndex, waterMask } from './plan-water-index.js';
 import { offerWaterAsync, dayCost, dayOrder, priceSpots, waterRange, reasons, TROLL_MPH, TRANSIT_MIN_DEPTH_FT, SPOT_KINDS, todayFt } from './plan-water.js';
 import { joinedPiece } from './plan-pieces.js';
 import { planFromWater } from './plan-from-water.js';
-import { trollDay, barrierIndex } from './plan-troll-day.js';
+import { trollDay, barrierIndex, trollShape, asTrolled } from './plan-troll-day.js';
 import { DEFAULT_STOP_MIN } from './plan-assemble.js';
 import { buildSmartPlanV2, modelAsker, waterRouter } from './smart-plan-v2.js';
 import { claudeFirstAsker } from './claude-bridge.js';
@@ -553,9 +553,12 @@ function total() {
   const trolled = trollOrderOf(picked);
   const od = trolled
     ? (() => {
-        const cost = dayCost(picked, { ramp: T.ramp, usableAh: T.usableAh, windowMin: T.windowMin,
-                                       windByHour: T.windByHour, stopMin: wanted * DEFAULT_STOP_MIN,
-                                       order: trolled });
+        // PRICED AS TROLLED: each piece the way the troll runs it, and a gap it trolls is trolling.
+        const shape = trollShape(T.trollSteps);
+        const run = trolled.map((i) => asTrolled(picked[i], shape.get(picked[i].key)));
+        const cost = dayCost(run, { ramp: T.ramp, usableAh: T.usableAh, windowMin: T.windowMin,
+                                    windByHour: T.windByHour, stopMin: wanted * DEFAULT_STOP_MIN,
+                                    order: run.map((_, i) => i) });
         return { order: trolled, cost, cheapest: cost };
       })()
     : dayOrder(picked, { ramp: T.ramp, usableAh: T.usableAh, windowMin: T.windowMin,
@@ -1105,6 +1108,7 @@ export async function findWater() {
       .properties?.envelope_step_m || 40,
     waterDepthFt: depth && Array.isArray(depth.waterDepthFt) ? depth.waterDepthFt : null,
     trollOrder: null,
+    trollSteps: null,
     // A FISH THE RESEARCH DOES NOT PLACE IN THIS WATER -- preparePlanInputs()'s note, for
     // buildFromPicked() to put first on the plan. See the note there.
     roster: roster || null,
@@ -1318,8 +1322,13 @@ function trollOrderOf(picked) {
  *   the deepest bait  the deep edge of the fish band: the spread is stacked through the band and the
  *                     deepest rod touches first. On a day the research says the fish are ON THE
  *                     BOTTOM the bait is down there with them, so it is the band's shallow edge.
- *   the water         what the research says the fish are over (`waterDepthFt`) when it says; the
- *                     band itself on a bottom day; otherwise any water deep enough for the bait.
+ *   the water         any water deep enough for the bait -- and on a bottom day, the band itself,
+ *                     because there the band IS the bottom the fish are on.
+ *   the guide's water what the research says the fish are over (`waterDepthFt`) is SAID, never a gate.
+ *                     It was a gate for a day: on Wateree for 2026-10-04 it kept 15 of 373 pieces, the
+ *                     nearest 3.3 mi from Clearwater Cove, and the troll ran out there with the lines up.
+ *                     Ryan: *"Why would I travel 2 miles from the ramp to start trolling?"* Annotate,
+ *                     never filter: the status line says how many of the day's pieces are over it.
  *   his slider        the tab's depth filter, if he set one.
  *   contours          pieces on structure chords are left out -- he follows the contour lines.
  */
@@ -1337,13 +1346,14 @@ export function trollForMe() {
   if (!band) return say('No fish band for this species here, so nothing says how deep the deepest bait runs. Tick the water by hand.', true);
   const bottom = T.holding === 'bottom';
   const floorFt = bottom ? band[0] : band[1];
-  const over = Array.isArray(T.waterDepthFt) ? T.waterDepthFt : (bottom ? band : null);
-  const onWater = (p) => {
-    if (!over) return true;
+  const over = bottom ? band : null;
+  const guide = Array.isArray(T.waterDepthFt) ? T.waterDepthFt : null;
+  const crosses = (p, w) => {
     const c = corridorOf(p);
-    if (c.fromFt == null) return true;
-    return !(c.fromFt > over[1] || c.toFt < over[0]);
+    if (c.fromFt == null) return null;
+    return !(c.fromFt > w[1] || c.toFt < w[0]);
   };
+  const onWater = (p) => !over || crosses(p, over) !== false;
   const ticked = T.pieces.filter((p) => T.picked.has(p.key));
   const startKey = ticked.length === 1 ? ticked[0].key : undefined;
   let day;
@@ -1357,6 +1367,9 @@ export function trollForMe() {
     });
   } catch (e) { return say(e.message, true); }
   const where = over ? ` on ${over[0]}–${over[1]} ft of water` : '';
+  // THE GUIDE'S WATER, SAID. How many of the day's pieces cross it -- a note, not a gate (see above).
+  const dayPieces = day.keys.map((k) => T.pieces.find((p) => p.key === k)).filter(Boolean);
+  const onGuide = guide ? dayPieces.filter((p) => crosses(p, guide) === true).length : 0;
   if (!day.keys.length) {
     return say(startKey
       ? `The piece you ticked does not hold ${floorFt} ft of water${where}, so the deepest bait would `
@@ -1366,6 +1379,9 @@ export function trollForMe() {
   }
   T.picked = new Set(day.keys);
   T.trollOrder = day.keys.slice();
+  // AND HOW IT RUNS EACH PIECE, which "Build the day" builds from. Keeping only the order is what
+  // made the 2026-10-04 Wateree day a string of runs with the lines up -- see trollLeg().
+  T.trollSteps = day.steps;
   paint();
   const zones = T.koFeatures.length;
   say(`One troll from ${startKey ? 'the piece you ticked' : 'the piece nearest the ramp'}: `
@@ -1378,6 +1394,8 @@ export function trollForMe() {
     + (zones ? `, and out of ${zones} keep-out zone${zones === 1 ? '' : 's'}` : '')
     + (day.droppedForBattery ? `; ${day.droppedForBattery} piece${day.droppedForBattery === 1 ? '' : 's'} `
                                + 'left off the end for the battery' : '')
+    + (guide ? `. ${onGuide} of the ${dayPieces.length} pieces are over the ${guide[0]}–${guide[1]} ft of water the `
+               + 'research says the fish are over' : '')
     + '. Every tick is still yours — change one and the day goes back to shortest-first.');
 }
 
@@ -1460,6 +1478,8 @@ export async function buildFromPicked() {
       // THE TROLL'S ORDER, while what is ticked is still exactly what trollForMe() ticked. Change
       // one tick and this is undefined, and planFromWater() goes back to shortest-first.
       order: trollOrderOf(picked) || undefined,
+      // AND HOW THE TROLL RUNS EACH PIECE, under the same condition. See trollLeg().
+      troll: trollOrderOf(picked) ? T.trollSteps : undefined,
       spots: T.spots,
       // WHAT HE TICKED, not what the app thinks is nearby. A spot he chose is a commitment the day
       // has to carry; the rest are still sent so the model can suggest one, but only these are his.

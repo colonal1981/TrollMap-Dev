@@ -161,9 +161,13 @@ test('both planners reach for it', () => {
   assert.ok(/rampLegRouter\(o\.ramp, rampRoute, riverRoute \|\| prefetched\)/.test(SPV2),
     'the river path wraps centrelineTransit, and the lake path wraps the prefetched routes, rather '
   + 'than replacing either -- a null base sends every hop between legs out a straight line');
-  assert.ok(/prefetchTransits\(args\.candidates, o\.ramp, o\.routeWater, rampRoute\)/.test(SPV2),
+  // `cands`, not the model's candidates directly: since 2026-10-03 both planners route through
+  // assembleSettled(), which asks again with the passes that ran. See smart-plan-v2.js.
+  assert.ok(/prefetchTransits\(cands, o\.ramp, o\.routeWater, rampRoute\)/.test(SPV2)
+         && /assembleSettled\(args\.candidates, o\.ramp, routeFor,/.test(SPV2),
     'and the lake path passes it through to prefetchTransits');
-  assert.ok(/prefetchTransits\(candidates, o\.ramp, o\.routeWater, rampRoute\)/.test(PFW),
+  assert.ok(/prefetchTransits\(cands, o\.ramp, o\.routeWater, rampRoute\)/.test(PFW)
+         && /assembleSettled\(candidates, o\.ramp, routeFor,/.test(PFW),
     'Pick Water does the same -- one resolver, both paths, which is the only way they cannot '
   + 'drift apart');
   assert.ok(/import \{ launchRouteFor \} from '\.\.\/data\/launch-reach\.js';/.test(SPV2)

@@ -839,14 +839,18 @@ export async function buildSmartPlanV2(o) {
   // while the Worker answered all four when asked (`_scratch/mw/rec_route_probe.ps1`). 199 lake
   // landings carry a route that long -- Monticello Boat Ramp, William Dennis and Spiers on
   // Moultrie among them. The ramp leg still comes off the measured route; the rest is prefetched.
-  const prefetched = (o.transit || riverRoute) ? null
-    : await prefetchTransits(args.candidates, o.ramp, o.routeWater, rampRoute);
-  const transit = o.transit
-                  || rampLegRouter(o.ramp, rampRoute, riverRoute || prefetched)
-                  || prefetched;
+  const routeFor = async (cands) => {
+    const prefetched = (o.transit || riverRoute) ? null
+      : await prefetchTransits(cands, o.ramp, o.routeWater, rampRoute);
+    return o.transit
+           || rampLegRouter(o.ramp, rampRoute, riverRoute || prefetched)
+           || prefetched;
+  };
 
-  const plan = assemblePlan({
+  // ASSEMBLED, THEN TURNED AND ROUTED AGAIN FOR THE PASSES THAT RAN. See assembleSettled().
+  const { plan } = await assembleSettled(args.candidates, o.ramp, routeFor, (cands, transit) => assemblePlan({
     ...args,
+    candidates: cands,
     launch: o.ramp, slug: o.r2Key, water: o.water, ramp: o.rampName, date: o.date,
     launchTime: o.launchTime, returnTime: o.returnTime,
     species: o.species ? [].concat(o.species) : [],
@@ -876,7 +880,7 @@ export async function buildSmartPlanV2(o) {
     // AND THE ANOXIC LINE THE PROMPT WAS GIVEN, so no lead the app fits runs a bait under it.
     // Pick Water passes the same field. See capBaitDepth().
     oxygenFloorFt,
-  });
+  }));
   plan.notes = args.notes;
   // What planArgsFrom() settled while reading the answer goes with what the assembler settled.
   if (args.decisions && args.decisions.length) {
@@ -1137,6 +1141,80 @@ export async function prefetchTransits(candidates, launch, routeWater, launchRou
   }
   if (!routed.size) return null;
   return (a, b) => routed.get(pairKey(a, b)) || null;
+}
+
+/**
+ * THE PASSES THAT RAN, BEFORE THE ROUTES BETWEEN THEM.
+ *
+ * Ryan's Lake Wateree day for 2026-10-04 ("definitely doesn't work on wateree"): the model asked for
+ * a second pass on #434, #313, #10@5320 and #10, and the assembler, rightly, ran none of them -- the
+ * day was already 555 min against 540. But orientLegs() had turned each of those four legs for TWO
+ * passes (in and back out the same end), and prefetchTransits() had asked the router for the hops out
+ * of the end a second pass would finish at. With the pass gone the boat was at the OTHER end: every
+ * one of the four legs was followed by a run back across the water it had just trolled (#434 -> #315
+ * 1,923 m instead of 1,106; #313 -> #10@5320 2,263 m instead of 760), and every one of those four
+ * runs went out as a straight line, "STRAIGHT LINE, not water-routed", because nobody had asked the
+ * router for it. The 2026-09-26 fix moved the cursor to where the boat really was; the turn and the
+ * route were still the pass that never happened.
+ *
+ * Which passes run is decided inside the assembler, against the clock, the stops and the water still
+ * to come, and only it can decide that. So it decides, and then the day is turned and routed again
+ * with each leg asking for the passes it got. A pass count only ever comes down here, so this ends
+ * within one round per leg -- in practice one. The assembler's sentence about each pass it stopped is
+ * kept: the second build has nothing left to stop, and he should still be told.
+ *
+ * A river day is laid out by travelOrder() as out-and-back by construction and fitted by
+ * fitRiverDay(), not by this, so it is left alone.
+ *
+ * @param {object[]} candidates                IN THE ORDER BEING BUILT
+ * @param {number[]} launch
+ * @param {function} routeFor                  async (candidates) -> the transit resolver for them
+ * @param {function} assemble                  (candidates, transit) -> assemblePlan() output
+ * @returns {Promise<{plan: object, candidates: object[]}>}
+ */
+export async function assembleSettled(candidates, launch, routeFor, assemble) {
+  let cands = candidates;
+  let plan = assemble(cands, await routeFor(cands));
+  if (travelOrder(cands, launch).river) return { plan, candidates: cands };
+  const said = [];
+  for (let round = 0; round < cands.length; round++) {
+    const next = passesRun(cands, plan);
+    if (!next) break;
+    for (const k of ['warnings', 'decisions']) {
+      for (const s of (plan[k] || [])) if (PASS_STOPPED.test(s)) said.push([k, s]);
+    }
+    cands = next;
+    plan = assemble(cands, await routeFor(cands));
+  }
+  for (const [k, s] of said) {
+    if (!Array.isArray(plan[k])) plan[k] = [];
+    if (!plan[k].includes(s)) plan[k].push(s);
+  }
+  return { plan, candidates: cands };
+}
+
+const PASS_STOPPED = /asked for \d+ passes — stopped after/;
+
+/**
+ * The candidates with each one's `trollPasses` brought down to the passes the plan really ran, or
+ * null when every leg ran what it asked for. A leg the plan does not carry at all is left as it is:
+ * that is not a pass count, and it is not this function's to change.
+ */
+export function passesRun(candidates, plan) {
+  const ran = new Map();
+  for (const l of ((plan && plan.legs) || [])) {
+    if (l.type === 'transit' || !l.runId) continue;
+    ran.set(l.runId, (ran.get(l.runId) || 0) + 1);
+  }
+  let changed = false;
+  const out = (candidates || []).map((c) => {
+    const asked = Number(c && c.trollPasses);
+    const got = ran.get(c && c.runId) || 0;
+    if (!(Number.isInteger(asked) && asked > 1) || got < 1 || got >= asked) return c;
+    changed = true;
+    return { ...c, trollPasses: got };
+  });
+  return changed ? out : null;
 }
 
 /** Metres along a [lon, lat] path. */
