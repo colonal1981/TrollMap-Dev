@@ -1083,7 +1083,10 @@ export async function prefetchTransits(candidates, launch, routeWater, launchRou
   const { legs: walked, facing } = travelOrder(candidates, launch);
   for (const [i, c] of walked.entries()) {
     const f = facing[i] || { start: c.start, end: c.end };
-    if (Array.isArray(cursor) && Array.isArray(f.start)) pairs.push([cursor, f.start]);
+    // NOT A HOP WHERE THE LAST LEG ENDS ON THIS ONE'S START. One troll strings its legs end to
+    // start, and the router answers a pair of one point with the cell centre beside it and back:
+    // every "Run 0.0 mi" spike between the legs of Ryan's 2026-10-04 Wateree export.
+    if (Array.isArray(cursor) && Array.isArray(f.start) && metresBetween(cursor, f.start) > 1) pairs.push([cursor, f.start]);
     // WHERE THE BOAT STANDS WHEN THE LEG IS DONE, which is not the end of its first pass once a
     // leg can be fished back. `finish` equals `end` on every leg fished once, so this is the same
     // cursor it always was until the model asks for a second pass — and on the leg that does ask,

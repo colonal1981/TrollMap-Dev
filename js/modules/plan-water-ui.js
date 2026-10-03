@@ -59,7 +59,8 @@ import { depthSampler, shorelineIndex, waterMask } from './plan-water-index.js';
 import { offerWaterAsync, dayCost, dayOrder, priceSpots, waterRange, reasons, TROLL_MPH, TRANSIT_MIN_DEPTH_FT, SPOT_KINDS, todayFt } from './plan-water.js';
 import { joinedPiece } from './plan-pieces.js';
 import { planFromWater } from './plan-from-water.js';
-import { trollDay, barrierIndex, trollShape, asTrolled } from './plan-troll-day.js';
+import { trollShape, asTrolled } from './plan-troll-day.js';
+import { trollLoopAsync, loopPieces, loopSteps } from './plan-troll-loop.js';
 import { DEFAULT_STOP_MIN } from './plan-assemble.js';
 import { buildSmartPlanV2, modelAsker, waterRouter } from './smart-plan-v2.js';
 import { claudeFirstAsker } from './claude-bridge.js';
@@ -1310,93 +1311,105 @@ function trollOrderOf(picked) {
 }
 
 /**
- * THE DAY TROLLED THE WAY HE TROLLS IT, ticked for him. See plan-troll-day.js.
+ * THE DAY TROLLED THE WAY HE TROLLS IT: one line from the ramp and back. See plan-troll-loop.js.
  *
  * Ryan, 2026-10-03: *"my problem is i am basically having to draw out how i troll for every lake we
- * talk about... there doesn't seem to be an automated way to troll"*. So this ticks it: one
- * continuous troll out of the pieces Find water laid out, starting on the piece he ticked -- or the
- * one nearest the ramp when he ticked none -- and every tick stays his to change. "Build the day"
- * then rigs it in this order.
+ * talk about... there doesn't seem to be an automated way to troll"*. The first answer strung Find
+ * water's pieces end to end (trollDay(), plan-troll-day.js); on his Wateree day for 10/4 that was
+ * fifteen pieces laddered back and forth over one strip -- *"how is this one continuous troll? this is
+ * just joining a bunch of random lines together... there are double backs and sharp turns... doesn't
+ * start or end at the ramp at all"*. His own unit's log for his four Wateree days, and the loop he drew
+ * round Moultrie's dam basin, are what this builds instead: loops from the ramp, out along one edge
+ * and back on other water, on the contour one steering band deeper than the deepest bait needs, and
+ * where there is a choice, past the most of his own catches of the day's species, then the most
+ * charted structure.
  *
- * WHICH WATER IS THE DAY'S, from what the tab already knows and nothing new:
- *   the deepest bait  the deep edge of the fish band: the spread is stacked through the band and the
- *                     deepest rod touches first. On a day the research says the fish are ON THE
- *                     BOTTOM the bait is down there with them, so it is the band's shallow edge.
- *   the water         any water deep enough for the bait -- and on a bottom day, the band itself,
- *                     because there the band IS the bottom the fish are on.
+ * WHAT IT TAKES FROM THE TAB, and nothing new:
+ *   the deepest bait  the deep edge of the fish band (the spread is stacked through the band and the
+ *                     deepest rod touches first); on a day the research puts the fish ON THE BOTTOM,
+ *                     the band's shallow edge. Compared with TODAY'S water, as everything on this tab is.
+ *   what to pass      his catches of this species in the journal, and the cast spots Find water listed.
+ *   where to turn     a spot or a piece he ticked: a loop turns there.
  *   the guide's water what the research says the fish are over (`waterDepthFt`) is SAID, never a gate.
- *                     It was a gate for a day: on Wateree for 2026-10-04 it kept 15 of 373 pieces, the
- *                     nearest 3.3 mi from Clearwater Cove, and the troll ran out there with the lines up.
- *                     Ryan: *"Why would I travel 2 miles from the ramp to start trolling?"* Annotate,
- *                     never filter: the status line says how many of the day's pieces are over it.
- *   his slider        the tab's depth filter, if he set one.
- *   contours          pieces on structure chords are left out -- he follows the contour lines.
+ *
+ * The loop's legs go into the list as pieces L1, L2... ticked, in order, with how the troll runs them,
+ * so "Build the day" builds it the way every picked day is built. Every tick stays his to change.
  */
-export function trollForMe() {
+export async function trollForMe() {
   const say = (m, bad) => {
     const el = $('wgStatus');
     if (el) { el.textContent = m; el.style.color = bad ? 'var(--warn)' : 'var(--muted)'; }
   };
-  if (!T.pieces.length) return say('Press Find water first — this strings a day together out of the water it lays out.', true);
-  if (!T.depthAt) {
-    return say(`${T.lake || 'This lake'}'s pack has no depth areas, so a hop with the baits in cannot be `
-             + 'sounded. Tick the water by hand.', true);
+  if (!T.pieces.length) return say('Press Find water first — the loop is laid on the water it reads.', true);
+  if (!T.depthAt || !(T.daFeatures && T.daFeatures.length)) {
+    return say(`${T.lake || 'This lake'}'s pack has no depth areas, so the water under a line cannot be `
+             + 'read. Tick the water by hand.', true);
   }
   const band = Array.isArray(T.band) && T.band.length === 2 ? T.band : null;
   if (!band) return say('No fish band for this species here, so nothing says how deep the deepest bait runs. Tick the water by hand.', true);
   const bottom = T.holding === 'bottom';
   const floorFt = bottom ? band[0] : band[1];
-  const over = bottom ? band : null;
   const guide = Array.isArray(T.waterDepthFt) ? T.waterDepthFt : null;
-  const crosses = (p, w) => {
-    const c = corridorOf(p);
-    if (c.fromFt == null) return null;
-    return !(c.fromFt > w[1] || c.toFt < w[0]);
-  };
-  const onWater = (p) => !over || crosses(p, over) !== false;
-  const ticked = T.pieces.filter((p) => T.picked.has(p.key));
-  const startKey = ticked.length === 1 ? ticked[0].key : undefined;
-  let day;
+
+  // The water Find water laid out, without a loop from an earlier press.
+  const found = T.pieces.filter((p) => !p.loop);
+  // WHERE HE SAID TO TURN: a spot he ticked, or the middle of a piece he ticked.
+  const via = [
+    ...T.spots.filter((sp) => T.pickedSpots.has(sp.key)).map((sp) => sp.at),
+    ...found.filter((p) => T.picked.has(p.key)).map((p) => p.coords[Math.floor(p.coords.length / 2)]),
+  ].filter(Array.isArray).slice(0, 4);   // a day is at most four loops (trollLoop's maxPetals)
+  // HIS CATCHES OF THIS FISH, wherever the journal has a position for one.
+  const want = String(T.species || '').trim().toLowerCase();
+  const catches = (state.CATCHES || [])
+    .filter((c) => c && String(c.species || '').trim().toLowerCase() === want
+      && Number.isFinite(parseFloat(c.lat)) && Number.isFinite(parseFloat(c.lon)))
+    .map((c) => ({ at: [parseFloat(c.lon), parseFloat(c.lat)], date: c.date || null }));
+
+  say(`Laying the loop from ${T.rampName || 'the ramp'}…`);
+  await new Promise((res) => setTimeout(res, 0));
+  let loop;
   try {
-    day = trollDay(T.pieces, {
-      ramp: T.ramp, floorFt, depthAt: T.depthAt,
-      barriers: barrierIndex(T.shoreFeatures, T.koFeatures),
-      windowMin: T.windowMin, stopMin: stopsWanted() * DEFAULT_STOP_MIN, usableAh: T.usableAh,
-      windByHour: T.windByHour, startKey, stepM: T.stepM,
-      keep: (p) => !T.chordRuns.has(p.runId) && inDepthBand(p) && onWater(p),
-    });
+    loop = await trollLoopAsync({
+      ramp: T.ramp, daFeatures: T.daFeatures, shoreFeatures: T.shoreFeatures, koFeatures: T.koFeatures,
+      offsetFt: T.offsetFt || 0, floorFt,
+      windowMin: T.windowMin, stopMin: stopsWanted() * DEFAULT_STOP_MIN, minM: T.minM,
+      marks: T.spots, catches, via,
+    }, (n) => say(`Laying the loop from ${T.rampName || 'the ramp'}… ${n} turn-arounds tried`));
   } catch (e) { return say(e.message, true); }
-  const where = over ? ` on ${over[0]}–${over[1]} ft of water` : '';
-  // THE GUIDE'S WATER, SAID. How many of the day's pieces cross it -- a note, not a gate (see above).
-  const dayPieces = day.keys.map((k) => T.pieces.find((p) => p.key === k)).filter(Boolean);
-  const onGuide = guide ? dayPieces.filter((p) => crosses(p, guide) === true).length : 0;
-  if (!day.keys.length) {
-    return say(startKey
-      ? `The piece you ticked does not hold ${floorFt} ft of water${where}, so the deepest bait would `
-        + 'touch on it. Tick a deeper one, or none to start nearest the ramp.'
-      : `No contour piece here holds ${floorFt} ft of water${where} — the deepest bait in a `
-        + `${band[0]}–${band[1]} ft band would touch everywhere. Tick the water by hand.`, true);
-  }
-  T.picked = new Set(day.keys);
-  T.trollOrder = day.keys.slice();
-  // AND HOW IT RUNS EACH PIECE, which "Build the day" builds from. Keeping only the order is what
-  // made the 2026-10-04 Wateree day a string of runs with the lines up -- see trollLeg().
-  T.trollSteps = day.steps;
+  if (!loop || loop.error) return say(`No loop: ${(loop && loop.error) || 'nothing came back'}.`, true);
+
+  const pieces = loopPieces(loop, {
+    depthAt: T.depthAt, spots: T.spots, slug: T.r2Key, rampName: T.rampName,
+    shoreIndex: T.shoreFeatures && T.shoreFeatures.length ? shorelineIndex(T.shoreFeatures) : null,
+    reasonsWith: { minM: T.minM || 805, fishBandFt: band, holding: T.holding, todayOffsetFt: T.offsetFt || 0 },
+  });
+  const keys = pieces.map((p) => p.key);
+  T.pieces = [...pieces, ...found];
+  T.picked = new Set(keys);
+  T.pickedSpots = new Set();
+  T.trollOrder = keys.slice();
+  T.trollSteps = loopSteps(loop, pieces);
   paint();
-  const zones = T.koFeatures.length;
-  say(`One troll from ${startKey ? 'the piece you ticked' : 'the piece nearest the ramp'}: `
-    + `${day.pieces} piece${day.pieces === 1 ? '' : 's'}, ${fmtMi(day.trolledM)} trolled in one line `
-    + `(${fmtMi(day.hopTrolledM)} of it between pieces with the baits in), ${fmtMi(day.runM)} with the `
-    + `lines up. Never over water under ${floorFt} ft — `
+  const onGuide = guide ? pieces.filter((p) => {
+    const lo = todayFt(p.water.line.minFt, T.offsetFt), hi = todayFt(p.water.line.maxFt, T.offsetFt);
+    return !(lo > guide[1] || hi < guide[0]);
+  }).length : 0;
+  const zones = (T.koFeatures || []).length;
+  const n = loop.petals.length;
+  say(`${n} loop${n === 1 ? '' : 's'} from ${T.rampName || 'the ramp'} and back: ${fmtMi(loop.trolledM)} trolled, `
+    + `${fmtMi(loop.runM)} with the lines up (out of the cove and back in)`
+    // Where a line had to come back within 100 m of water the day already trolled, it says how much.
+    + (loop.sharedM > 0 ? `; ${fmtMi(loop.sharedM)} of it is back over water the day already trolled` : '')
+    + '. '
+    + `On the ${Math.round(loop.lineFt)} ft contour, never over water under ${floorFt} ft — `
     + (bottom ? 'the top of the band, where a bait on the bottom with these fish runs'
               : `the bottom of the ${band[0]}–${band[1]} ft fish band, where the deepest bait runs`)
-    + where
     + (zones ? `, and out of ${zones} keep-out zone${zones === 1 ? '' : 's'}` : '')
-    + (day.droppedForBattery ? `; ${day.droppedForBattery} piece${day.droppedForBattery === 1 ? '' : 's'} `
-                               + 'left off the end for the battery' : '')
-    + (guide ? `. ${onGuide} of the ${dayPieces.length} pieces are over the ${guide[0]}–${guide[1]} ft of water the `
-               + 'research says the fish are over' : '')
-    + '. Every tick is still yours — change one and the day goes back to shortest-first.');
+    + `. It passes ${loop.score.fish} of your ${catches.length} ${T.species || ''} catch${catches.length === 1 ? '' : 'es'} in the journal`
+    + ` and ${loop.score.structure} charted mark${loop.score.structure === 1 ? '' : 's'}`
+    + (via.length ? `, and turns at the ${via.length === 1 ? 'water' : `${via.length} places`} you ticked` : '')
+    + (guide ? `. ${onGuide} of its ${pieces.length} legs cross the ${guide[0]}–${guide[1]} ft of water the research says the fish are over` : '')
+    + '. Tick a spot or a piece and press it again to make a loop turn there.');
 }
 
 /**
@@ -1417,7 +1430,7 @@ export async function trollPlan() {
     const before = T.pieces;
     await findWater();
     if (T.pieces === before || !T.pieces.length) return;     // Find water said why, on the status line
-    trollForMe();
+    await trollForMe();
     if (!T.trollOrder || !T.picked.size) return;
     await buildFromPicked();
   } finally {

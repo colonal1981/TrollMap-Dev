@@ -1,0 +1,195 @@
+// The day is one line from the ramp and back: loops along the edges, not pieces stitched together.
+//
+// Personal use only, not for distribution or resale; not for navigation.
+//
+// Ryan, 2026-10-03, on the Wateree day "Plan it as one troll" built by stringing Find water's pieces:
+// "how is this one continuous troll? this is just joining a bunch of random lines together and not
+// even in a straight line... there are double backs and sharp turns... doesn't start or end at the
+// ramp at all". His four Wateree days from his unit's log, and the loop he drew round Moultrie's dam
+// basin ("using structure and my catch history and other things to decide exactly where the track
+// would go"), are what plan-troll-loop.js builds instead.
+//
+// A synthetic lake: a channel 16 km long and 600 m wide, 45 ft in the middle, shoaling to both banks
+// in 5 ft bands; the ramp on the north bank halfway along, so a day can go either way and neither end
+// is in reach. What these hold:
+//   1. the day leaves the cove mouth and comes back to it: every loop starts and ends there, and the
+//      only water run with the lines up is out of the cove and back in;
+//   2. no line is ever over water shallower than the floor;
+//   3. the line rides the contour one steering band deeper than the floor, and comes home on the
+//      other edge -- not within 100 m of the way out;
+//   4. his catches of the day's species decide which way the loop goes when the water does not;
+//   5. a place he ticked is where a loop turns;
+//   6. each loop is two legs, out and back, built as pieces whose steps leave nothing to run between
+//      them; and the assembler puts no transit between a leg and the one starting where it ends;
+//   7. "Troll it for me" lays the loop (not trollDay) without freezing the page, and "Plan it as one
+//      troll" waits for it;
+//   8. a loop that comes home over the water it went out on, or over water an earlier loop of the day
+//      trolled, does not fill the day with it, however many of his fish it passes: his 10/3 Wateree day laid live (the lake 3.2 ft down) was four loops, and
+//      three came home within 100 m of the way out for 81-88% of the way;
+//   9. the lines go in where a loop fits: the nearest deep-enough water to Short Stay on Moultrie at
+//      a 40 ft floor was one cell of a hole, and the day said no loop fits.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { trollLoop, trollLoopAsync, depthGrid, loopPieces, loopSteps, marksAlong, densify, sharedWaterM, SAME_WATER_M } from '../js/modules/plan-troll-loop.js';
+import { metresBetween } from '../js/modules/plan-candidates.js';
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const read = (f) => fs.readFileSync(path.join(HERE, '..', f), 'utf8');
+
+const LAT0 = 34.0, KX = 111320 * Math.cos((LAT0 * Math.PI) / 180), KY = 110540;
+const at = (x, y) => [-80 + x / KX, LAT0 + y / KY];
+const L = 16000, W = 600, MAXFT = 45;
+const depthAtY = (y) => MAXFT * Math.sin((Math.PI * y) / W);
+const yOf = (ft) => (Math.asin(Math.min(1, ft / MAXFT)) * W) / Math.PI;
+const rect = (x0, y0, x1, y1, ft) => ({ type: 'Feature', properties: { depth_max_ft: ft },
+  geometry: { type: 'Polygon', coordinates: [[at(x0, y0), at(x1, y0), at(x1, y1), at(x0, y1), at(x0, y0)]] } });
+const DA = [];
+for (let ft = 0; ft < MAXFT; ft += 5) {
+  const a = yOf(ft), b = yOf(ft + 5);
+  DA.push(rect(0, a, L, b, ft + 5));             // south side
+  DA.push(rect(0, W - b, L, W - a, ft + 5));     // north side
+}
+DA.push(rect(0, yOf(MAXFT - 0.01), L, W - yOf(MAXFT - 0.01), MAXFT));
+const RAMP = at(8000, W - 10);
+const BASE = { ramp: RAMP, daFeatures: DA, floorFt: 20, windowMin: 180, stopMin: 0, maxPetals: 1 };
+const grid = depthGrid(DA, { bbox: [-80.01, 33.99, -79.8, 34.02], cellM: 25 });
+const M_PER_MIN = (2 * 1609.344) / 60;
+const xOf = (pt) => (pt[0] + 80) * KX;
+const yAt = (pt) => (pt[1] - LAT0) * KY;
+
+test('1. every loop leaves the cove mouth and comes back to it; only the cove is run', () => {
+  const r = trollLoop(BASE);
+  assert.ok(!r.error, r.error);
+  for (const p of r.petals) {
+    assert.ok(metresBetween(p.out[0], r.start) < 1);
+    assert.ok(metresBetween(p.back[p.back.length - 1], r.start) < 1);
+  }
+  assert.ok(r.coveM < 300, `out of the cove ${r.coveM} m`);
+  assert.ok(Math.abs(r.runM - 2 * r.coveM) <= 1, `run ${r.runM} m, cove ${r.coveM} m`);
+  assert.ok(r.trolledM >= 0.85 * r.budgetMin * M_PER_MIN - 2 * r.coveM, `trolled ${r.trolledM} m`);
+});
+
+test('2. no line is over water shallower than the floor', () => {
+  const r = trollLoop(BASE);
+  for (const p of r.petals) for (const half of [p.out, p.back]) {
+    for (let k = 1; k < half.length; k++) {
+      for (let t = 0; t <= 10; t++) {
+        const pt = [half[k - 1][0] + (half[k][0] - half[k - 1][0]) * t / 10, half[k - 1][1] + (half[k][1] - half[k - 1][1]) * t / 10];
+        assert.ok(depthAtY(yAt(pt)) >= 20 - 5.5, `${depthAtY(yAt(pt)).toFixed(1)} ft at ${yAt(pt).toFixed(0)} m`);
+      }
+    }
+  }
+});
+
+test('3. the line rides the 25 ft contour and comes home on the other edge', () => {
+  const r = trollLoop(BASE);
+  const p = r.petals[0];
+  // Along the line, every 40 m -- not the straightened line's few corners.
+  const medY = (c) => { const ys = densify(c, 40).map(yAt).sort((a, b) => a - b); return ys[Math.floor(ys.length / 2)]; };
+  const north = (y) => y > W / 2;
+  // One half on each side of the channel, each near its own 25 ft line.
+  assert.notEqual(north(medY(p.out)), north(medY(p.back)));
+  for (const half of [p.out, p.back]) {
+    const ft = depthAtY(medY(half));
+    assert.ok(ft >= 20 && ft <= 32, `median water ${ft.toFixed(1)} ft`);
+  }
+  // Away from the two ends, home is never within the app's "same water" of the way out.
+  const mid = p.back.filter((pt) => metresBetween(pt, r.start) > 500 && metresBetween(pt, p.out[p.out.length - 1]) > 500);
+  for (const pt of mid) {
+    const dmin = Math.min(...p.out.map((q) => metresBetween(pt, q)));
+    assert.ok(dmin > SAME_WATER_M - 40, `back within ${dmin.toFixed(0)} m of out`);
+  }
+});
+
+test('4. his catches decide which way the loop goes when the water does not', () => {
+  // The same water both ways from the ramp; his fish one way or the other.
+  const east = [at(11000, yOf(25)), at(11800, W - yOf(25)), at(12200, yOf(25))].map((a) => ({ at: a }));
+  const west = [at(4000, yOf(25))].map((a) => ({ at: a }));
+  const rE = trollLoop({ ...BASE, catches: east });
+  const rW = trollLoop({ ...BASE, catches: west });
+  const turnX = (r) => xOf(r.petals[0].out[r.petals[0].out.length - 1]);
+  assert.ok(rE.score.fish >= 2, `east passes ${rE.score.fish}`);
+  assert.ok(turnX(rE) > 8000, 'east catches send it east');
+  assert.ok(rW.score.fish >= 1 && turnX(rW) < 8000, 'a west catch sends it west');
+});
+
+test('5. a place he ticked is where the loop turns', () => {
+  const via = at(11000, yOf(25));
+  const r = trollLoop({ ...BASE, via: [via] });
+  const turn = r.petals[0].out[r.petals[0].out.length - 1];
+  assert.ok(metresBetween(turn, via) < 150, `turned ${metresBetween(turn, via).toFixed(0)} m from it`);
+});
+
+test('6. two legs a loop, as pieces with nothing to run between them; no transit at a shared end', () => {
+  const r = trollLoop({ ...BASE, maxPetals: 2, windowMin: 300 });
+  assert.equal(r.petals.length, 2);
+  assert.equal(r.legs.length, 4);
+  const depthAt = (pt) => { const v = grid.at(pt); return Number.isFinite(v) ? v : null; };
+  const pieces = loopPieces(r, { depthAt, slug: 'test_lake', rampName: 'Ramp',
+                                 spots: [{ at: at(9000, yOf(25)), type: 'hump', depthFt: 22 }] });
+  assert.deepEqual(pieces.map((p) => p.key), r.legs.map((_, i) => `L${i + 1}`));
+  for (const p of pieces) {
+    assert.ok(p.water.line.sustainedMinFt >= 20 - 1, `leg ${p.key} line ${p.water.line.sustainedMinFt}`);
+    assert.equal(p.envelope.length, p.envelopeLine.length);
+  }
+  const steps = loopSteps(r, pieces);
+  assert.equal(steps[0].kind, 'run');
+  const hops = steps.filter((s, i) => i > 0 && s.kind !== 'piece');
+  assert.ok(hops.every((s) => s.kind === 'troll' && s.m === 0), hops.map((s) => s.m).join(','));
+  assert.equal(marksAlong(r.legs.flatMap((l) => l.coords), [{ at: at(9000, yOf(25)) }], 200).length, 1);
+  const asm = read('js/modules/plan-assemble.js');
+  assert.match(asm, /metresBetween\(cursor, legStart\) <= 1 \? straight\(cursor, legStart\)/);
+  assert.match(read('js/modules/smart-plan-v2.js'), /metresBetween\(cursor, f\.start\) > 1\) pairs\.push/);
+});
+
+test('7. Troll it for me lays the loop without freezing the page; Plan it as one troll waits for it', async () => {
+  const r = await trollLoopAsync(BASE);
+  assert.ok(r.petals.length >= 1);
+  const ui = read('js/modules/plan-water-ui.js');
+  assert.match(ui, /export async function trollForMe\(\)/);
+  assert.match(ui, /loop = await trollLoopAsync\(/);
+  assert.match(ui, /T\.trollSteps = loopSteps\(loop, pieces\);/);
+  assert.match(ui, /await trollForMe\(\);/);
+  assert.doesNotMatch(ui, /day = trollDay\(/);
+});
+
+test('8. a loop that comes home over its own water does not fill the day, whatever it passes', () => {
+  // West of the ramp, a creek 100 m wide and all 25 ft: one line fits, so a loop up it comes home
+  // on the way out. East, the channel, where out and back are two edges. His fish are all up the creek.
+  const DA2 = DA.map((f) => ({ ...f, geometry: { ...f.geometry,
+    coordinates: [f.geometry.coordinates[0].map(([x, y]) => [Math.max(x, -80 + 8000 / KX), y])] } }));
+  DA2.push(rect(0, W / 2 - 50, 8000, W / 2 + 50, 25));
+  const creek = [2000, 3500, 5000, 6500].map((x) => ({ at: at(x, W / 2) }));
+  const r = trollLoop({ ...BASE, daFeatures: DA2, catches: creek });
+  assert.ok(!r.error, r.error);
+  const p = r.petals[0];
+  assert.ok(xOf(p.out[p.out.length - 1]) > 8000, `turned at x ${xOf(p.out[p.out.length - 1]).toFixed(0)} -- up the creek`);
+  assert.ok(r.sharedM < 0.1 * r.trolledM, `${r.sharedM} m of ${r.trolledM} m trolled twice`);
+  // What it measures: a way home laid on the way out is all shared but its two ends.
+  const line = [at(8000, 300), at(4000, 300)];
+  const m = sharedWaterM(line, [...line].reverse());
+  assert.ok(m > 4000 - 4 * SAME_WATER_M - 50 && m < 4000, `${m.toFixed(0)} m`);
+  assert.equal(sharedWaterM(line, [at(4000, 300), at(4000, 0), at(8000, 0), at(8000, 300)]), 0);
+  // And water a loop earlier in the day trolled, away from the cove mouth they all leave by.
+  const earlier = [at(8000, 300), at(6000, 300), at(6000, 500), at(8000, 300)];
+  const again = sharedWaterM(line, [at(4000, 300), at(4000, 0), at(8000, 0), at(8000, 300)], SAME_WATER_M, [earlier]);
+  assert.ok(again > 2000 - 2 * SAME_WATER_M - 50 && again < 2000 + 50, `${again.toFixed(0)} m`);
+});
+
+test('9. the lines go in where a loop fits, not in a hole nearer the ramp', () => {
+  // A 45 ft hole 75 m across right off the ramp, cut off from the channel by 15 ft water.
+  const ramp = at(8000, W - 10);
+  const hole = rect(7960, W - 120, 8040, W - 45, 45);
+  const DA3 = [...DA.map((f) => ({ ...f, geometry: { ...f.geometry,
+    coordinates: [f.geometry.coordinates[0].map(([x, y]) => [x, Math.min(y, LAT0 + (W - 150) / KY)])] } })),
+    // 15 ft all round it (the shallowest band covering a cell is its depth, so not over it).
+    rect(0, W - 150, 7960, W, 15), rect(8040, W - 150, L, W, 15),
+    rect(7960, W - 150, 8040, W - 120, 15), rect(7960, W - 45, 8040, W, 15), hole];
+  const r = trollLoop({ ...BASE, ramp, daFeatures: DA3 });
+  assert.ok(!r.error, r.error);
+  assert.ok(yAt(r.start) < W - 150, `started at y ${yAt(r.start).toFixed(0)} -- in the hole`);
+  assert.ok(r.trolledM > 0.85 * r.budgetMin * M_PER_MIN - 2 * r.coveM - 1000, `trolled ${r.trolledM} m`);
+});

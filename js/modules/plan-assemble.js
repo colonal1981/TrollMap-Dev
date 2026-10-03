@@ -1596,7 +1596,11 @@ export function assemblePlan(o) {
             passes: legPasses = 1, finish: legFinish = legEnd } = facing[ci];
 
     // Transit to the head of the leg.
-    const p = joinEnds(transit(cursor, legStart) || straight(cursor, legStart), cursor, legStart);
+    // A leg that starts where the last one ended is not reached by a transit. Asked anyway, the
+    // router's cell-centre answer made a 10-60 m spike and a "Run 0.0 mi" step between every pair
+    // of legs on Ryan's 2026-10-04 Wateree export.
+    const p = metresBetween(cursor, legStart) <= 1 ? straight(cursor, legStart)
+      : joinEnds(transit(cursor, legStart) || straight(cursor, legStart), cursor, legStart);
     if (p.distanceM > 1) {
       const len = Math.round(p.distanceM);
       const mins = minutesFor(p.distanceM, transitMph);
