@@ -4608,6 +4608,66 @@ async function waterBlock(b, lat, lon, env) {
  * and 3 and the /duke route forwards a `basin` parameter, but fetchDukeApi ignores it and every
  * one of those calls returns the identical full list. Three requests for one answer.)
  */
+/**
+ * THE POOL GAUGE'S OWN FULL-POOL LINE, when its NWS impact statements carry one.
+ *
+ * 31 of the 163 NWS gauges bound to a lake carried one on 2026-10-03
+ * (`_scratch/fp_survey_1003/survey.json`): "Full pool level as defined by Santee Cooper." at 75.5 on
+ * both Moultrie gauges, "Full pool" at 76.8 on Marion's PNVS1, "100: Full Pool." on the Duke-index
+ * gauges, "990: FULL POOL STAGE." at Lake Lure. Every one of them OPENS with the words, optionally
+ * after "normal" -- a definition of the level, not a sentence about water above or below it, so a
+ * line that only mentions full pool part-way through is not taken. Two lines at two different
+ * stages is no answer, and none is given.
+ *
+ * Written on the gauge's own scale, which is the scale its reading is on. That is what earns the
+ * difference: one gauge, one zero, two numbers.
+ */
+const FULL_POOL_LINE = /^\s*(normal\s+)?full\s+(pool|pond)\b/i;
+
+export function gaugeFullPoolLine(poolReading) {
+  const all = poolReading && poolReading.flood_context && poolReading.flood_context.impacts
+    && Array.isArray(poolReading.flood_context.impacts.all) ? poolReading.flood_context.impacts.all : [];
+  const hits = all.filter((i) => i && Number.isFinite(i.stage) && FULL_POOL_LINE.test(String(i.statement || '')));
+  const stages = [...new Set(hits.map((i) => i.stage))];
+  if (stages.length !== 1) return null;
+  return { ft: stages[0], statement: String(hits[0].statement).trim(),
+           lid: poolReading.lid || null, name: poolReading.name || null };
+}
+
+/**
+ * Level, full pool and the difference, all off the pool gauge, where nothing else could earn the
+ * difference. Moultrie, 2026-10-03: the registry held Marion's 76.8 ("assumed equal to Lake
+ * Marion's 76.8; NOT separately published") against a NAVD88 reading of 71.71, so the card showed
+ * two numbers from two marks and withheld the difference -- while plan-builder's go/no-go subtracted
+ * them anyway and said "CAUTION: 5.2 ft below full pool". LMIS1 reads 72.76 and states 75.5 as
+ * Santee Cooper's full pool, on the same zero: 2.74 ft down. Ryan: "it should use whichever one is
+ * correct". The registry's figure, where it differs, is kept beside it and not dropped.
+ */
+function fromGaugeLine(out, gl, stage, gd, fp) {
+  if (!gl || !Number.isFinite(gl.ft) || !Number.isFinite(stage)) return null;
+  const nrldb = gd && Number.isFinite(gd.nrldb) ? gd.nrldb : null;
+  const who = [gl.lid, gl.name].filter(Boolean).join(', ');
+  const res = { ...out };
+  res.level_ft = round2(stage);
+  res.full_pool_ft = gl.ft;
+  res.below_full_pool_ft = round2(gl.ft - stage);
+  res.full_pool_source = `NWS gauge ${who || 'on this water'}: "${gl.statement}"`;
+  res.source = `NWS gauge ${who || 'on this water'} -- its reading and its own full-pool line`;
+  res.datum = "the gauge's own scale";
+  const notes = ["level and full pool are both on this gauge's own scale, the one its full-pool line "
+                 + 'is written on'];
+  if (nrldb != null && nrldb !== 0 && gd.name) {
+    notes.push(`on ${gd.name} the same reading is ${round2(stage + nrldb)} ft`);
+  }
+  if (fp && Number.isFinite(fp.ft) && Math.abs(fp.ft - gl.ft) >= 0.05) {
+    res.full_pool_registry_ft = fp.ft;
+    notes.push(`the registry holds ${fp.ft} ft${fp.source ? ` (${fp.source})` : ''}`);
+  }
+  res.datum_note = notes.join('; ');
+  res.pending = null;
+  return res;
+}
+
 export function chartDatumShape(b, sources = {}) {
   const out = {
     // WHAT LEVEL THE CHART WAS MADE AT IS NOT PUBLISHED. This said 'full_pool' of every pack until
@@ -4769,7 +4829,20 @@ export function chartDatumShape(b, sources = {}) {
         + `${fp.datum ? `, full pool ${fp.datum})` : ', full pool datum unstated)'}`
         + ' — both are shown, the difference is not, because across datums it can flip sign';
     }
+    if (out.below_full_pool_ft == null) {
+      const gl = fromGaugeLine(out, sources.gaugeFullPool, stage, gd, fp);
+      if (gl) return gl;
+    }
     return out;
+  }
+
+  // NO REGISTRY FULL POOL, BUT THE POOL GAUGE STATES ONE ON ITS OWN SCALE. Lake Summit's EFLN7:
+  // "100: FULL POOL - 356 CFS", reading 100.31. That is a level, a full pool and a difference.
+  {
+    const gd = (b.pool && b.pool.datum) || null;
+    const stage = Number.isFinite(sources.gaugeStageFt) ? sources.gaugeStageFt : null;
+    const gl = fromGaugeLine(out, sources.gaugeFullPool, stage, gd, null);
+    if (gl) return gl;
   }
 
   // NOT LISTED HERE ON PURPOSE: the Corps. `usace.conservation_pool_ft` is a TARGET, not a
@@ -4863,7 +4936,8 @@ async function chartDatum(b, operator, poolReading, env) {
       }
     }
   }
-  return chartDatumShape(b, { fullPool: fp, gaugeStageFt: stage });
+  return chartDatumShape(b, { fullPool: fp, gaugeStageFt: stage,
+                              gaugeFullPool: gaugeFullPoolLine(poolReading) });
 }
 
 // ── tide and currents ───────────────────────────────────────────────────────────────────────

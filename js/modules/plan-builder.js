@@ -287,6 +287,10 @@ export function collectPlan(){
             why: e.why,
             phaseName: e.phaseName,
             pass: e.pass, ofPasses: e.ofPasses,
+            // THE ROD TO REACH FOR IF THESE TWO ARE NOT WORKING, as a field and not only as the
+            // sentence in `why`. The rigging list reads it to say "tie it on" about a rod that is
+            // only ever the fallback; on his 10/4 Moultrie plan that was R4, on seven legs.
+            ifNotProducing: e.ifNotProducing || null,
             // Whether tap-and-reel-up is the right move on this leg. See bottomNote() in
             // plan-to-timeline.js — it is the thing his own technique cannot tell him.
             bottomNote: e.bottomNote,

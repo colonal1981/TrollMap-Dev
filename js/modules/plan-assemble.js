@@ -2203,6 +2203,13 @@ export function assemblePlan(o) {
    * A rod stranded because fitRiverDay() CUT THE REACH IT WAS FOR is the app's doing, not the model's,
    * and saying "you rigged this for nothing" about it would be blaming him for our arithmetic. That
    * one names the reach that went, because the fix is a different day and not a different bait.
+   *
+   * A ROD THAT IS A LEG'S `ifNotProducing` IS NOT RIGGED FOR NOTHING. That field is the answer to
+   * "these two are not working", and the schema calls it the reason the other four rods are aboard.
+   * His Moultrie plan of 2026-10-04 named R4 as the fallback on seven of eight legs and was told
+   * "R4 ... never goes in the water on any leg ... this one buys nothing", which reads as "do not
+   * rig it" about the first rod he would reach for. Counted here only once it has survived the leg
+   * check above (the fallback must name a rod not already out, in place of one that is).
    */
   const inWater = new Set();
   for (const l of legs) {
@@ -2210,6 +2217,7 @@ export function assemblePlan(o) {
       if (l.deploy && l.deploy[side]) inWater.add(l.deploy[side]);
     }
     for (const st of (l.stops || [])) for (const r of (st.rods || [])) inWater.add(r);
+    if (l.ifNotProducing && l.ifNotProducing.rodId) inWater.add(l.ifNotProducing.rodId);
   }
   const strandedBy = new Map();
   for (const runId of (fitted.droppedRuns || [])) {

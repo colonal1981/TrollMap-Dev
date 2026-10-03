@@ -67,6 +67,32 @@ function whereItFishes(uses) {
     : `${s.from === s.to ? s.from : `${s.from}–${s.to}`} ${s.side}${s.at ? ` (${s.at})` : ''}`));
 }
 
+// THE ROD TO REACH FOR WHEN THE PAIR IS NOT WORKING, per troll row. The field where the export
+// carries it; on a file saved before it did, the one sentence plan-to-timeline.js's fallbackLine()
+// writes into the row's `why` -- "If they are not producing: put R4 (...) on in place of R1" --
+// which is this app's own wording in a fixed form, not prose being guessed at.
+const FALLBACK_SENTENCE = /If they are not producing: put (R\d+)\b[\s\S]*? in place of (R\d+)\b/;
+function fallbackOf(e) {
+  const f = e && e.ifNotProducing;
+  if (f && f.rodId) return { rodId: str(f.rodId), insteadOf: str(f.insteadOf) };
+  const m = FALLBACK_SENTENCE.exec(str(e && e.why));
+  return m ? { rodId: m[1], insteadOf: m[2] } : null;
+}
+
+// "R1, R3 or R2" -- the rods it goes in for, in the order the day reaches them.
+const orList = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} or ${xs[xs.length - 1]}`);
+
+// "L1–L3, L5–L8", consecutive troll legs read as one stretch, the same way whereItFishes does.
+function legRanges(list) {
+  const out = [];
+  for (const u of list) {
+    const last = out[out.length - 1];
+    if (last && u.n === last.lastN + 1) { last.to = u.leg; last.lastN = u.n; continue; }
+    out.push({ from: u.leg, to: u.leg, lastN: u.n });
+  }
+  return out.map((r) => (r.from === r.to ? r.from : `${r.from}\u2013${r.to}`)).join(', ');
+}
+
 /**
  * Every rod on the boat, the lure it starts the day with, and what happens to it afterwards.
  *
@@ -89,6 +115,7 @@ export function rodsAtLaunch(p) {
 
   const first = new Map();    // rod id -> the first thing that happens to it: a leg row or a change
   const uses = new Map();     // rod id -> legs and stops, in timeline order
+  const backups = new Map();  // rod id -> the troll legs it is the fallback on
   const push = (id, v) => { if (!uses.has(id)) uses.set(id, []); uses.get(id).push(v); };
   const changes = [];
   const swaps = [];
@@ -124,6 +151,11 @@ export function rodsAtLaunch(p) {
         push(id, { kind: 'leg', leg, at, side, n });
         if (side === 'port' || side === 'starboard') pair[side] = { rod: id, lure: str(r.lure) };
       }
+      const fb = fallbackOf(e);
+      if (fb && fb.rodId) {
+        if (!backups.has(fb.rodId)) backups.set(fb.rodId, []);
+        backups.get(fb.rodId).push({ leg, n, insteadOf: fb.insteadOf });
+      }
       const key = `${pair.port ? pair.port.rod : ''}|${pair.starboard ? pair.starboard.rod : ''}`;
       if (key !== lastPair) { swaps.push(pair); lastPair = key; }
       continue;
@@ -155,7 +187,7 @@ export function rodsAtLaunch(p) {
   }
 
   const ids = new Set([...ROD_IDS, ...loadout.keys(), ...first.keys(), ...cast.keys(),
-                       ...uses.keys()]);
+                       ...uses.keys(), ...backups.keys()]);
   const rods = [...ids].sort(idOrder).map((id) => {
     const lo = loadout.get(id) || null;
     const f = first.get(id) || {};
@@ -175,14 +207,25 @@ export function rodsAtLaunch(p) {
     const rig = str(lo && lo.rig) || ROD_RIG[id] || '';
     const mine = uses.get(id) || [];
     const used = mine.length > 0 || changes.some((c) => c.rodId === id);
+    // A ROD THAT IS ONLY EVER THE FALLBACK STILL GETS TIED ON. His Moultrie plan of 2026-10-04 had
+    // R4 as the answer to "these two are not working" on seven of eight legs, and this list said
+    // "Not used on any leg or stop -- no need to tie it on today" about it.
+    const mineBackup = backups.get(id) || [];
     let status;
     if (used) status = 'fishes';
+    else if (mineBackup.length && lure && !(lo && lo.staged)) status = 'backup';
     else if (!lure || (lo && lo.staged)) status = 'staged';
     else status = 'idle';
+    const insteadOf = [...new Set(mineBackup.map((b) => b.insteadOf).filter(Boolean))];
+    const backup = mineBackup.length
+      ? `Backup if the pair is not producing: ${legRanges(mineBackup)}`
+        + `${insteadOf.length ? ` (in place of ${orList(insteadOf)})` : ''}`
+      : '';
     return {
       id, rig, terminal: TERMINAL[rig] || rig, lure, color, weight,
       runs: row ? str(row.depth) : '',
       where: whereItFishes(mine),
+      backup,
       presentation: str(castRow && castRow.presentation),
       status,
     };
@@ -202,11 +245,17 @@ export function rodsAtLaunchHtml(p, esc) {
   const snap = byRig('snap');
 
   const where = (r) => {
-    if (r.status === 'fishes') return r.where.length ? r.where.map(esc).join('<br>') : '—';
+    if (r.status === 'fishes') {
+      const lines = r.where.map(esc);
+      if (r.backup) lines.push(esc(r.backup));
+      return lines.length ? lines.join('<br>') : '—';
+    }
+    if (r.status === 'backup') return `<b>${esc(r.backup)}</b> — tie it on before you leave`;
     if (r.status === 'staged') return '<i>Not in this plan — keeps whatever is already on it</i>';
     return '<i>Not used on any leg or stop — no need to tie it on today</i>';
   };
-  const rodRows = rods.map((r) => `<tr${r.status === 'fishes' ? '' : ' style="color:#6b7785"'}>
+  const lit = (r) => r.status === 'fishes' || r.status === 'backup';
+  const rodRows = rods.map((r) => `<tr${lit(r) ? '' : ' style="color:#6b7785"'}>
       <td><b>${esc(r.id)}</b></td>
       <td>${esc(r.terminal || '—')}</td>
       <td>${r.lure ? `<b>${esc(r.lure)}</b>${r.color ? ` · ${esc(r.color)}` : ''}` : '—'}</td>
