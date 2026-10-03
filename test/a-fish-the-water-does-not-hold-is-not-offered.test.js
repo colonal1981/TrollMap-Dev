@@ -99,10 +99,19 @@ describe('the plan says when the fish is not on the list', () => {
     expect(prep.slice(0, prep.indexOf('\n}\n')).includes('rosterNote(')).toBe(true);
     expect(prep.slice(0, prep.indexOf('\n}\n')).includes('return { researched, legality, roster }')).toBe(true);
     for (const f of ['smart-plan-v2-wiring.js', 'plan-water-ui.js']) {
-      const s = src(f);
-      expect(s.includes('const { researched, legality, roster } = await preparePlanInputs(')).toBe(true);
-      expect(s.includes('if (roster) r.problems = [roster, ...(r.problems || [])];')).toBe(true);
+      expect(src(f).includes('const { researched, legality, roster } = await preparePlanInputs(')).toBe(true);
     }
+    expect(src('smart-plan-v2-wiring.js').includes('if (roster) r.problems = [roster, ...(r.problems || [])];')).toBe(true);
+    // PICK WATER READS IT OFF THE TAB STATE. `roster` is a local of findWater(); buildFromPicked() is
+    // another function, and the bare `roster` this test once asked for there threw "roster is not
+    // defined" on every Build the day (2026-10-03). findWater() carries it across on T.
+    const pw = src('plan-water-ui.js');
+    const find = pw.slice(pw.indexOf('export async function findWater('));
+    expect(find.slice(0, find.indexOf('\n}\n')).includes('roster: roster || null,')).toBe(true);
+    const build = pw.slice(pw.indexOf('export async function buildFromPicked('));
+    const body = build.slice(0, build.indexOf('\n}\n'));
+    expect(body.includes('if (T.roster) r.problems = [T.roster, ...(r.problems || [])];')).toBe(true);
+    expect(/[^.\w]roster[^\w:]/.test(body.replace(/\/\/.*$/gm, ''))).toBe(false);
   });
 
   it('Smart Plan adds it after the no-plan branch, whose status line is the first problem', () => {
