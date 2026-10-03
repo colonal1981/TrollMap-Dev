@@ -18,6 +18,12 @@ def ph(name, h, m, s=0, sha=None):
             'lat': 33.25, 'lon': -80.0, 'sha256': sha or name}
 
 
+def test_the_length_is_in_the_column_catch_centers_import_reads():
+    js = open(os.path.join(HERE, '..', 'js', 'modules', 'catch-journal.js'), encoding='utf-8').read()
+    read = re.search(r'const aiLen = String\((.*?)\)', js).group(1)
+    assert 'row.length_inches' in read and 'length_inches' in S.CSV_COLUMNS
+
+
 def test_species_are_the_apps_own_list():
     js = open(os.path.join(HERE, '..', 'js', 'modules', 'catch-journal.js'), encoding='utf-8').read()
     block = re.search(r'const SPECIES = \[(.*?)\];', js, re.S).group(1)
@@ -70,6 +76,8 @@ def test_a_row_is_in_catch_centers_columns_and_left_for_review():
                          'how_read': 'tail at 32', 'problems': [], '_model': 'claude-opus'}, 'tag')
     assert list(r) == S.CSV_COLUMNS
     assert r['review_status'] == '' and r['ai_length_inches'] == 32.0 and r['verified_length_inches'] == ''
+    # Catch Center's import reads the length from length_inches, never ai_length_inches
+    assert r['length_inches'] == 32.0
     assert r['time'] == '13:15:00' and r['sha256'] == 'abc' and 'Same fish: lure.jpg' in r['notes']
     assert 'verify_board_length_from_photo' in r['review_flags']
     r2 = S.row_for({**fish, 'board': None}, None, 'tag')

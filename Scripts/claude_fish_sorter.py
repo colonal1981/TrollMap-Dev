@@ -37,7 +37,8 @@ stream-json`). No API key, no credits.
 4. **Nothing already in the catch history comes in again** (`--history`, a Catch Center CSV): a fish
    is dropped if any of its photos is a history row's file or hash, or a history catch on that date
    falls inside the minutes its photos span.
-5. **One CSV in Catch Center's format** (the columns of `catches_approved.csv`), every row left for
+5. **One CSV in Catch Center's format** (the columns of `catches_approved.csv`, plus the `length_inches`
+   its import reads the length from), every row left for
    review: import it, select the photo folder for the year, check each fish, approve.
 
 Every answer is cached under `--out`, so a run that stops -- a usage limit, a closed laptop --
@@ -68,7 +69,10 @@ CSV_COLUMNS = ['review_status', 'review_flags', 'filename', 'datetime', 'date', 
                'lake', 'depth', 'has_fish', 'on_bump_board', 'species', 'verified_length_inches',
                'ai_length_inches', 'length_verified', 'confidence', 'source_model', 'notes', 'tempF',
                'windMph', 'windDir', 'cloudPct', 'pressureHpa', 'moonPhase', 'sha256', 'source_path',
-               'imported_from']
+               'imported_from', 'length_inches']
+# `length_inches` is not one of catches_approved.csv's columns, and it has to be there: Catch Center's
+# import (catch-journal.js normalizeCsvRow) reads the length from length_inches and never reads
+# ai_length_inches, so a length only in ai_length_inches comes in blank. Both carry the same number.
 # How many photos one sort request carries, each at SORT_PX on its long side -- enough to see a
 # fish, a board and a lure, at about 600 image tokens apiece.
 SORT_BATCH = 30
@@ -229,7 +233,7 @@ def ask(blocks, model, timeout=900):
 def json_of(text):
     a, b = text.find('{'), text.rfind('}')
     if a < 0 or b <= a:
-        raise ValueError('no JSON object in the answer')
+        raise ValueError('no JSON object in the answer: ' + ' '.join(text.split())[:300])
     return json.loads(text[a:b + 1])
 
 
@@ -430,7 +434,7 @@ def row_for(fish, m, run_tag):
         'length_verified': 'false', 'confidence': conf, 'source_model': '%s (claude_fish_sorter)' % model,
         'notes': ' | '.join(n for n in notes if n), 'tempF': '', 'windMph': '', 'windDir': '', 'cloudPct': '',
         'pressureHpa': '', 'moonPhase': '', 'sha256': b['sha256'], 'source_path': b['path'],
-        'imported_from': run_tag,
+        'imported_from': run_tag, 'length_inches': '' if length in (None, '') else length,
     }
 
 
