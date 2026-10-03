@@ -1225,7 +1225,8 @@ def structure_seeds(pack, depth, lat0, a):
 # Without shapely, or without the layer, the cut is skipped and `shore_lines` in the stats is 0.
 try:
     from shapely.geometry import LineString as _SLine, MultiLineString as _SMulti
-    from shapely.ops import split as _ssplit
+    from shapely.geometry import Polygon as _SPoly, Point as _SPoint
+    from shapely.ops import split as _ssplit, unary_union as _sunion
     from shapely.strtree import STRtree as _STree
     _HAVE_SHAPELY = True
 except Exception:                                        # pragma: no cover
@@ -1296,6 +1297,67 @@ class ChartedShore:
         out = [np.array(g.coords, float) for g in getattr(parts, 'geoms', [parts])
                if g.geom_type == 'LineString' and len(g.coords) >= 2]
         return out or [xy]
+
+
+class KeepOut:
+    """`keep_out.geojson` (build_keep_out_zones.py) in the fitter's metre frame.
+
+    THE WATER BEHIND A DAM'S BUOYS, OR BEHIND A LINE THE CHART NAMES KEEP-OUT. Ryan, 2026-10-03:
+    *"It's fine if the line is near the buoys I just don't want it inside of them"*. A lane that
+    enters a zone is cut there, the way ChartedShore cuts at the Pinopolis wall: what is outside is
+    kept, what is inside is gone, and nothing is bent round. A zone that is only a line (one buoy and
+    the shore) is a line not to cross, cut like a shore line. Without the layer nothing changes.
+    """
+
+    def __init__(self, pack, lat0):
+        self.polys, self.lines, self.area, self.barrier = [], [], None, None
+        p = os.path.join(pack, 'keep_out.geojson')
+        if not _HAVE_SHAPELY or not os.path.isfile(p):
+            self.n = 0
+            return
+        try:
+            with open(p, 'r', encoding='utf-8') as fh:
+                feats = json.load(fh).get('features') or []
+        except Exception:
+            feats = []
+        for f in feats:
+            g = f.get('geometry') or {}
+            t = g.get('type')
+            if t == 'LineString':
+                self.lines.append(_SLine(_xy(g['coordinates'], lat0)))
+                continue
+            polys = [g['coordinates']] if t == 'Polygon' else g['coordinates'] if t == 'MultiPolygon' else []
+            for rings in polys:
+                self.polys.append(_SPoly(_xy(rings[0], lat0), [_xy(h, lat0) for h in rings[1:]]))
+        self.n = len(self.polys) + len(self.lines)
+        if self.polys:
+            self.area = _sunion(self.polys)
+        if self.lines:
+            self.barrier = _SMulti(self.lines)
+
+    def outside(self, xy):
+        """None when `xy` meets no zone. Otherwise the stretches of it outside every zone, in order
+        along it -- an empty list when all of it is inside."""
+        if not self.n or len(xy) < 2:
+            return None
+        line = _SLine(xy)
+        in_area = self.area is not None and line.intersects(self.area)
+        on_line = self.barrier is not None and line.crosses(self.barrier)
+        if not in_area and not on_line:
+            return None
+        g = line.difference(self.area) if in_area else line
+        parts = [q for q in getattr(g, 'geoms', [g]) if q.geom_type == 'LineString' and len(q.coords) >= 2]
+        if on_line:
+            cut = []
+            for q in parts:
+                try:
+                    sp = _ssplit(q, self.barrier)
+                except Exception:
+                    sp = q
+                cut.extend(r for r in getattr(sp, 'geoms', [sp]) if r.geom_type == 'LineString' and len(r.coords) >= 2)
+            parts = cut
+        parts.sort(key=lambda q: line.project(_SPoint(q.coords[0])))
+        return [np.array(q.coords, float) for q in parts]
 
 
 def graph_index(gpath, slug=''):
@@ -1405,19 +1467,42 @@ def fit_pack(pack, a):
 
     idx, mainset = graph_index(os.path.join(pack, 'water_graph.bin'), slug)
     shore = ChartedShore(pack, lat0)
+    keep = KeepOut(pack, lat0)
 
     def unfitted_at_shore(coords, min_leg):
         """A run kept as drawn is cut at the shore too, when it is long enough to be offered as a leg
         (`min_leg`, which is what both planners ask for). What is kept of it is the pieces that
         still are. A shorter run is left as it was: no planner offers it, and cutting a 2 ft
-        contour at every dock it passes was 36,849 fragments and 24 MB on Lake Keowee alone."""
-        if shore.tree is None or length_m(coords) < min_leg:
-            return [coords]
-        bits = shore.cut(_xy(coords, lat0))
-        if len(bits) < 2:
-            return [coords]
-        st['cut_at_shore'] += 1
-        return [_ll(b, lat0) for b in bits if float(_seglens(b).sum()) >= min_leg]
+        contour at every dock it passes was 36,849 fragments and 24 MB on Lake Keowee alone.
+
+        Returns [(coords, how)], `how` None for a run left as it was, else 'shore' or 'keep_out'."""
+        pieces = [(coords, None)]
+        if shore.tree is not None and length_m(coords) >= min_leg:
+            bits = shore.cut(_xy(coords, lat0))
+            if len(bits) >= 2:
+                st['cut_at_shore'] += 1
+                pieces = [(_ll(b, lat0), 'shore') for b in bits if float(_seglens(b).sum()) >= min_leg]
+        return at_keep_out(pieces, min_leg)
+
+    def at_keep_out(pieces, min_leg):
+        """EVERY RUN, WHATEVER ITS LENGTH, is cut at a keep-out zone -- unlike the shore cut. A lake
+        has a handful of zones, not 36,849 docks, and the continuous troll strings short runs and
+        rings together, so a short one left inside would still be trolled. A run long enough to be
+        a leg keeps the pieces that still are; a shorter one keeps whatever is outside."""
+        if not keep.n:
+            return pieces
+        out = []
+        for c, how in pieces:
+            bits = keep.outside(_xy(c, lat0))
+            if bits is None:
+                out.append((c, how))
+                continue
+            st['cut_at_keep_out'] += 1
+            was = length_m(c)
+            kept = [b for b in bits if was < min_leg or float(_seglens(b).sum()) >= min_leg]
+            st['m_cut_at_keep_out'] += was - float(sum(_seglens(b).sum() for b in kept))
+            out.extend((_ll(b, lat0), 'keep_out') for b in kept)
+        return out
 
     out = []
     st = {'in': len(runs), 'fitted': 0, 'split': 0, 'kept_closed': 0, 'kept_short': 0,
@@ -1426,7 +1511,8 @@ def fit_pack(pack, a):
           # `in` counts both seed sources because they go through one loop. These say how much of
           # it was structure, so a run that produced nothing new says so instead of looking normal.
           'seeds_in': len(st_seeds), 'seed_passes': 0, 'seed_kinds': {},
-          'shore_lines': len(shore.lines), 'cut_at_shore': 0, 'm_cut_at_shore': 0.0}
+          'shore_lines': len(shore.lines), 'cut_at_shore': 0, 'm_cut_at_shore': 0.0,
+          'keep_out_zones': keep.n, 'cut_at_keep_out': 0, 'm_cut_at_keep_out': 0.0}
 
     for f in runs:
         pr = dict(f['properties'])
@@ -1456,14 +1542,14 @@ def fit_pack(pack, a):
             # with its ends pinned collapses it toward a point. Short runs are not passes.
             st['kept_closed' if pr.get('closed') else 'kept_short'] += 1
             pr['fitted'] = False
-            for c2 in unfitted_at_shore(coords, min_leg):
+            for c2, how in unfitted_at_shore(coords, min_leg):
                 p3 = dict(pr)
-                if c2 is not coords:
+                if how:
                     p3['length_m'] = round(length_m(c2), 1)
                     p3['vertices'] = len(c2)
                     p3['closed'] = False
                     p3.pop('area_m2', None)
-                    p3['cut_at_shore'] = True
+                    p3['cut_at_' + how] = True
                 annotate(p3, c2, grid, cell, a.annotate_m, depth, lat0)
                 out.append({'type': 'Feature', 'properties': p3,
                             'geometry': {'type': 'LineString', 'coordinates': c2}})
@@ -1549,6 +1635,20 @@ def fit_pack(pack, a):
             else:
                 cut.append(piece)
         pieces = cut
+        # AND NOT INTO A KEEP-OUT ZONE. See KeepOut: the water behind a dam's buoys is cut out of
+        # the pass, and each side is kept if it is still a pass.
+        if keep.n:
+            cut = []
+            for piece in pieces:
+                bits = keep.outside(piece)
+                if bits is None:
+                    cut.append(piece)
+                    continue
+                st['cut_at_keep_out'] += 1
+                kept = [b for b in bits if float(_seglens(b).sum()) >= min_leg]
+                st['m_cut_at_keep_out'] += float(_seglens(piece).sum()) - float(sum(_seglens(b).sum() for b in kept))
+                cut.extend(kept)
+            pieces = cut
 
         if not pieces:
             st['kept_thin'] += 1
@@ -1558,12 +1658,12 @@ def fit_pack(pack, a):
             # Every piece came out under min_leg_m: the water here does not hold a pass. Keep the
             # contour rather than inventing one, and say so in the properties.
             pr['fitted'] = False
-            for c2 in unfitted_at_shore(coords, min_leg):
+            for c2, how in unfitted_at_shore(coords, min_leg):
                 p3 = dict(pr)
-                if c2 is not coords:
+                if how:
                     p3['length_m'] = round(length_m(c2), 1)
                     p3['vertices'] = len(c2)
-                    p3['cut_at_shore'] = True
+                    p3['cut_at_' + how] = True
                 annotate(p3, c2, grid, cell, a.annotate_m, depth, lat0)
                 out.append({'type': 'Feature', 'properties': p3,
                             'geometry': {'type': 'LineString', 'coordinates': c2}})

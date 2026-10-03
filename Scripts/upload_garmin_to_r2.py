@@ -154,11 +154,17 @@ LAYERS = {
     # lakes only, read by js/data/lake-pools.js (item 50). Opt-in like the rest of this group.
     #     py Scripts\upload_garmin_to_r2.py --root F:\TrollMapPipeline\chartpack --layers pools --no-boundaries
     "pools":            "pools.json",
+    # The water behind a dam's buoys, and behind a line the chart names keep-out --
+    # Scripts/build_keep_out_zones.py (2026-10-03). Pick Water's continuous troll reads it so a hop
+    # never enters one (js/modules/plan-troll-day.js); the lanes and the graph are already cut at it.
+    # Opt-in like the rest of this group: a separate pass builds it, and most packs have none.
+    #     py Scripts\upload_garmin_to_r2.py --root F:\TrollMapPipeline\chartpack --layers keep_out --no-boundaries
+    "keep_out":         "keep_out.geojson",
 }
 # Not uploaded unless named explicitly with --layers. `boundary` would replace the NHD/3DHP
 # polygon the app renders as the lake outline.
 LAYERS_OPT_IN = {"boundary", "areas", "water_graph", "structure", "trolling_runs", "water_features",
-                 "centreline", "launches", "channels", "pools"}
+                 "centreline", "launches", "channels", "pools", "keep_out"}
 
 # ── What R2 does not need ─────────────────────────────────────────────────────────────
 #

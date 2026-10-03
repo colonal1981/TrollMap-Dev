@@ -139,8 +139,12 @@ def test_the_fitter_cuts_fitted_passes_and_runs_kept_as_drawn():
     src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fit_trolling_runs.py'),
                encoding='utf-8').read()
     assert 'shore = ChartedShore(pack, lat0)' in src
-    assert src.count('for c2 in unfitted_at_shore(coords, min_leg):') == 2   # closed/short, and thin
+    # closed/short, and thin; each piece says whether the shore or a keep-out zone cut it (2026-10-03)
+    assert src.count('for c2, how in unfitted_at_shore(coords, min_leg):') == 2
     assert 'bits = shore.cut(piece)' in src
+    # and the keep-out zones cut the same two paths: fitted passes, and runs kept as drawn
+    assert 'keep = KeepOut(pack, lat0)' in src and 'bits = keep.outside(piece)' in src
+    assert 'return at_keep_out(pieces, min_leg)' in src
 
 
 if __name__ == '__main__':

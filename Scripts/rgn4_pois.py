@@ -148,7 +148,7 @@ NAME_CLASS_VETO = re.compile(r'\bruins?\b|\bclosed\b|\bformer\b|\bldg line\b', r
 # or chart prose? Same vocabulary NAVAID_CLASS keys on, plus the shape names Garmin appends.
 NAVAID_HINT = re.compile(
     r'buoy|beacon|light|daybeacon|marker|no wake|minimum wake|reduced wake|hazard|caution|'
-    r'warning|danger|prohibit|restricted|keep clear|swim|intake|obstruct|no boats|'
+    r'warning|danger|prohibit|restricted|keep clear|keep out|swim|intake|obstruct|no boats?|'
     r'spar/spindle|cylindrical/can|conical/nun|pillar|spherical|stake/pole|lattice|'
     r'landmark|shoal|wreck|fish attractor', re.I)
 
@@ -156,7 +156,14 @@ NAVAID_CLASS = (
     ('no wake',                 'slow_no_wake'),
     ('minimum wake',            'slow_no_wake'),
     ('reduced wake',            'slow_no_wake'),
-    ('no boats',                'restricted_area'),
+    # KEEP-OUT, IN EVERY WAY THE CHART SPELLS IT. Only 'no boats' was here, so "No Boat Buoy" (89
+    # buoys on waters with a dam, Lake Murray's whole Saluda spillway line among them), "Keep Out"
+    # (22), "Boats Keep Out" (12), "Keep Out Buoy" (10) and "No Boat" (4) fell through to the
+    # generic 'buoy' and were filed as plain nav buoys, which the planner treats as nothing
+    # (2026-10-03). 'no boat' covers 'no boats'. 'keep out' sits above 'danger' so "Dangerous
+    # Waters Violent Surges Occur Suddenly Keep Out" is a keep-out line, which is what it says.
+    ('no boat',                 'restricted_area'),
+    ('keep out',                'restricted_area'),
     ('prohibited',              'restricted_area'),
     ('keep clear',              'caution_buoy'),
     ('water intake',            'caution_buoy'),
