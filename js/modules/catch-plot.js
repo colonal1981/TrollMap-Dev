@@ -97,7 +97,7 @@ function buildCatchLayer() {
     marker.bindPopup(`
       <b style="font-size:15px;color:#0d4f8b">${ico} ${esc(c.species || 'Fish')} ${c.length ? c.length + '"' : ''}</b><br>
       <b>Lure:</b> ${esc(c.lure || '—')}<br>
-      <b>Depth:</b> ${esc(describeCatchDepth(c).text)} · <b>Lead:</b> ${esc(c.lead || '—')} ft<br>
+      <b>Depth:</b> ${esc(describeCatchDepth(c).text)}<br>
       <b>Time:</b> ${esc(c.time || '—')} · ${esc(c.date || '—')}<br>
       ${weatherThen(c)}
       <div style="background:#f0f4f8;padding:6px;border-radius:4px;margin-top:6px;font-size:12px">${esc(c.notes || 'No notes.')}</div>

@@ -64,7 +64,6 @@ const SHOWN = {
 // Either it adds to a plan and gets wired, or it should not be gathered (his rule). Listed so it is a
 // line someone has to justify, not a silence.
 const NEITHER = {
-  lead: 'nothing fills it: approveQueueItem() writes "" and the review form has no box for it; the pin prints "Lead: — ft"',
   importedFrom: 'which import path wrote the row; CSV export only',
   sourcePath: 'the photo\'s folder on his PC; CSV export only',
   data_generation: 'gen1/gen2 by import path; nothing reads it',
@@ -117,6 +116,14 @@ test('a leg past his fish tells the model when he caught each one and the weathe
   assert.deepEqual(catchWhen({ date: '2024-12-22', time: '1:15 PM', lure: '', weather: null }), { date: '2024-12-22', time: '1:15 PM' });
   // and its pin shows the same weather to him
   assert.match(read('../js/modules/catch-plot.js'), /\$\{weatherThen\(c\)\}/);
+});
+
+test('the lead is not gathered', () => {
+  // Ryan, 10/4: "stop gathering it unless you know an exact way to know how much line is in the water".
+  // Nothing ever filled it; the pin printed "Lead: — ft" on every catch.
+  assert.ok(!savedFields().has('lead'));
+  assert.doesNotMatch(read('../js/modules/catch-plot.js'), /c\.lead\b/);
+  assert.doesNotMatch(journal, /lead: c\.lead/);
 });
 
 test('a field listed as read by nothing is still read by nothing', () => {

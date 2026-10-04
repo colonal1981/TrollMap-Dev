@@ -139,9 +139,11 @@ describe('every screen that shows a catch depth asks the same question', () => {
     }
   });
 
-  it('kept the map popup a popup -- lead is still printed next to it', () => {
-    // The fix is to the depth, not to the card. Regression guard against a cull.
-    expect(src('js/modules/catch-plot.js').includes('<b>Lead:</b>')).toBe(true);
+  it('kept the map popup a popup -- the time and the weather then are still printed next to it', () => {
+    // The fix is to the depth, not to the card. Regression guard against a cull. The lead went on 10/4
+    // (Ryan: "stop gathering it unless you know an exact way to know how much line is in the water").
+    expect(src('js/modules/catch-plot.js').includes('<b>Time:</b>')).toBe(true);
+    expect(src('js/modules/catch-plot.js').includes('${weatherThen(c)}')).toBe(true);
   });
 });
 

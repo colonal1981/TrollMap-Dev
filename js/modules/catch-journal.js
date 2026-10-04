@@ -937,7 +937,10 @@ async function approveQueueItem(q) {
     // discarding any lure tag on every single approval — the root cause of
     // the lure field always being blank on approved catches, going back to
     // whenever this line was first written.
-    lure: q.lure || '', lead: '',
+    // NO LEAD. It was written as "" on every catch and nothing ever filled it, and there is no exact way
+    // to know how much line was out when a fish bit. Ryan, 10/4: "stop gathering it unless you know an
+    // exact way to know how much line is in the water".
+    lure: q.lure || '',
     time: displayTime(q.time),
     date: q.date || '',
     lake: q.lake || '',
@@ -1185,7 +1188,7 @@ function exportJournalCsv() {
   const rows = getCatches().map(c => ({
     species: c.species, length: c.length, date: c.date, time: c.time, lake: c.lake, depth: c.depth,
     waterTempF: c.waterTempF ?? '',
-    lat: c.lat, lon: c.lon, lure: c.lure, lead: c.lead, notes: c.notes,
+    lat: c.lat, lon: c.lon, lure: c.lure, notes: c.notes,
     tempF: c.weather?.tempF ?? '', windMph: c.weather?.windMph ?? '', windDir: c.weather?.windDir ?? '', cloudPct: c.weather?.cloudPct ?? '', pressureHpa: c.weather?.pressureHpa ?? '', moonPhase: c.weather?.moonPhase || '',
     sourceFile: c.sourceFile, sourcePath: c.sourcePath, importedFrom: c.importedFrom,
     lengthVerification: c.verification?.length || '', speciesVerification: c.verification?.species || ''
