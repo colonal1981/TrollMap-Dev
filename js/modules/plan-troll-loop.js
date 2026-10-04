@@ -847,11 +847,13 @@ export function* trollLoopSteps(o) {
         // the two now meet where they crossed instead of going over each other. Each is straightened
         // with the other's water as dear as the narrow-water step makes it, so a straight run does not
         // cut across toward the other line.
-        if (xs && xs.length === 1) {
-          const { x, k } = xs[0];
-          const out2 = out.slice(0, k + 1).concat(back.slice(0, x + 1).reverse());
-          back = out.slice(k).reverse().concat(back.slice(x));
-          out = out2;
+        // AND AT EVERY CROSSING, NOT ONLY ONE (pairAtCrossings). Ryan, 10/4, on a striper loop from
+        // Rowland turned just west of Green Island: "mine crosses itself twice" -- once in the main
+        // channel below Wyboo Creek, once at the island -- "this is fishable... i am just being picky".
+        const paired = xs && xs.length ? pairAtCrossings(out, back, xs) : null;
+        if (paired) {
+          out = paired.out;
+          back = paired.back;
           const apartFrom = (line) => {
             const was = out;
             out = line;
@@ -1143,6 +1145,36 @@ export function turnsReached(turns, loop, withinM) {
              // within the same distance a turn is looked for in -- the water there is that loop's own
              passedBy: pi < 0 && passM <= lim ? passPetal : null };
   });
+}
+
+/**
+ * PAST EVERY CROSSING, THE TWO LINES PAIRED THE OTHER WAY. A way home that crosses the way out goes
+ * over to the far side of it and, crossing again, comes back. Between each pair of crossings the two
+ * lines trade places: the way out carries on along the way home's line to the next crossing, the way
+ * home along the way out's. The same water and the same two lines, which now meet where they crossed
+ * instead of going over each other. One crossing is the case `88a35cd` handled; this is that rule at
+ * any number of them.
+ *
+ * @param {number[]} out   the way out, ramp to turn (any points)
+ * @param {number[]} back  the way home, turn to ramp
+ * @param {{x: number, k: number}[]} xs  each crossing: its index on `back` and on `out` (crossingsOf)
+ * @returns {{out: number[], back: number[]}|null}  null when the crossings do not come in the order a
+ *          loop makes them -- the first along the way out the last along the way home
+ */
+export function pairAtCrossings(out, back, xs) {
+  if (!Array.isArray(xs) || !xs.length || !out || !back) return null;
+  const c = xs.slice().sort((a, b) => a.k - b.k);
+  const hr = back.slice().reverse();          // the way home, ramp to turn, like the way out
+  const ks = [0], hs = [0];
+  for (const q of c) { ks.push(q.k); hs.push(back.length - 1 - q.x); }
+  ks.push(out.length - 1); hs.push(hr.length - 1);
+  for (let i = 1; i < ks.length; i++) if (ks[i] < ks[i - 1] || hs[i] < hs[i - 1]) return null;
+  let o2 = [], h2 = [];
+  for (let i = 0; i + 1 < ks.length; i++) {
+    const so = out.slice(ks[i], ks[i + 1] + 1), sh = hr.slice(hs[i], hs[i + 1] + 1);
+    if (i % 2 === 0) { o2 = o2.concat(so); h2 = h2.concat(sh); } else { o2 = o2.concat(sh); h2 = h2.concat(so); }
+  }
+  return { out: o2, back: h2.reverse() };
 }
 
 /** trollLoopSteps() run straight through. */

@@ -68,7 +68,7 @@ test('a way home that never comes near is clear', () => {
   assert.equal(onlyCrosses(G, run(line(5, 5, 55, 5)), WITHIN, OUT), true);
 });
 
-test('the loop uses it for the narrow-water step only, counts such a way home as kept, and pairs the lines the other way past a single crossing', () => {
+test('the loop uses it for the narrow-water step only, counts such a way home as kept, and pairs the lines the other way past each crossing', () => {
   const src = fs.readFileSync(new URL('../js/modules/plan-troll-loop.js', import.meta.url), 'utf8');
   assert.ok(src.includes('const xs = back ? crossingsOf(G, back, within, out, sameM) : null;'));
   assert.ok(src.includes('if (xs) apartM = sameM;'));
@@ -76,6 +76,7 @@ test('the loop uses it for the narrow-water step only, counts such a way home as
   // Ryan, 10/4: "why do they have to cross" -- they do not: past the crossing the way out carries on
   // along the way home's line to the turn, and the way home comes back along the way out's.
   assert.ok(src.includes('why do they\n        // have to cross'));
-  assert.ok(src.includes('const out2 = out.slice(0, k + 1).concat(back.slice(0, x + 1).reverse());'));
-  assert.ok(src.includes('back = out.slice(k).reverse().concat(back.slice(x));'));
+  // since 10/4 at every crossing, not only one: pairAtCrossings(), whose one-crossing case is this
+  // pairing exactly (test/a-loop-that-crosses-twice-is-paired-at-both.test.js)
+  assert.ok(src.includes('const paired = xs && xs.length ? pairAtCrossings(out, back, xs) : null;'));
 });
