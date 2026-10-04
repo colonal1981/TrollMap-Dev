@@ -633,7 +633,8 @@ function renderJournalOnly(body = document.getElementById('catchCenterBody')) {
       <span id="catchGpxStatus" class="muted" style="font-size:12px"></span>
     </div>
     <div id="journalRecheckStatus" class="muted" style="margin:4px 0;font-size:12px"></div>
-    <div id="catchLogList"></div>`;
+    <div id="catchLogList"></div>
+    <datalist id="catchWaterNames">${catchWaterNames(catches).map((n) => `<option value="${esc(n)}"></option>`).join('')}</datalist>`;
   const list = body.querySelector('#catchLogList');
   if (!catches.length) {
     list.innerHTML = '<p class="muted">No confirmed catches yet. Import CSV rows into the review queue, then approve them.</p>';
@@ -642,7 +643,7 @@ function renderJournalOnly(body = document.getElementById('catchCenterBody')) {
       <div style="display:flex;align-items:flex-start;gap:8px;padding:8px 0;border-bottom:1px solid var(--line);font-size:12px">
         <span style="font-size:18px">🐟</span>
         <div style="flex:1;min-width:0">
-          <div><b>${esc(c.species || 'Fish')}</b>${c.length ? ` · ${esc(c.length)}"` : ''} · ${esc(c.date || '')} ${esc(c.time || '')} · ${esc(c.lake || '')}${c.reviewFlags?.includes('lake_mismatch_on_recheck') ? ` <span style="color:#e0a030">⚠ suggested: ${esc(c.lakeRecheckSuggestion || '')}</span>` : ''}</div>
+          <div><b>${esc(c.species || 'Fish')}</b>${c.length ? ` · ${esc(c.length)}"` : ''} · ${esc(c.date || '')} ${esc(c.time || '')} · ${esc(c.lake || '')} <button data-editlake="${i}" class="small" title="Change the water this fish is filed under" style="padding:0 5px">✎</button>${c.reviewFlags?.includes('lake_mismatch_on_recheck') ? ` <span style="color:#e0a030">⚠ suggested: ${esc(c.lakeRecheckSuggestion || '')}</span>` : ''}</div>
           <div class="muted">${c.depth ? `Depth: ${esc(describeCatchDepth(c).text)}` : ''}${c.waterTempF != null ? ` · Water ${esc(c.waterTempF)} °F` : ''}${c.sourceFile ? ` · ${esc(c.sourceFile)}` : ''}${c.verification?.length ? ` · length: ${esc(c.verification.length)}` : ''}</div>
           ${c.notes ? `<div style="margin-top:2px">${esc(c.notes)}</div>` : ''}
         </div>
@@ -652,6 +653,7 @@ function renderJournalOnly(body = document.getElementById('catchCenterBody')) {
   body.querySelector('#manualCatchBtn')?.addEventListener('click', () => addManualCatch());
   body.querySelector('#exportJournalBtn')?.addEventListener('click', exportJournalCsv);
   body.querySelector('#exportCatchGpxBtn')?.addEventListener('click', () => exportCatchGpx(body));
+  body.querySelectorAll('[data-editlake]').forEach((btn) => btn.addEventListener('click', () => editCatchWater(body, +btn.dataset.editlake, btn)));
   body.querySelector('#recheckLakesBtn')?.addEventListener('click', () => recheckJournalLakes(body));
   body.querySelector('#deleteAllJournalBtn')?.addEventListener('click', async () => {
     const n = getCatches().length;
@@ -1199,6 +1201,55 @@ function exportQueueCsv() {
  * out, the way the map leaves it off; where none can be read (a water with no pack, or a river), every
  * pin filed under it goes, and the line says so. See catch-gpx.js.
  */
+/**
+ * THE WATER A FISH IS FILED UNDER, PUT RIGHT BY HIM.
+ *
+ * Ryan, 2026-10-04, going down the catch GPX picker: "South East Park Pond - this is a miss
+ * marking... i dont know where that is", and "great falls are probably mis markings too and should
+ * be wateree as i have never been on great falls". The import names a catch's water after the
+ * nearest access point within two miles (nearestLakeAndContour), so a photo whose phone fix was off,
+ * or one taken near somebody else's ramp, comes in filed under a water he never fished. Re-check
+ * Lakes flags a disagreement and deliberately overwrites nothing, and nothing else in the app could
+ * change a confirmed catch's water -- the card offered a delete and nothing more.
+ *
+ * So the card's water can be changed: ✎, type or pick, Save. The names offered are every water the
+ * registry knows and every name already in his journal; anything else he types is kept as typed
+ * (a private pond the app does not chart is still where he caught it). Saving clears the re-check
+ * flag, since he has now answered it, and changes nothing but the name -- the pin stays where the
+ * phone put it, and the map's own off-the-water rule still judges it against the water he named.
+ */
+function catchWaterNames(catches) {
+  const names = new Set();
+  for (const c of catches || []) { const n = String((c && c.lake) || '').trim(); if (n) names.add(n); }
+  for (const r of (getLoadedRegistry()?.list || [])) if (r.displayName) names.add(r.displayName);
+  return [...names].sort((a, b) => a.localeCompare(b));
+}
+
+function editCatchWater(body, i, btn) {
+  const c = getCatches()[i];
+  if (!c || !btn || btn.disabled) return;
+  btn.disabled = true;
+  const box = document.createElement('div');
+  box.style.cssText = 'display:flex;gap:6px;align-items:center;margin-top:4px';
+  box.innerHTML = `<input list="catchWaterNames" value="${esc(c.lake || '')}" style="flex:1;min-width:0" aria-label="Water this fish was caught on">`
+    + '<button class="primary small">Save</button><button class="small">Cancel</button>';
+  btn.parentElement.after(box);
+  const [input, save, cancel] = [box.querySelector('input'), ...box.querySelectorAll('button')];
+  input.focus();
+  input.select();
+  cancel.addEventListener('click', () => { box.remove(); btn.disabled = false; });
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') save.click(); if (e.key === 'Escape') cancel.click(); });
+  save.addEventListener('click', async () => {
+    const name = input.value.trim();
+    if (!name || name === c.lake) { box.remove(); btn.disabled = false; return; }
+    c.lake = name;
+    if (Array.isArray(c.reviewFlags)) c.reviewFlags = c.reviewFlags.filter((f) => f !== 'lake_mismatch_on_recheck');
+    delete c.lakeRecheckSuggestion;
+    await saveCatches();
+    renderJournalOnly(body);
+  });
+}
+
 async function exportCatchGpx(body) {
   const sel = body.querySelector('#catchGpxWater');
   const status = body.querySelector('#catchGpxStatus');
