@@ -42,7 +42,7 @@ const S = {
   building: false,
   hidOld: false,
   lines: null, marks: null, bar: null, barEl: null, watch: 0, clickTimer: 0, wired: false,
-  floorFt: null,
+  lineFt: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -88,6 +88,10 @@ export async function planAsOneTroll() {
     }
     const key = `${now.slug}|${now.rampName}`;
     if (key !== S.key) { S.turns = []; S.key = key; }
+    // THE LAKE'S OWN CHART UNDER ITS LOOP, the way picking it on the map draws it: the depth bands the
+    // lines ride, and his catch markers judged against this water, so a pin off it is not drawn
+    // (catch-plot.js; Ryan, 10/4: "i am seeing fish on land in this area still"). Not awaited.
+    if (now.lake) window.loadSupplementalForLake?.(now.lake);
     S.on = true;                // only now is a click on the water a turn
     await relay({ fit: true });
   } finally {
@@ -115,7 +119,7 @@ async function relay({ fit = false } = {}) {
         setBar({ error: snap.why || 'No loop came back.' });
         continue;
       }
-      S.floorFt = loop.floorFt;
+      S.lineFt = loop.lineFt;
       const r = turnsReached(S.turns.map((t) => t.at), loop);
       S.turns.forEach((t, i) => { t.reached = r[i].reached; t.offM = r[i].offM; t.passedBy = r[i].passedBy; });
       drawLoop(loop, fit);
@@ -273,14 +277,14 @@ function drawTurns() {
     const m = L.marker([t.at[1], t.at[0]], {
       icon: L.divIcon({ className: '', html, iconSize: [22, 22], iconAnchor: [11, 11] }), keyboard: false,
     });
-    const floor = S.floorFt != null ? `${S.floorFt} ft` : 'deep enough';
+    const line = S.lineFt != null ? `the ${Math.round(S.lineFt)} ft line` : 'the line';
     const before = S.turns.slice(0, i).some((u) => u.reached);
     const tip = pending ? `Turn ${i + 1}: laying the loop through it…`
       : t.reached === false && t.passedBy != null ? `Turn ${i + 1}: loop ${t.passedBy + 1} already goes past here (${t.offM} m off), so no loop of its own turns here: it would come back over that one.`
       : bad ? (before
-        ? `Turn ${i + 1}: no loop gets here on water ${floor} or deeper without going back over the loop before it, so the day is laid without it.`
-        : `Turn ${i + 1}: no loop can get here from the ramp on water ${floor} or deeper, so the day is laid without it.`)
-      : t.offM > 60 ? `Turn ${i + 1}: the loop turns ${t.offM} m from here, at the nearest water ${floor} or deeper it can reach.`
+        ? `Turn ${i + 1}: no loop gets here without going back over the loop before it, so the day is laid without it.`
+        : `Turn ${i + 1}: no loop can get here from the ramp, so the day is laid without it.`)
+      : t.offM > 60 ? `Turn ${i + 1}: the loop turns ${t.offM} m from here, at the nearest water on its line (near ${line}).`
       : `Turn ${i + 1}: the loop turns here.`;
     m.bindTooltip(`${esc(tip)}<br><i>Click to take this turn off.</i>`, { direction: 'top', offset: [0, -12] });
     m.on('click', () => removeTurn(i));
@@ -376,14 +380,19 @@ function setBar(o) {
       const col = LOOP_COLORS[i % LOOP_COLORS.length][0];
       const s = p.score || {};
       return `<div style="margin-top:3px"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;`
-        + `background:${col};margin-right:6px;vertical-align:-1px"></span><b>Loop ${i + 1}</b>: ${mi(out)} out, ${mi(back)} home`
-        + ` · past ${s.fish || 0} of your ${esc(snap.species || '')} catches and ${plural(s.structure || 0, 'charted mark')}</div>`;
+        + `background:${col};margin-right:6px;vertical-align:-1px"></span><b>Loop ${i + 1}</b>`
+        + `${p.lineFt != null ? ` on ${Math.round(p.lineFt)} ft` : ''}: ${mi(out)} out, ${mi(back)} home`
+        // Every catch it goes past, the ones an earlier loop passed too -- going round again is the point.
+        + ` · past ${s.passes != null ? s.passes : (s.fish || 0)} of your ${esc(snap.species || '')} catches and ${plural(s.structure || 0, 'charted mark')}</div>`;
     }).join('');
     const missed = S.turns.filter((t) => t.reached === false && t.passedBy == null).length;
-    body = `<div style="margin-top:6px">${mi(loop.trolledM)} trolled on the ${Math.round(loop.lineFt)} ft line, never over water `
-      + `under ${loop.floorFt} ft: about ${hours(loop.minutes)} of your ${hours(loop.budgetMin)}.</div>`
+    // WHICH LINE EACH LOOP RIDES -- his fish's line first, then round the same water a band over.
+    const lines = [...new Set((loop.petals || []).map((p) => Math.round(p.lineFt != null ? p.lineFt : loop.lineFt)))];
+    body = `<div style="margin-top:6px">${mi(loop.trolledM)} trolled on ${lines.length === 1 ? `the ${lines[0]} ft line`
+        : `the ${lines.slice(0, -1).join(', ')} and ${lines[lines.length - 1]} ft lines`}: `
+      + `about ${hours(loop.minutes)} of your ${hours(loop.budgetMin)}.</div>`
       + byPetal
-      + (missed ? `<div style="margin-top:6px;color:#ff8a80">${missed === 1 ? 'The turn' : `${missed} turns`} in red can't be reached on water that deep, `
+      + (missed ? `<div style="margin-top:6px;color:#ff8a80">${missed === 1 ? 'The turn' : `${missed} turns`} in red can't be reached, `
         + `so the day is laid without ${missed === 1 ? 'it' : 'them'} (hover over a number for why).</div>` : '')
       + `<details style="margin-top:6px"><summary style="cursor:pointer;color:#9fb3c3">Why this loop</summary>`
       + `<div style="margin-top:4px;color:#c9d6df;max-height:9em;overflow:auto">${esc(snap.status)}</div></details>`

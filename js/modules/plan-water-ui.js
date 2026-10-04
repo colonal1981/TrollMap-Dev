@@ -60,7 +60,8 @@ import { offerWaterAsync, dayCost, dayOrder, priceSpots, waterRange, reasons, TR
 import { joinedPiece } from './plan-pieces.js';
 import { planFromWater } from './plan-from-water.js';
 import { trollShape, asTrolled } from './plan-troll-day.js';
-import { trollLoopAsync, loopPieces, loopSteps, loopLine } from './plan-troll-loop.js';
+import { trollLoopAsync, loopPieces, loopSteps, loopLine, linesSaid } from './plan-troll-loop.js';
+import { hasPosition, oneFishEach } from '../utils/catch-pins.js';
 import { DEFAULT_STOP_MIN } from './plan-assemble.js';
 import { buildSmartPlanV2, modelAsker, waterRouter } from './smart-plan-v2.js';
 import { claudeFirstAsker } from './claude-bridge.js';
@@ -1400,32 +1401,27 @@ export async function trollForMe(opts = {}) {
     ...T.spots.filter((sp) => T.pickedSpots.has(sp.key)).map((sp) => sp.at),
     ...found.filter((p) => T.picked.has(p.key)).map((p) => p.coords[Math.floor(p.coords.length / 2)]),
   ]).filter(Array.isArray).slice(0, 4);   // a day is at most four loops (trollLoop's maxPetals)
-  // HIS CATCHES OF THIS FISH, wherever the journal has a position for one.
+  // HIS CATCHES OF THIS FISH: each fish once (two photos of one fish are one catch), each with the
+  // chart under its pin -- null off the chart, which the loop does not count (Ryan, 10/4: "fish with
+  // either no position or incorrect position should not make it into the app"). The loop counts only
+  // those within reach of the ramp, by water (trollLoopSteps()).
   const want = String(T.species || '').trim().toLowerCase();
-  const catches = (state.CATCHES || [])
-    .filter((c) => c && String(c.species || '').trim().toLowerCase() === want
-      && Number.isFinite(parseFloat(c.lat)) && Number.isFinite(parseFloat(c.lon)))
-    .map((c) => ({ at: [parseFloat(c.lon), parseFloat(c.lat)], date: c.date || null }));
+  const catches = oneFishEach((state.CATCHES || [])
+    .filter((c) => c && String(c.species || '').trim().toLowerCase() === want && hasPosition(c)))
+    .map((c) => {
+      const at = [parseFloat(c.lon), parseFloat(c.lat)];
+      const ft = T.depthAt(at);
+      return { at, date: c.date || null, chartFt: ft != null && Number.isFinite(Number(ft)) ? Number(ft) : null };
+    });
 
-  // WHAT DEPTH OF WATER THE LINE RIDES: his catches here, then the research's water, then the band.
-  // See loopLine() in plan-troll-loop.js for why, in his words.
+  // WHAT DEPTH OF WATER THE FIRST LOOP RIDES when none of his catches within reach says: the research's
+  // water, then the band. With his catches the loop decides, from the ones within reach. See loopLine().
   const steer = HAND_STEER_BAND_FT;
-  const line = loopLine({ catches, depthAt: T.depthAt, offsetFt: T.offsetFt, waterFt: guide, band,
-                          holding: T.holding, steerFt: steer });
-  if (!line) {
+  const fallback = loopLine({ waterFt: guide, band, holding: T.holding, steerFt: steer });
+  if (!fallback && !catches.some((c) => c.chartFt != null)) {
     return fail('No catches of this fish on this lake, no water the research names and no fish band, so nothing '
              + 'says what depth to troll.', true);
   }
-  const { lineFt, floorFt } = line;
-  const lineFrom = line.from === 'catches'
-    ? `the middle of the water under your ${line.n} ${T.species || ''} catch${line.n === 1 ? '' : 'es'} on this lake `
-      + `(${line.rangeFt[0]}–${line.rangeFt[1]} ft)`
-    : line.from === 'research'
-      ? `the middle of the ${line.rangeFt[0]}–${line.rangeFt[1]} ft of water the research says the fish are over `
-        + '— you have no catches of this fish here'
-      : `one steering band under the ${line.rangeFt[0]}–${line.rangeFt[1]} ft fish band, where the deepest bait runs`
-        + `${T.holding === 'bottom' ? ' with fish on the bottom' : ''} — you have no catches of this fish here and `
-        + 'the research names no water';
 
   say(`Laying the loop from ${T.rampName || 'the ramp'}…`);
   await new Promise((res) => setTimeout(res, 0));
@@ -1433,7 +1429,9 @@ export async function trollForMe(opts = {}) {
   try {
     loop = await trollLoopAsync({
       ramp: T.ramp, daFeatures: T.daFeatures, shoreFeatures: T.shoreFeatures, koFeatures: T.koFeatures,
-      offsetFt: T.offsetFt || 0, floorFt,
+      offsetFt: T.offsetFt || 0,
+      lineFt: fallback ? fallback.lineFt : undefined, lineFrom: fallback ? fallback.from : undefined,
+      lineRangeFt: fallback ? fallback.rangeFt : undefined,
       windowMin: T.windowMin, stopMin: stopsWanted() * DEFAULT_STOP_MIN, minM: T.minM,
       marks: T.spots, catches, via,
     }, (n) => say(`Laying the loop from ${T.rampName || 'the ramp'}… ${n} turn-arounds tried`));
@@ -1461,17 +1459,39 @@ export async function trollForMe(opts = {}) {
   }).length : 0;
   const zones = (T.koFeatures || []).length;
   const n = loop.petals.length;
+  const ln = loop.line || {};
+  const sp = T.species || '';
+  const lineFrom = ln.from === 'catches'
+    ? `the depth with the most of your ${ln.n} ${sp} catch${ln.n === 1 ? '' : 'es'} within reach of this ramp inside the `
+      + `${steer} ft you steer either side of it: ${ln.inBand} of the ${ln.n}, caught over ${Math.round(ln.rangeFt[0])}–${Math.round(ln.rangeFt[1])} ft`
+    : ln.from === 'research' && ln.rangeFt
+      ? `the middle of the ${ln.rangeFt[0]}–${ln.rangeFt[1]} ft of water the research says the fish are over — `
+        + 'none of your catches of this fish are within reach of this ramp'
+      : ln.from === 'band' && ln.rangeFt
+        ? `one steering band under the ${ln.rangeFt[0]}–${ln.rangeFt[1]} ft fish band, where the deepest bait runs`
+          + `${T.holding === 'bottom' ? ' with fish on the bottom' : ''} — none of your catches of this fish are within reach `
+          + 'of this ramp and the research names no water'
+        : 'the depth given';
+  const cu = loop.catches || { used: 0, offWater: 0, outOfReach: 0 };
+  const passes = (loop.score && loop.score.passes) || 0;
+  // Catches off this water's chart are other water's, or a pin on the bank: not this day's to name.
+  // Those on it but out of reach are, so he knows why a fish he remembers here did not count.
+  const leftOut = cu.outOfReach
+    ? `. ${cu.outOfReach} more of your ${sp} catches on this chart ${cu.outOfReach === 1 ? 'is' : 'are'} farther by water than half `
+      + `the day reaches (${fmtMi(cu.reachM)}), so ${cu.outOfReach === 1 ? 'it does' : 'they do'} not count`
+    : '';
   say(`${n} loop${n === 1 ? '' : 's'} from ${T.rampName || 'the ramp'} and back: ${fmtMi(loop.trolledM)} trolled, `
     + `${fmtMi(loop.runM)} with the lines up (out of the cove and back in)`
     // Where a line had to come back within 100 m of water the day already trolled, it says how much.
     + (loop.sharedM > 0 ? `; ${fmtMi(loop.sharedM)} of it is back over water the day already trolled` : '')
     + '. '
-    + `On the ${Math.round(loop.lineFt)} ft contour — ${lineFrom} — and never over water under ${floorFt} ft, `
-    + `the line less the ${steer} ft you steer within`
-    + (zones ? `, out of ${zones} keep-out zone${zones === 1 ? '' : 's'}` : '')
-    + `. It passes ${loop.score.fish} of your ${catches.length} ${T.species || ''} catch${catches.length === 1 ? '' : 'es'} in the journal`
+    + `Loop 1 on ${linesSaid(loop, { first: `the ${Math.round(loop.lineFt)} ft line — ${lineFrom}` })}`
+    + (zones ? `; out of ${zones} keep-out zone${zones === 1 ? '' : 's'}` : '')
+    + `. It passes ${loop.score.fish} of your ${cu.used} ${sp} catch${cu.used === 1 ? '' : 'es'} within reach`
+    + (passes > loop.score.fish ? `, ${passes} times over` : '')
     + ` and ${loop.score.structure} charted mark${loop.score.structure === 1 ? '' : 's'}`
     + (via.length ? `, and turns at the ${via.length === 1 ? 'water' : `${via.length} places`} you ${fromMap ? 'clicked' : 'ticked'}` : '')
+    + leftOut
     + (guide ? `. ${onGuide} of its ${pieces.length} legs cross the ${guide[0]}–${guide[1]} ft of water the research says the fish are over` : '')
     // THE DOCKS CLOSED THE CANAL AT THE APP'S 25 m GRID, so the way out was found on the depth bands
     // alone (Rowland Subdivision, 2026-10-03). It is lines up and his eyes on the water; say so.
@@ -1483,7 +1503,7 @@ export async function trollForMe(opts = {}) {
       ? `. ${loop.sharedM > 0 ? `Trolled once, that is about ${fmtHours(loop.onceMinutes)}` : `That is about ${fmtHours(loop.minutes)}`}`
         + ` of the ${fmtHours(loop.budgetMin)} you have: `
         + (loop.fillingDay ? `filling the day would take ${loop.fillingDay.petals === 1 ? 'a loop' : `${loop.fillingDay.petals} loops`} of ${fmtMi(loop.fillingDay.m)} past ${loop.fillingDay.score.fish} of your fish`
-                           : 'no loop from here on water this deep fills it')
+                           : 'no loop from here fills it')
         + (loop.fillsTime ? '' : ', so the rest of the day is yours to go round it again or turn where you choose')
       : '')
     + (loop.coveCrossesShore ? `. The way out of the cove runs past charted docks and shore lines that close it on the app's ${loop.grid && loop.grid.cellM ? `${loop.grid.cellM} m` : ''} grid, so it is drawn on the depth chart alone — steer it by eye` : '')

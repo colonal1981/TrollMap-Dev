@@ -64,7 +64,8 @@ test('a ramp the shore does not cut off keeps the shore on its way out', () => {
   assert.equal(onBank.coveCrossesShore, false);
 });
 
-test('with no water deep enough anywhere, it still says so', () => {
+test('with no water near its line anywhere, it still says so', () => {
+  // floorFt is read as a line one steering band deeper since 10/4 (no floor): 65 ft, in 45 ft of water.
   const r = trollLoop({ ...BASE, ramp: RAMP_UP_CANAL, shoreFeatures: DOCKS, floorFt: 60 });
-  assert.match(String(r.error), /no water 60 ft deep can be reached from the ramp/);
+  assert.match(String(r.error), /no water near the 65 ft line can be reached from the ramp/);
 });

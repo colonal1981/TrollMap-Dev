@@ -271,6 +271,8 @@ export async function clearSupplementalCache() {
 // the note on CACHE_NS_CHART_LAYERS in js/utils/db.js.
 if (typeof window !== 'undefined') window.clearSupplementalCache = clearSupplementalCache;
 export function getLakeBoundaryGeoJSON() { return _boundaryGeoJSON; }
+/** The pack key of the water the map has loaded, or null. The catch markers judge pins by it. */
+export function getActiveLakeKey() { return _activeLakeKey; }
 export function bringDepthAreasToBack() {
   if (_depthAreaLayer) _depthAreaLayer.bringToBack();
   if (_unsurveyedLayer) _unsurveyedLayer.bringToBack();
@@ -1503,7 +1505,14 @@ export async function loadSupplementalForLake(displayName) {
 
   // Fishing spots and POIs are lazy — only fetch when user toggles them on.
   // Preloading 90K+ fishing features on large lakes kills scroll/zoom performance.
-  loadLakeBoundary(displayName).catch(() => {});
+  // WHEN THE WATER IS IN HAND -- its depth areas (awaited above) and its boundary -- the catch
+  // markers redraw against it, so a pin off this water drops off the map (catch-plot.js).
+  loadLakeBoundary(displayName).catch(() => {})
+    .finally(() => {
+      if (_activeLakeKey === lakeKey) {
+        window.dispatchEvent(new CustomEvent('trollmap:waterLoaded', { detail: { lakeKey } }));
+      }
+    });
   // Prefetch the Garmin data Smart Plan reads, WITHOUT drawing it. See ensureData().
   Promise.all(PREFETCH_LAYERS.map(l => ensureData(lakeKey, l))).then(([pois, docks]) => {
     if (pois) {

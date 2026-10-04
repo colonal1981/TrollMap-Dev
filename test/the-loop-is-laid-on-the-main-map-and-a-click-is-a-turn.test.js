@@ -80,9 +80,9 @@ test('where the loop says which turn each loop was laid for, that is the answer,
 
 test('a turn no loop can reach does not cost the rest of the day: that loop is chosen as any other', () => {
   const src = read('../js/modules/plan-troll-loop.js');
-  assert.ok(src.includes('if (!pt && vias[p]) pt = yield* petal(pm, used, taken, null, petals.map((q) => q.coords));'));
+  assert.ok(src.includes('if (!pt && !petals.length) pt = yield* petal(ctx0, pm, petals, taken, null, false);'));
   assert.ok(src.includes('pt.via = asked ? p : null;'));
-  assert.ok(src.includes('score: p.score, via: p.via != null ? p.via : null })),'));
+  assert.ok(src.includes('lineFt: p.lineFt, score: p.score, via: p.via != null ? p.via : null })),'));
 });
 
 test('Troll it for me takes the turns from the map exactly where he clicked, not the middle of a lane', () => {
@@ -98,8 +98,9 @@ test('Troll it for me takes the turns from the map exactly where he clicked, not
 });
 
 test('the loop is still his catches and the structure: the turn fixes where it turns and nothing else', () => {
-  // the line still rides the water under his catches, and the day is still chosen fish first
-  assert.ok(ui.includes('const line = loopLine({ catches, depthAt: T.depthAt'));
+  // the line still comes from his catches (the loop reads the ones within reach), and the day is
+  // still chosen fish first
+  assert.ok(ui.includes('const fallback = loopLine({ waterFt: guide, band, holding: T.holding, steerFt: steer });'));
   assert.ok(ui.includes('marks: T.spots, catches, via,'));
   // and the bar says what each loop passes
   assert.ok(lom.includes('catches and ${plural(s.structure || 0, \'charted mark\')}'));

@@ -14,9 +14,10 @@
 // is in reach. What these hold:
 //   1. the day leaves the cove mouth and comes back to it: every loop starts and ends there, and the
 //      only water run with the lines up is out of the cove and back in;
-//   2. no line is ever over water shallower than the floor;
-//   3. the line rides the contour one steering band deeper than the floor, and comes home on the
-//      other edge -- not within 100 m of the way out;
+//   2. there is no floor (since 10/4): a loop rides its own line and nothing closes water but land,
+//      the shore, keep-out zones and water with none in it today;
+//   3. the line rides its contour (one steering band deeper than an old floorFt), and comes home on
+//      the other edge -- not within 100 m of the way out;
 //   4. his catches of the day's species decide which way the loop goes when the water does not;
 //   5. a place he ticked is where a loop turns;
 //   6. each loop is two legs, out and back, built as pieces whose steps leave nothing to run between
@@ -28,9 +29,10 @@
 //      three came home within 100 m of the way out for 81-88% of the way;
 //   9. the lines go in where a loop fits: the nearest deep-enough water to Short Stay on Moultrie at
 //      a 40 ft floor was one cell of a hole, and the day said no loop fits;
-//  10. the line rides the water HIS catches of the fish are over on this lake, then the research's
-//      water, and only then the fish band -- the band's deep edge as a floor put Moultrie's line on
-//      55 ft, past the water 12 of his 17 stripers there came from (Ryan, 10/3);
+//  10. the line is the depth with the most of HIS catches of the fish inside the 5 ft he steers either
+//      side of it, then the research's water, and only then the fish band -- the band's deep edge as a
+//      floor put Moultrie's line on 55 ft (Ryan, 10/3), and the middle of his catches less 5 ft as a
+//      floor made Wyboo Creek one loop (Ryan, 10/4: "this sounds like AI math");
 //  11. a leg is named for its loop and its half: the plan of 10/4 called its four legs loop1-loop4,
 //      and the model wrote "on loop3" about the second loop's way out;
 //  12. a loop added to the day is mostly new water, or it is a double back and the day stops before it.
@@ -39,7 +41,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { trollLoop, trollLoopAsync, depthGrid, loopPieces, loopSteps, marksAlong, densify, sharedWaterM, loopLine, SAME_WATER_M } from '../js/modules/plan-troll-loop.js';
+import { trollLoop, trollLoopAsync, depthGrid, loopPieces, loopSteps, marksAlong, densify, sharedWaterM, loopLine, lineFromDepths, SAME_WATER_M } from '../js/modules/plan-troll-loop.js';
 import { metresBetween } from '../js/modules/plan-candidates.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -78,16 +80,21 @@ test('1. every loop leaves the cove mouth and comes back to it; only the cove is
   assert.ok(r.trolledM >= 0.85 * r.budgetMin * M_PER_MIN - 2 * r.coveM, `trolled ${r.trolledM} m`);
 });
 
-test('2. no line is over water shallower than the floor', () => {
+test('2. there is no floor: the loop rides its line, and water off it only costs more', () => {
   const r = trollLoop(BASE);
+  // Most of the way the water under the line is inside his steering band of it (20-30 ft here).
+  let inBand = 0, all = 0;
   for (const p of r.petals) for (const half of [p.out, p.back]) {
-    for (let k = 1; k < half.length; k++) {
-      for (let t = 0; t <= 10; t++) {
-        const pt = [half[k - 1][0] + (half[k][0] - half[k - 1][0]) * t / 10, half[k - 1][1] + (half[k][1] - half[k - 1][1]) * t / 10];
-        assert.ok(depthAtY(yAt(pt)) >= 20 - 5.5, `${depthAtY(yAt(pt)).toFixed(1)} ft at ${yAt(pt).toFixed(0)} m`);
-      }
-    }
+    for (const pt of densify(half, 40)) { all++; const ft = depthAtY(yAt(pt)); if (ft >= 20 - 1 && ft <= 30 + 1) inBand++; }
   }
+  assert.ok(inBand / all >= 0.8, `${inBand} of ${all} stations inside 20-30 ft`);
+  // And nothing in the module closes water shallower than a floor: only land, the shore, keep-out
+  // zones and water with none in it today.
+  const src = read('js/modules/plan-troll-loop.js');
+  assert.doesNotMatch(src, /if \(!\(dd >= floor\)\) \{ cost\[c\] = Infinity; continue; \}/);
+  assert.match(src, /if \(!\(dd > 0\)\) \{ flat\[c\] = Infinity; continue; \}/);
+  assert.equal(r.floorFt, undefined);
+  assert.equal(r.lineFt, 25);
 });
 
 test('3. the line rides the 25 ft contour and comes home on the other edge', () => {
@@ -201,30 +208,34 @@ test('9. the lines go in where a loop fits, not in a hole nearer the ramp', () =
   assert.ok(r.trolledM > 0.85 * r.budgetMin * M_PER_MIN - 2 * r.coveM - 1000, `trolled ${r.trolledM} m`);
 });
 
-test('10. the line rides the water his catches are over, then the research\'s water, then the band', () => {
-  // Moultrie, 10/3: his 17 stripers there sit over 19-58 ft of charted water, middle 30; the built-in
-  // table said 40-50 ft, and its deep edge made a 50 ft floor and a 55 ft line.
+test('10. the line is the depth with the most of his catches inside his band, then the research\'s water, then the band', () => {
+  // Moultrie's 17 stripers of 10/3 over 19-58 ft of charted water. 19-24 ft holds 7 of them inside
+  // 5 ft of 19, and 19 is the depth the most were caught over (3). The middle, 30, held 6 inside its band.
   const moultrie = [19, 19, 19, 21, 22, 23, 24, 30, 30, 31, 38, 40, 41, 47, 57, 57, 58];
   const catches = moultrie.map((ft, i) => ({ at: [i, 0], ft }));
   const depthAt = ([i]) => (moultrie[i] ?? null);
   const fromCatches = loopLine({ catches, depthAt, offsetFt: 0, waterFt: [30, 45], band: [40, 50] });
-  assert.deepEqual(fromCatches, { lineFt: 30, floorFt: 25, from: 'catches', n: 17, rangeFt: [19, 58] });
+  assert.deepEqual(fromCatches, { lineFt: 19, from: 'catches', n: 17, inBand: 7, rangeFt: [19, 58] });
+  // His Wyboo Creek stripers within reach of Rowland Subdivision, 10/4: 28 ft, four of five inside 23-33.
+  assert.deepEqual(lineFromDepths([12, 28, 28, 28, 30]), { lineFt: 28, from: 'catches', n: 5, inBand: 4, rangeFt: [12, 30] });
   // In today's water: the lake 2 ft below its chart takes 2 ft off every catch.
-  assert.equal(loopLine({ catches, depthAt, offsetFt: 2 }).lineFt, 28);
+  assert.equal(loopLine({ catches, depthAt, offsetFt: 2 }).lineFt, 17);
   // A catch on another lake reads no depth on this one and does not count.
   const elsewhere = [...catches, { at: [99, 0] }];
   assert.equal(loopLine({ catches: elsewhere, depthAt }).n, 17);
-  // No catches here: the water the research names, then the band.
+  // No catches here: the water the research names, then the band. No floor on any of them.
   assert.deepEqual(loopLine({ catches: [{ at: [99, 0] }], depthAt, waterFt: [19, 22], band: [10, 20] }),
-    { lineFt: 21, floorFt: 16, from: 'research', rangeFt: [19, 22] });
-  assert.deepEqual(loopLine({ band: [40, 50] }), { lineFt: 55, floorFt: 50, from: 'band', rangeFt: [40, 50] });
-  assert.equal(loopLine({ band: [40, 50], holding: 'bottom' }).floorFt, 40);
+    { lineFt: 21, from: 'research', rangeFt: [19, 22] });
+  assert.deepEqual(loopLine({ band: [40, 50] }), { lineFt: 55, from: 'band', rangeFt: [40, 50] });
+  assert.equal(loopLine({ band: [40, 50], holding: 'bottom' }).lineFt, 45);
   assert.equal(loopLine({}), null);
-  // And Troll it for me takes its floor from it, needing no fish band when he has fish here.
+  // Troll it for me hands the loop his catches with the chart under each and the research's or the
+  // band's line for when none within reach says one; the loop decides from the ones within reach.
   const ui = read('js/modules/plan-water-ui.js');
-  assert.match(ui, /const line = loopLine\(\{ catches, depthAt: T\.depthAt, offsetFt: T\.offsetFt, waterFt: guide, band,/);
-  assert.match(ui, /const \{ lineFt, floorFt \} = line;/);
-  assert.doesNotMatch(ui, /const floorFt = bottom \? band\[0\] : band\[1\];/);
+  assert.match(ui, /const fallback = loopLine\(\{ waterFt: guide, band, holding: T\.holding, steerFt: steer \}\);/);
+  assert.match(ui, /return \{ at, date: c\.date \|\| null, chartFt:/);
+  assert.doesNotMatch(ui, /const \{ lineFt, floorFt \} = line;/);
+  assert.doesNotMatch(ui, /never over water under/);
 });
 
 test('11. a leg is named for its loop and its half', () => {

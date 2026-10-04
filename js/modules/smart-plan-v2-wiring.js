@@ -31,6 +31,7 @@ import { checkPlanLegality, ensureRegulations, fetchForecast, fetchWaterState,
          fetchMovingWater, movingWaterNote } from './plan-preflight.js';
 import { primeFishAdvisories } from '../data/fish-advisories.js';
 import { landingsFor } from '../data/launch-reach.js';
+import { oneFishEach } from '../utils/catch-pins.js';
 import { poolsFor, sameWaterLandings, cutOffPool, poolOnlyState, cutOffNote } from '../data/lake-pools.js';
 import { closerLanding, closerLandingNote } from './closer-landing.js';
 import { askLaunchStatus, launchStatusNote } from './launch-status.js';
@@ -371,7 +372,9 @@ export async function runSmartPlanV2(opts = {}) {
         depthBand: describeDepthBand(depth, species, season),
       },
       waterState,
-      catches: state.CATCHES || [],
+      // Each fish once: two photos of one fish are one catch (js/utils/catch-pins.js). A pin off the
+      // water is already not support -- catchSupport() counts it as `offWater` against the boundary.
+      catches: oneFishEach(state.CATCHES || []),
       // Missed bites, fish on sonar and hazards he marked and labelled at upload (item 40).
       marks: marksForPlan(state.GARMIN_MARKS),
       // What the research pipeline actually found about this water — thermocline, oxygen,
