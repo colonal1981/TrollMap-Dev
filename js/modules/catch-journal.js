@@ -25,6 +25,8 @@ import { distMiFromCoords } from '../utils/geo.js';
 import { groupPhotosByWaypoint, waypointReadings, localIso, fmtGap } from '../utils/catch-waypoints.js';
 import { marksToAsk, markRecord, saveMark, loadMarks, MARK_LABELS } from './garmin-marks.js';
 import { flattenJournal } from '../utils/journal-merge.js';
+import { catchWaters, catchesGpx } from '../utils/catch-gpx.js';
+import { pinOffItsWater } from '../utils/catch-pins.js';
 const DEFAULT_HELPER = 'http://127.0.0.1:8787';
 const QUEUE_DB_KEY = 'catch_import_queue';
 const CATCHES_DB_KEY = 'catches';
@@ -624,6 +626,12 @@ function renderJournalOnly(body = document.getElementById('catchCenterBody')) {
       <button id="deleteAllJournalBtn" class="warn small">🗑 Delete ALL Journal Catches</button>
       <span class="muted">${catches.length} confirmed catches</span>
     </div>
+    <div class="row" style="margin-top:4px">
+      <select id="catchGpxWater" class="small">${catchWaters(catches).map((w) =>
+        `<option value="${esc(w.key)}">${esc(w.name)} (${w.n})</option>`).join('')}</select>
+      <button id="exportCatchGpxBtn" class="small">⬇ GPX of this water's catches</button>
+      <span id="catchGpxStatus" class="muted" style="font-size:12px"></span>
+    </div>
     <div id="journalRecheckStatus" class="muted" style="margin:4px 0;font-size:12px"></div>
     <div id="catchLogList"></div>`;
   const list = body.querySelector('#catchLogList');
@@ -643,6 +651,7 @@ function renderJournalOnly(body = document.getElementById('catchCenterBody')) {
   }
   body.querySelector('#manualCatchBtn')?.addEventListener('click', () => addManualCatch());
   body.querySelector('#exportJournalBtn')?.addEventListener('click', exportJournalCsv);
+  body.querySelector('#exportCatchGpxBtn')?.addEventListener('click', () => exportCatchGpx(body));
   body.querySelector('#recheckLakesBtn')?.addEventListener('click', () => recheckJournalLakes(body));
   body.querySelector('#deleteAllJournalBtn')?.addEventListener('click', async () => {
     const n = getCatches().length;
@@ -1184,6 +1193,46 @@ function exportQueueCsv() {
   }));
   downloadCsv('trollmap_catch_review_queue_cleaned.csv', rows);
 }
+/**
+ * HIS CATCHES ON ONE WATER, AS GPX WAYPOINTS. Ryan, 10/4: "i want a gpx export of my catch history by body
+ * of water", "just waypoints of each caught fish". The water's boundary is read so a pin off it is left
+ * out, the way the map leaves it off; where none can be read (a water with no pack, or a river), every
+ * pin filed under it goes, and the line says so. See catch-gpx.js.
+ */
+async function exportCatchGpx(body) {
+  const sel = body.querySelector('#catchGpxWater');
+  const status = body.querySelector('#catchGpxStatus');
+  const key = sel?.value;
+  if (!key) { if (status) status.textContent = 'No catches with a position to export.'; return; }
+  const name = (sel.selectedOptions[0]?.textContent || key).replace(/\s*\(\d+\)$/, '');
+  if (status) status.textContent = 'Reading the water…';
+  let offWater = null, checked = false;
+  if (!key.startsWith('name:')) {
+    try {
+      const [{ packFetcher }, { waterTest }, { CF_WORKER_URL }, { resolveR2Key }] = await Promise.all([
+        import('./smart-plan-v2.js'), import('./river-drifts.js'), import('../core/state.js'), import('../data/lake-keys.js')]);
+      const bd = await packFetcher(CF_WORKER_URL)(`/${key}/boundary.geojson`);
+      const inside = bd ? waterTest(bd) : null;
+      if (inside) {
+        checked = true;
+        offWater = (c) => pinOffItsWater(c, { key, keyOf: resolveR2Key, inside });
+      }
+    } catch (_) { /* no boundary: every pin goes, and the line says so */ }
+  }
+  const r = catchesGpx(getCatches(), { key, name, offWater });
+  const blob = new Blob([r.gpx], { type: 'application/gpx+xml' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `catches_${name.replace(/[^A-Za-z0-9]+/g, '_').replace(/^_|_$/g, '')}.gpx`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  if (status) {
+    status.textContent = `${r.n} fish exported`
+      + (checked ? (r.offWater ? `; ${r.offWater} left out for a pin off the water.` : '.')
+                 : '; this water\'s boundary could not be read, so no pin was checked against it.');
+  }
+}
+
 function exportJournalCsv() {
   const rows = getCatches().map(c => ({
     species: c.species, length: c.length, date: c.date, time: c.time, lake: c.lake, depth: c.depth,
