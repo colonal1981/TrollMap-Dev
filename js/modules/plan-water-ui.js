@@ -232,8 +232,40 @@ function depthColour(ft) {
 
 /** Fit the listed pieces, then draw the whole chart under them. */
 function mapCanvas(w = 560, h = 420) {
+  // THE WHEEL ZOOMS AND A DRAG MOVES IT, THE WAY THE MAIN MAP DOES. Ryan, 10/4: "for pickwater to
+  // be better i would want the map where i tick lanes to be scrollable with my scroll wheel on my
+  // mouse just like the main map is... i think that would fix that issue" -- the issue being "the
+  // zoomed out view where i can't even see what i am clicking". Scrolling back out to the whole
+  // pick is the way home, so there is no extra button.
   return `<canvas id="wgMap" width="${w}" height="${h}" `
-       + `style="width:100%;display:block;border-radius:8px;cursor:pointer"></canvas>`;
+       + `style="width:100%;display:block;border-radius:8px;cursor:pointer"></canvas>`
+       + `<div class="wg-dim" style="font-size:11px;margin-top:4px">Scroll to zoom, drag to move.</div>`;
+}
+
+/**
+ * WHERE THE MAP IS LOOKING. `b` is the whole pick with its air round it (zoom 1); `view` is his
+ * zoom and centre from the wheel and the drag, or null for the whole pick. The painter and the
+ * mouse both ask this, so a wheel tick that lands before the last one has been painted still
+ * zooms about the point under the cursor.
+ */
+function frameOf(b, view) {
+  let { lo0, lo1, la0, la1 } = b;
+  if (view && view.z > 1 && view.c) {
+    const hl = (lo1 - lo0) / 2 / view.z, hb = (la1 - la0) / 2 / view.z;
+    lo0 = view.c[0] - hl; lo1 = view.c[0] + hl; la0 = view.c[1] - hb; la1 = view.c[1] + hb;
+  }
+  const { w, h } = b;
+  const kx = 111320 * Math.cos(((la0 + la1) / 2) * Math.PI / 180), ky = 110540;
+  const wM = (lo1 - lo0) * kx, hM = (la1 - la0) * ky;
+  const s = Math.min((w - 8) / Math.max(1, wM), (h - 8) / Math.max(1, hM));
+  const ox = (w - wM * s) / 2, oy = (h - hM * s) / 2;
+  return {
+    lo0, lo1, la0, la1, kx, ky, s,
+    centre: [(lo0 + lo1) / 2, (la0 + la1) / 2],
+    X: (c) => ox + (c[0] - lo0) * kx * s,
+    Y: (c) => h - oy - (c[1] - la0) * ky * s,
+    at: (px, py) => [lo0 + (px - ox) / (kx * s), la0 + (h - oy - py) / (ky * s)],
+  };
 }
 
 function paintMap(pieces, picked, ramp) {
@@ -258,13 +290,11 @@ function paintMap(pieces, picked, ramp) {
   // with none of the water that makes them mean anything -- the cove a lane sits in is the point.
   const padLo = Math.max((lo1 - lo0) * 0.18, 0.004), padLa = Math.max((la1 - la0) * 0.18, 0.003);
   lo0 -= padLo; lo1 += padLo; la0 -= padLa; la1 += padLa;
-
-  const kx = 111320 * Math.cos(((la0 + la1) / 2) * Math.PI / 180), ky = 110540;
-  const wM = (lo1 - lo0) * kx, hM = (la1 - la0) * ky;
-  const s = Math.min((w - 8) / Math.max(1, wM), (h - 8) / Math.max(1, hM));
-  const ox = (w - wM * s) / 2, oy = (h - hM * s) / 2;
-  const X = (c) => ox + (c[0] - lo0) * kx * s;
-  const Y = (c) => h - oy - (c[1] - la0) * ky * s;
+  // The whole pick, and then his view of it -- see frameOf().
+  T.mapBase = { lo0, lo1, la0, la1, w, h };
+  const F = frameOf(T.mapBase, T.view);
+  ({ lo0, lo1, la0, la1 } = F);
+  const { X, Y } = F;
   T.mapHit = { X, Y, w, h };
 
   ctx.fillStyle = '#0b1622';
@@ -1082,6 +1112,7 @@ export async function findWater() {
   } catch (e) { return say(e.message, true); }
 
   Object.assign(T, {
+    view: null,                // a new Find water starts at the whole pick
     pieces: out.pieces, spots: out.spots || [], picked: new Set(),
     // HOW FAR BELOW FULL POOL THE LAKE IS, and the record it came from, so the status line can say
     // it and the plan built from these pieces can tell the model the reasons are in today's water.
@@ -1950,6 +1981,48 @@ export function initWaterTab() {
     paint();
   });
 
+  const mapPx = (e, cv) => {
+    const r = cv.getBoundingClientRect();
+    const sx = T.mapHit.w / r.width;                       // CSS pixels -> the paint's own space
+    return [(e.clientX - r.left) * sx, (e.clientY - r.top) * sx, sx];
+  };
+  let frame = 0;
+  const repaintMap = () => {
+    if (frame) return;
+    frame = requestAnimationFrame(() => { frame = 0; paintMap(shown(), T.picked, T.ramp); });
+  };
+  // THE POINT UNDER THE CURSOR STAYS PUT, as it does on the main map.
+  document.addEventListener('wheel', (e) => {
+    const cv = e.target;
+    if (!cv || cv.id !== 'wgMap' || !T.mapHit || !T.mapBase) return;
+    e.preventDefault();
+    const [px, py] = mapPx(e, cv);
+    const F = frameOf(T.mapBase, T.view);
+    const z0 = (T.view && T.view.z) || 1;
+    const z1 = Math.min(64, Math.max(1, z0 * (e.deltaY < 0 ? 1.25 : 1 / 1.25)));
+    if (z1 === z0) return;
+    const c0 = F.centre, at = F.at(px, py), k = z0 / z1;
+    T.view = z1 > 1 ? { z: z1, c: [at[0] + (c0[0] - at[0]) * k, at[1] + (c0[1] - at[1]) * k] } : null;
+    repaintMap();
+  }, { passive: false });
+  let drag = null;
+  document.addEventListener('pointerdown', (e) => {
+    const cv = e.target;
+    if (!cv || cv.id !== 'wgMap' || !T.mapBase || e.pointerType === 'touch') return;
+    drag = { x: e.clientX, y: e.clientY, F: frameOf(T.mapBase, T.view), moved: false, cv };
+  });
+  document.addEventListener('pointermove', (e) => {
+    if (!drag || !T.view || !(T.view.z > 1)) return;
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    if (!drag.moved && Math.hypot(dx, dy) < 4) return;
+    drag.moved = true;
+    const sx = mapPx(e, drag.cv)[2], { F } = drag;
+    T.view = { z: T.view.z, c: [F.centre[0] - (dx * sx) / (F.kx * F.s), F.centre[1] + (dy * sx) / (F.ky * F.s)] };
+    repaintMap();
+  });
+  // The click that ends a drag comes after this, so let it see the drag before it is forgotten.
+  document.addEventListener('pointerup', () => { if (drag) setTimeout(() => { drag = null; }, 0); });
+
   // CLICKING THE WATER IS THE SAME ACT AS TICKING THE ROW, and on a canvas that means finding
   // the lane yourself. The SVG version read `data-key` off the path under the cursor; there are
   // no paths now, so the click is projected back through the same X/Y the paint used and the
@@ -1958,14 +2031,22 @@ export function initWaterTab() {
   document.addEventListener('click', (e) => {
     const cv = e.target;
     if (!cv || cv.id !== 'wgMap' || !T.mapHit) return;
-    const r = cv.getBoundingClientRect();
-    const sx = T.mapHit.w / r.width;                       // CSS pixels -> the paint's own space
-    const px = (e.clientX - r.left) * sx, py = (e.clientY - r.top) * sx;
-    const { X, Y } = T.mapHit;
+    if (drag && drag.moved) return;                         // the end of a drag is not a click
+    const [px, py, sx] = mapPx(e, cv);
+    const { X, Y } = T.mapBase ? frameOf(T.mapBase, T.view) : T.mapHit;
+    // TO THE LINE, NOT ITS CORNERS. Zoomed in, a lane's points can be a thumb apart on screen,
+    // and a click on the line between two of them is still a click on the lane.
+    const toSeg = (a, b) => {
+      const ax = X(a), ay = Y(a), bx = X(b), by = Y(b);
+      const L = (bx - ax) ** 2 + (by - ay) ** 2;
+      const t = L ? Math.max(0, Math.min(1, ((px - ax) * (bx - ax) + (py - ay) * (by - ay)) / L)) : 0;
+      return Math.hypot(ax + t * (bx - ax) - px, ay + t * (by - ay) - py);
+    };
     let best = null, bd = 14 * sx;
     for (const q of shown()) {
-      for (const c of (q.coords || [])) {
-        const d = Math.hypot(X(c) - px, Y(c) - py);
+      const cs = q.coords || [];
+      for (let i = 0; i < cs.length; i++) {
+        const d = i ? toSeg(cs[i - 1], cs[i]) : Math.hypot(X(cs[0]) - px, Y(cs[0]) - py);
         if (d < bd) { bd = d; best = q.key; }
       }
     }
