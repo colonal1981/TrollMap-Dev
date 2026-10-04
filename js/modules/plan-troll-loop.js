@@ -449,7 +449,9 @@ export function sharedWaterM(out, back, sameM = SAME_WATER_M, earlier = []) {
  *      double back is a way home that is more old water than new: more of `backM` (the way home)
  *      within sharedWaterM's reach of the way out, or of a loop earlier in the day, than not -- the
  *      same more-new-than-old test the day uses to stop adding loops, put to the leg that can repeat.
- *      (Over the whole loop it would pass any double back: the way out is always new.)
+ *      (Over the whole loop it would pass any double back: the way out is always new.) Nor one whose
+ *      way home could not keep clear of the way out beyond the turn (`kept` false: a turn in a dead
+ *      end, Ryan 10/4 -- "i do not like this part of the purple leg").
  *   2. among those, the most of his catches of the species;
  *   3. then, as it always was: one that fills the time before one that does not; between two that
  *      fill, the most structure, then the most new water; between two that do not, the most new
@@ -457,11 +459,11 @@ export function sharedWaterM(out, back, sameM = SAME_WATER_M, earlier = []) {
  * With no catches, 2 is a tie everywhere and the order is the old one.
  *
  * @param {number} fillM  what filling the time means, in metres trolled once
- * @returns {function} a comparator over {m, newM, backM, score: {fish, structure}}
+ * @returns {function} a comparator over {m, newM, backM, kept, score: {fish, structure}}
  */
 export function fishBeforeFilling(fillM) {
   const key = (t) => {
-    const clean = 2 * (t.m - t.newM) <= t.backM;
+    const clean = t.kept !== false && 2 * (t.m - t.newM) <= t.backM;
     const full = t.newM >= fillM;
     return [clean ? 1 : 0, clean ? t.score.fish : -1, full ? 1 : 0,
             full ? t.score.structure : t.newM, full ? t.newM : t.score.structure];
@@ -514,6 +516,12 @@ export function* trollLoopSteps(o) {
     cost[c] = (1 + ((dd - target) / steer) ** 2) * (1 + Math.max(0, 1 - span / steer));
   }
   const inBand = (c) => G.d[c] >= floor && G.d[c] <= floor + 2 * steer;
+  // More than any path that stays out of a stretch of water could cost, per metre: no path visits a
+  // cell twice, so none costs more than every open cell at the dearest cost, on the diagonal.
+  let crossM = 0;
+  { let open = 0, dearest = 0;
+    for (let c = 0; c < n; c++) if (cost[c] < Infinity) { open++; if (cost[c] > dearest) dearest = cost[c]; }
+    crossM = 2 * open * dearest * Math.SQRT2; }
 
   // ── OUT OF THE COVE: the nearest water deep enough for the baits, by water ─────────────────────
   const fromRamp = (g) => {
@@ -691,28 +699,36 @@ export function* trollLoopSteps(o) {
       const outC = straighten(G, cost, out, blockA).map(G.lonLat);
       if (!forced && lineM(outC) > petalM * 0.6) continue;
       // The way home may not come within sameM of the way out, except at the two ends. Where the
-      // water is too narrow for that -- one edge up a river arm -- it may come within his wander
-      // (25 m), and failing that it comes home on the same water, and the loop says how much.
+      // water is too narrow for that -- one edge up a river arm -- it crosses the way out's water only
+      // where there is no other way.
       let back = null, both = null, apartM = null;
-      // Where both have to use one passage near the ramp or the turn (the mouth of the cove), the
-      // ends the two may share grow until the way home is found.
-      const ways = [[sameM, 2], [sameM, 4], [sameM, 8], [sameM, 16], [o.wanderM || 25, 2], [0, 0]];
-      for (const [keepM, ends] of ways) {
+      // Where both have to use one passage near the ramp (the mouth of the cove), the end the two
+      // may share there grows until the way home is found. AT THE TURN IT DOES NOT: a way home that
+      // can only leave the turn on the way out's water is a turn in a dead end, and the loop comes
+      // back on top of itself -- Ryan, 10/4, on Moultrie's first loop from Short Stay (home within
+      // 25 m of the way out for 300 m from the turn, at the hump's west tip) and Wateree's third from
+      // Clearwater Cove (the same, out of the pocket at the dam): "i do not like this part", "does the
+      // same thing". Such a loop is still laid, by the narrow-water step below, and comes after every
+      // loop whose way home kept clear (fishBeforeFilling).
+      const nearOut = (keepM, ends) => {
         const r = Math.ceil(keepM / G.cellM);
         const marked = [];
-        if (r > 0) {
-          for (const c of out) {
-            if (near(c, S, ends * sameM) || near(c, T, ends * sameM)) continue;
-            const i = c % G.w, j = (c - i) / G.w;
-            for (let dj = -r; dj <= r; dj++) for (let di = -r; di <= r; di++) {
-              if (di * di + dj * dj > r * r) continue;
-              const i2 = i + di, j2 = j + dj;
-              if (i2 < 0 || j2 < 0 || i2 >= G.w || j2 >= G.h) continue;
-              const c2 = j2 * G.w + i2;
-              if (!corridor[c2]) { corridor[c2] = 1; marked.push(c2); }
-            }
+        for (const c of out) {
+          if (near(c, S, ends * sameM) || near(c, T, 2 * sameM)) continue;
+          const i = c % G.w, j = (c - i) / G.w;
+          for (let dj = -r; dj <= r; dj++) for (let di = -r; di <= r; di++) {
+            if (di * di + dj * dj > r * r) continue;
+            const i2 = i + di, j2 = j + dj;
+            if (i2 < 0 || j2 < 0 || i2 >= G.w || j2 >= G.h) continue;
+            const c2 = j2 * G.w + i2;
+            if (!corridor[c2]) { corridor[c2] = 1; marked.push(c2); }
           }
         }
+        return marked;
+      };
+      for (const ends of [2, 4, 8, 16]) {
+        const keepM = sameM;
+        const marked = nearOut(keepM, ends);
         both = new Uint8Array(n);
         for (let c = 0; c < n; c++) if (blockA[c] || corridor[c]) both[c] = 1;
         for (const c of marked) corridor[c] = 0;
@@ -720,8 +736,27 @@ export function* trollLoopSteps(o) {
         back = pathTo(home.prev, T, S);
         if (back) { apartM = keepM; break; }
       }
+      // NO ROOM FOR TWO LINES: the way home crosses the way out's water only where the water leaves
+      // no other way, and as little of it as it can -- each metre within sameM of the way out costs
+      // more than any way home round it could (crossM), and each within his wander of it (25 m) as
+      // much again, so in a channel with room for one line it keeps to the other edge. It used to come
+      // within 25 m of the way out wherever it liked, and failing that home on the way out from end
+      // to end: told to turn up the channel west of Wyboo Creek toward Potato Creek (100-190 m wide at
+      // 23 ft), the loop came back up the creek on its own track as well. Ryan, 10/4: *"i could easily
+      // just go that way and then turn around and come back and then finish the leg"*.
+      let homeCost = cost;
+      if (!back) {
+        homeCost = Float64Array.from(cost);
+        for (const keepM of [sameM, o.wanderM || 25]) {
+          for (const c of nearOut(keepM, 2)) { homeCost[c] += crossM; corridor[c] = 0; }
+        }
+        both = blockA;
+        const home = shortestFrom(G, homeCost, T, { blocked: both, dst: S });
+        back = pathTo(home.prev, T, S);
+        apartM = 0;
+      }
       if (!back) continue;
-      const backC = straighten(G, cost, back, both).map(G.lonLat);
+      const backC = straighten(G, homeCost, back, both).map(G.lonLat);
       const coords = outC.concat(backC.slice(1));
       const m = lineM(coords);
       if (!forced && m > petalM * 1.02) continue;
@@ -730,6 +765,7 @@ export function* trollLoopSteps(o) {
       // mile of the east edge and two came home along the same stretch of the dam.
       const sharedM = sharedWaterM(outC, backC, sameM, earlier);
       tried.push({ T, out: outC, back: backC, coords, m, sharedM, newM: m - sharedM, backM: lineM(backC),
+                   kept: apartM >= sameM,
                    score: scoreOf(coords, taken), apartM, cells: out.concat(back) });
     }
     // THE LOOP PASSES THE MOST OF HIS FISH, AND THEN FILLS ITS SHARE OF THE DAY WITH WATER IT TROLLS
@@ -780,7 +816,7 @@ export function* trollLoopSteps(o) {
     const m = petals.reduce((a, p) => a + p.m, 0);
     const newM = petals.reduce((a, p) => a + p.newM, 0);
     const backM = petals.reduce((a, p) => a + p.backM, 0);
-    tries.push({ petals, score, m, newM, backM });
+    tries.push({ petals, score, m, newM, backM, kept: petals.every((p) => p.kept) });
   }
     if (tries.length) break;
   }
