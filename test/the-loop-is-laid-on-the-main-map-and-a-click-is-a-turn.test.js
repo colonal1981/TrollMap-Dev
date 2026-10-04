@@ -82,7 +82,7 @@ test('a turn no loop can reach does not cost the rest of the day: that loop is c
   const src = read('../js/modules/plan-troll-loop.js');
   assert.ok(src.includes('if (!pt && !petals.length) pt = yield* petal(ctx0, pm, petals, taken, null, false);'));
   assert.ok(src.includes('pt.via = asked ? p : null;'));
-  assert.ok(src.includes('lineFt: p.lineFt, score: p.score, via: p.via != null ? p.via : null })),'));
+  assert.ok(src.includes('lineFt: p.lineFt, edgeFt: p.lineFt - steer, score: p.score, via: p.via != null ? p.via : null })),'));
 });
 
 test('Troll it for me takes the turns from the map exactly where he clicked, not the middle of a lane', () => {

@@ -31,15 +31,17 @@
  * shallowest band covering it (as depthSampler() reads it) less the lake's measured offset. Land,
  * uncharted water, the charted shore line, keep-out zones and water with none in it today are closed.
  *
- * EACH LOOP RIDES ONE LINE, AND NOTHING IS CLOSED BY IT. A loop's line is a depth of water; a cell
- * costs more the further its depth is off that line, by the square of how many of his steering bands
- * (5 ft: "i would probably give at least 5 ft offset because i am hand steering", 2026-08-26 --
- * HAND_STEER_BAND_FT) -- so the line rides the edge and only crosses other water where it has to, the
- * way his tracks cross the channel to come home on the other side. The first loop's line is the depth
- * with the most of his catches here inside that band (loopLine()). Until 10/4 the band was also taken
- * off the line as a FLOOR for the whole day, no water shallower on any loop; on Wyboo Creek that left
- * the channel the only water and one loop the only day. Ryan: "that sounds like an excuse to keep it at
- * one loop instead of concentric loops around the same creek which is what i would actually fish".
+ * EACH LOOP RIDES ONE LINE, AND NEVER GOES SHALLOWER THAN ITS OWN ALARM. A loop's line is a depth of
+ * water; a cell costs more the further its depth is off that line, by the square of how many of his
+ * steering bands (5 ft: "i would probably give at least 5 ft offset because i am hand steering",
+ * 2026-08-26 -- HAND_STEER_BAND_FT) -- so the line rides the edge and only crosses deeper water where it
+ * has to, the way his tracks cross the channel to come home on the other side. Water shallower than the
+ * line less that band -- the shallow edge of the Contour alarm the leg's flag tells him to set -- is
+ * closed to that loop. The first loop's line is the depth with the most of his catches here inside the
+ * band (loopLine()). Until 10/4 that edge was one FLOOR for the whole day; on Wyboo Creek it left the
+ * channel the only water and one loop the only day. Ryan: "that sounds like an excuse to keep it at one
+ * loop instead of concentric loops around the same creek which is what i would actually fish". Then,
+ * with no edge at all, "the route that is supposed to be over 28 ft of water now runs through 14ft".
  *
  * OUT ONE EDGE, BACK ON OTHER WATER. The way home may not come within `sameWaterM` of the way out,
  * except where the two have to meet at the ramp end and at the turn. 100 m is the app's own measure
@@ -621,10 +623,18 @@ export function* trollLoopSteps(o) {
   const n = G.w * G.h;
 
   // ── WHAT A METRE COSTS ON A LINE ──────────────────────────────────────────────────────────────
-  // NO FLOOR. Closed is land, uncharted water, the charted shore, keep-out zones and water with none
-  // in it today. Everything else is open to every loop, and costs more the further its depth is off
-  // that loop's line, by the square of how many steering bands -- so a line rides its contour and only
-  // crosses other water where it has to.
+  // NO FLOOR FOR THE DAY; EACH LOOP STAYS INSIDE ITS OWN CONTOUR ALARM ON THE SHALLOW SIDE. Closed to
+  // every loop: land, uncharted water, the charted shore, keep-out zones and water with none in it
+  // today. Closed to a loop: water shallower than its line less his steering band -- the shallow edge
+  // of the Contour alarm its leg flag tells him to set ("L1 22-32ft" for a 27 ft line), so a loop never
+  // takes him where his own alarm would go off. Ryan, 10/4, on the first build of this with no such
+  // edge, a turn clicked at the east-west channel west of Wyboo Creek: "the loops went from following
+  // the correct depth to cutting straight across that shallow spot... so the route that is supposed to
+  // be over 28 ft of water now runs through 14ft". With one floor for the WHOLE day (the 23 ft of
+  // 10/3) the creek channel was the only water and the day one loop; with each loop's own, the loop on
+  // 23 ft may go into 18 ft water and the one on 18 ft into 13. Deeper water is open to every loop and
+  // costs more the further it is off the line, by the square of how many steering bands, so a line
+  // rides its contour and only crosses the channel where it has to.
   // AN EDGE IS WHERE THE BOTTOM MOVES UNDER HIS WANDER. The span of the bottom within his wander
   // (25 m) of a cell, against his steering band: a cell where it moves a whole band or more is an
   // edge and costs what its depth says; on a flat, where it does not move at all, it costs twice
@@ -654,14 +664,15 @@ export function* trollLoopSteps(o) {
     if (ctxs.size >= 4) ctxs.delete(ctxs.keys().next().value);
     const cost = new Float64Array(n);
     let open = 0, dearest = 0;
+    const edge = lineFt - steer;
     for (let c = 0; c < n; c++) {
-      if (!(flat[c] < Infinity)) { cost[c] = Infinity; continue; }
+      if (!(flat[c] < Infinity) || !(G.d[c] >= edge)) { cost[c] = Infinity; continue; }
       const v = (1 + ((G.d[c] - lineFt) / steer) ** 2) * flat[c];
       cost[c] = v; open++; if (v > dearest) dearest = v;
     }
     // More than any path that stays out of a stretch of water could cost, per metre: no path visits a
     // cell twice, so none costs more than every open cell at the dearest cost, on the diagonal.
-    x = { lineFt, cost, crossM: 2 * open * dearest * Math.SQRT2,
+    x = { lineFt, edgeFt: edge, cost, crossM: 2 * open * dearest * Math.SQRT2,
           // HIS CONTOUR ALARM: the line, and his steering band either side of it.
           inBand: (c) => Math.abs(G.d[c] - lineFt) <= steer };
     ctxs.set(lineFt, x);
@@ -765,7 +776,7 @@ export function* trollLoopSteps(o) {
     const body = new Int32Array(n).fill(-1);
     const bodies = [];
     const q = new Int32Array(n);
-    const open = (c) => flat[c] < Infinity;
+    const open = (c) => ctx0.cost[c] < Infinity;
     for (let c0 = 0; c0 < n; c0++) {
       if (!open(c0) || body[c0] >= 0) continue;
       const id = bodies.length;
@@ -1175,7 +1186,7 @@ export function* trollLoopSteps(o) {
           const v = G.d[j2 * G.w + i2]; if (v > deep) deep = v;
         }
       }
-      legs.push({ coords: c, lengthM: Math.round(lineM(c)), petal: pi, half, lineFt: pt.lineFt,
+      legs.push({ coords: c, lengthM: Math.round(lineM(c)), petal: pi, half, lineFt: pt.lineFt, edgeFt: pt.lineFt - steer,
                   deepestNearbyFt: Number.isFinite(deep) ? Math.round((deep + off) * 10) / 10 : null });
     }
   });
@@ -1194,7 +1205,7 @@ export function* trollLoopSteps(o) {
     start: G.lonLat(S),
     legs,
     petals: day.petals.map((p) => ({ out: p.out, back: p.back, m: Math.round(p.m), sharedM: Math.round(p.sharedM),
-                                     lineFt: p.lineFt, score: p.score, via: p.via != null ? p.via : null })),
+                                     lineFt: p.lineFt, edgeFt: p.lineFt - steer, score: p.score, via: p.via != null ? p.via : null })),
     trolledM: Math.round(loopM), sharedM: Math.round(day.petals.reduce((a, p) => a + p.sharedM, 0)),
     runM: Math.round(2 * coveM),
     minutes: Math.round(minutesFor(loopM, trollMph) + 2 * minutesFor(coveM, transitMph)),

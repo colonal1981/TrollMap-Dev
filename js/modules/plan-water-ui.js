@@ -1486,6 +1486,9 @@ export async function trollForMe(opts = {}) {
     + (loop.sharedM > 0 ? `; ${fmtMi(loop.sharedM)} of it is back over water the day already trolled` : '')
     + '. '
     + `Loop 1 on ${linesSaid(loop, { first: `the ${Math.round(loop.lineFt)} ft line — ${lineFrom}` })}`
+    // EACH LOOP'S OWN EDGE, not one floor for the day: the shallow edge of the Contour alarm its flag sets.
+    + `; no loop goes shallower than the shallow edge of its own Contour alarm, its line less the ${steer} ft you steer `
+    + `within (${[...new Set(loop.petals.map((p) => Math.round(p.edgeFt != null ? p.edgeFt : p.lineFt - steer)))].map((e) => `${e} ft`).join(', ')})`
     + (zones ? `; out of ${zones} keep-out zone${zones === 1 ? '' : 's'}` : '')
     + `. It passes ${loop.score.fish} of your ${cu.used} ${sp} catch${cu.used === 1 ? '' : 'es'} within reach`
     + (passes > loop.score.fish ? `, ${passes} times over` : '')

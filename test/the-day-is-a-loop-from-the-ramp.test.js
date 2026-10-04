@@ -14,8 +14,8 @@
 // is in reach. What these hold:
 //   1. the day leaves the cove mouth and comes back to it: every loop starts and ends there, and the
 //      only water run with the lines up is out of the cove and back in;
-//   2. there is no floor (since 10/4): a loop rides its own line and nothing closes water but land,
-//      the shore, keep-out zones and water with none in it today;
+//   2. no floor for the day (since 10/4): each loop rides its own line and never goes shallower than
+//      the shallow edge of its own Contour alarm, its line less his 5 ft;
 //   3. the line rides its contour (one steering band deeper than an old floorFt), and comes home on
 //      the other edge -- not within 100 m of the way out;
 //   4. his catches of the day's species decide which way the loop goes when the water does not;
@@ -80,21 +80,25 @@ test('1. every loop leaves the cove mouth and comes back to it; only the cove is
   assert.ok(r.trolledM >= 0.85 * r.budgetMin * M_PER_MIN - 2 * r.coveM, `trolled ${r.trolledM} m`);
 });
 
-test('2. there is no floor: the loop rides its line, and water off it only costs more', () => {
+test('2. no loop goes shallower than its own alarm edge, its line less his 5 ft', () => {
   const r = trollLoop(BASE);
-  // Most of the way the water under the line is inside his steering band of it (20-30 ft here).
-  let inBand = 0, all = 0;
-  for (const p of r.petals) for (const half of [p.out, p.back]) {
-    for (const pt of densify(half, 40)) { all++; const ft = depthAtY(yAt(pt)); if (ft >= 20 - 1 && ft <= 30 + 1) inBand++; }
-  }
-  assert.ok(inBand / all >= 0.8, `${inBand} of ${all} stations inside 20-30 ft`);
-  // And nothing in the module closes water shallower than a floor: only land, the shore, keep-out
-  // zones and water with none in it today.
-  const src = read('js/modules/plan-troll-loop.js');
-  assert.doesNotMatch(src, /if \(!\(dd >= floor\)\) \{ cost\[c\] = Infinity; continue; \}/);
-  assert.match(src, /if \(!\(dd > 0\)\) \{ flat\[c\] = Infinity; continue; \}/);
-  assert.equal(r.floorFt, undefined);
   assert.equal(r.lineFt, 25);
+  for (const p of r.petals) {
+    assert.equal(p.edgeFt, p.lineFt - 5);
+    for (const half of [p.out, p.back]) {
+      for (let k = 1; k < half.length; k++) {
+        for (let t = 0; t <= 10; t++) {
+          const pt = [half[k - 1][0] + (half[k][0] - half[k - 1][0]) * t / 10, half[k - 1][1] + (half[k][1] - half[k - 1][1]) * t / 10];
+          // half a band for where a straight run crosses a cell the grid read at the band's edge
+          assert.ok(depthAtY(yAt(pt)) >= p.edgeFt - 5.5, `${depthAtY(yAt(pt)).toFixed(1)} ft at ${yAt(pt).toFixed(0)} m`);
+        }
+      }
+    }
+  }
+  // And no floor for the day: the edge is each loop's own.
+  const src = read('js/modules/plan-troll-loop.js');
+  assert.match(src, /if \(!\(flat\[c\] < Infinity\) \|\| !\(G\.d\[c\] >= edge\)\) \{ cost\[c\] = Infinity; continue; \}/);
+  assert.equal(r.floorFt, undefined);
 });
 
 test('3. the line rides the 25 ft contour and comes home on the other edge', () => {

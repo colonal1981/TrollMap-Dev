@@ -103,13 +103,48 @@ test('a loop after the first is one he would fish: his shortest pass at least, a
   assert.ok(src.includes('&& q.sharedM <= q.newM;'));
 });
 
-test('there is no floor: the status line and the bar say each loop\'s line, and nothing says "never over water under"', () => {
+test('the status line and the bar say each loop\'s line and its alarm edge, not one floor for the day', () => {
   const ui = read('../js/modules/plan-water-ui.js');
   const lom = read('../js/modules/loop-on-map.js');
   assert.doesNotMatch(ui, /never over water under/);
   assert.doesNotMatch(lom, /never over water `/);
   assert.ok(ui.includes('the depth with the most of your ${ln.n} ${sp} catch'));
-  assert.ok(lom.includes("`${p.lineFt != null ? ` on ${Math.round(p.lineFt)} ft` : ''}: ${mi(out)} out, ${mi(back)} home`"));
+  assert.ok(lom.includes("`${p.edgeFt != null ? `, never under ${Math.round(p.edgeFt)} ft` : ''}: ${mi(out)} out, ${mi(back)} home`"));
+  assert.ok(ui.includes('no loop goes shallower than the shallow edge of its own Contour alarm'));
   // the planned lake's chart goes under its loop, so the catch markers are judged against it
   assert.ok(lom.includes('if (now.lake) window.loadSupplementalForLake?.(now.lake);'));
+});
+
+test('a loop does not cut across water shallower than its alarm edge to reach a turn: it goes round', () => {
+  // Ryan, 10/4, a turn clicked on the east-west channel west of Wyboo Creek, on the first build with no
+  // edge: "the loops went from following the correct depth to cutting straight across that shallow
+  // spot... so the route that is supposed to be over 28 ft of water now runs through 14ft".
+  // Two channels side by side, a 10 ft flat between them for 14 km, joined deep at the east end.
+  const W2 = 1000;
+  const DA2 = [];
+  const J = 14000;                            // the banks between them stop here, and it is all deep east of it
+  for (let ft = 0; ft < MAXFT; ft += 5) {
+    const a = yOf(ft), b = yOf(ft + 5);
+    DA2.push(rect(0, a, L, b, ft + 5), rect(0, W - b, J, W - a, ft + 5));                  // channel 1
+    DA2.push(rect(0, W2 + a, J, W2 + b, ft + 5), rect(0, W2 + W - b, L, W2 + W - a, ft + 5)); // channel 2
+  }
+  DA2.push(rect(0, yOf(MAXFT - 0.01), L, W - yOf(MAXFT - 0.01), MAXFT));
+  DA2.push(rect(0, W2 + yOf(MAXFT - 0.01), L, W2 + W - yOf(MAXFT - 0.01), MAXFT));
+  DA2.push(rect(0, W, J, W2, 10));                                          // the flat
+  DA2.push(rect(J, W - yOf(MAXFT - 0.01), L, W2 + yOf(MAXFT - 0.01), MAXFT)); // the deep join
+  const ramp = at(8000, 10);
+  const via = [at(8000, W2 + yOf(25))];
+  const catches = [{ at: at(8500, yOf(25)), chartFt: 25 }];
+  const r = trollLoop({ ramp, daFeatures: DA2, windowMin: 720, stopMin: 0, catches, via, maxPetals: 1 });
+  assert.ok(!r.error, r.error);
+  const p = r.petals[0];
+  assert.equal(p.lineFt, 25);
+  // nothing of the loop is over the flat west of the join
+  const yOfPt = (pt) => (pt[1] - LAT0) * KY, xOfPt = (pt) => (pt[0] + 80) * KX;
+  for (const half of [p.out, p.back]) for (const pt of half) {
+    const x = xOfPt(pt), y = yOfPt(pt);
+    assert.ok(!(y > W + 30 && y < W2 - 30 && x < 13900), `over the flat at x ${x.toFixed(0)}, y ${y.toFixed(0)}`);
+  }
+  // it went round by the join
+  assert.ok(Math.max(...p.out.concat(p.back).map(xOfPt)) > 14000);
 });

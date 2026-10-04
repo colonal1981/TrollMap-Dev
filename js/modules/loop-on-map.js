@@ -381,7 +381,9 @@ function setBar(o) {
       const s = p.score || {};
       return `<div style="margin-top:3px"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;`
         + `background:${col};margin-right:6px;vertical-align:-1px"></span><b>Loop ${i + 1}</b>`
-        + `${p.lineFt != null ? ` on ${Math.round(p.lineFt)} ft` : ''}: ${mi(out)} out, ${mi(back)} home`
+        // and the shallow edge of its own Contour alarm, which it never goes under
+        + `${p.lineFt != null ? ` on ${Math.round(p.lineFt)} ft` : ''}`
+        + `${p.edgeFt != null ? `, never under ${Math.round(p.edgeFt)} ft` : ''}: ${mi(out)} out, ${mi(back)} home`
         // Every catch it goes past, the ones an earlier loop passed too -- going round again is the point.
         + ` · past ${s.passes != null ? s.passes : (s.fish || 0)} of your ${esc(snap.species || '')} catches and ${plural(s.structure || 0, 'charted mark')}</div>`;
     }).join('');
