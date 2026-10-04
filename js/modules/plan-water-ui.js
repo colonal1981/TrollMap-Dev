@@ -1335,6 +1335,13 @@ function trollOrderOf(picked) {
  * The loop's legs go into the list as pieces L1, L2... ticked, in order, with how the troll runs them,
  * so "Build the day" builds it the way every picked day is built. Every tick stays his to change.
  */
+/** "2 h 10 min" / "45 min", for the loop status line. */
+function fmtHours(min) {
+  const m = Math.round(Number(min) || 0);
+  const h = Math.floor(m / 60), r = m % 60;
+  return h ? `${h} h${r ? ` ${r} min` : ''}` : `${r} min`;
+}
+
 export async function trollForMe() {
   const say = (m, bad) => {
     const el = $('wgStatus');
@@ -1427,6 +1434,17 @@ export async function trollForMe() {
     + (guide ? `. ${onGuide} of its ${pieces.length} legs cross the ${guide[0]}–${guide[1]} ft of water the research says the fish are over` : '')
     // THE DOCKS CLOSED THE CANAL AT THE APP'S 25 m GRID, so the way out was found on the depth bands
     // alone (Rowland Subdivision, 2026-10-03). It is lines up and his eyes on the water; say so.
+    // A DAY SHORTER THAN THE TIME HE HAS, because the loops past the most of his fish do not fill it.
+    // Says what filling it would have taken, so the choice is his: Rowland Subdivision, 2026-10-03.
+    // With water trolled twice in it, the day is measured on the water it trolls once, as it was chosen;
+    // and only a day that leaves time over says the rest of the day is his.
+    + (loop.fillsDay === false
+      ? `. ${loop.sharedM > 0 ? `Trolled once, that is about ${fmtHours(loop.onceMinutes)}` : `That is about ${fmtHours(loop.minutes)}`}`
+        + ` of the ${fmtHours(loop.budgetMin)} you have: `
+        + (loop.fillingDay ? `filling the day would take ${loop.fillingDay.petals === 1 ? 'a loop' : `${loop.fillingDay.petals} loops`} of ${fmtMi(loop.fillingDay.m)} past ${loop.fillingDay.score.fish} of your fish`
+                           : 'no loop from here on water this deep fills it')
+        + (loop.fillsTime ? '' : ', so the rest of the day is yours to go round it again or turn where you choose')
+      : '')
     + (loop.coveCrossesShore ? `. The way out of the cove runs past charted docks and shore lines that close it on the app's ${loop.grid && loop.grid.cellM ? `${loop.grid.cellM} m` : ''} grid, so it is drawn on the depth chart alone — steer it by eye` : '')
     + '. Tick a spot or a piece and press it again to make a loop turn there.');
 }

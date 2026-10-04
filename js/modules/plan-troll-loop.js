@@ -433,6 +433,46 @@ export function sharedWaterM(out, back, sameM = SAME_WATER_M, earlier = []) {
  * @param {object[]} [o.marks]       [{at:[lon,lat], value, ...}] what the loop should pass
  * @param {number}   [o.maxPetals]   the most loops from the ramp a day is made of (4)
  */
+/**
+ * HIS FISH COME BEFORE FILLING THE DAY -- the order loops, and days of loops, are chosen in.
+ *
+ * Ryan, 2026-10-03, after the Rowland Subdivision day on Marion came out one 16.9 mi loop down Wyboo
+ * Creek and eight miles into the open lower lake, past 2 of his 8 Marion stripers, drew the loop he
+ * would troll -- down one side of the creek channel, out along the east-west channel and toward the
+ * mouth, back up the other side -- past most of the 7 he caught in that creek: "something like this
+ * for a troll lane". The old order took a day that filled the time over any that did not, whatever
+ * either passed.
+ *
+ * So, in order:
+ *   1. a loop that does not come home over its own water before one that does -- his 10/3 Wateree
+ *      complaint (three loops home within 100 m of the way out, past more of his fish) stands. A
+ *      double back is a way home that is more old water than new: more of `backM` (the way home)
+ *      within sharedWaterM's reach of the way out, or of a loop earlier in the day, than not -- the
+ *      same more-new-than-old test the day uses to stop adding loops, put to the leg that can repeat.
+ *      (Over the whole loop it would pass any double back: the way out is always new.)
+ *   2. among those, the most of his catches of the species;
+ *   3. then, as it always was: one that fills the time before one that does not; between two that
+ *      fill, the most structure, then the most new water; between two that do not, the most new
+ *      water, then the most structure.
+ * With no catches, 2 is a tie everywhere and the order is the old one.
+ *
+ * @param {number} fillM  what filling the time means, in metres trolled once
+ * @returns {function} a comparator over {m, newM, backM, score: {fish, structure}}
+ */
+export function fishBeforeFilling(fillM) {
+  const key = (t) => {
+    const clean = 2 * (t.m - t.newM) <= t.backM;
+    const full = t.newM >= fillM;
+    return [clean ? 1 : 0, clean ? t.score.fish : -1, full ? 1 : 0,
+            full ? t.score.structure : t.newM, full ? t.newM : t.score.structure];
+  };
+  return (x, y) => {
+    const a = key(x), b = key(y);
+    for (let i = 0; i < a.length; i++) if (b[i] !== a[i]) return b[i] - a[i];
+    return 0;
+  };
+}
+
 export function* trollLoopSteps(o) {
   if (!(o && Number.isFinite(o.floorFt))) throw new Error('trollLoop: floorFt is required — how much water the deepest bait needs comes from the day');
   if (!Array.isArray(o.daFeatures) || !o.daFeatures.length) throw new Error('trollLoop: this pack has no depth areas, so the water under a line cannot be read');
@@ -568,7 +608,7 @@ export function* trollLoopSteps(o) {
     for (const a of marksAlong(coords, marks, corridorM)) if (!taken.has(a.mark)) structure++;
     return { fish, structure };
   };
-  const better = (x, y) => (y.fish - x.fish) || (y.structure - x.structure);
+  const fishThenFill = fishBeforeFilling;
   const near = (a, b, m) => {
     const ai = a % G.w, aj = (a - ai) / G.w, bi = b % G.w, bj = (b - bi) / G.w;
     return Math.hypot(ai - bi, aj - bj) * G.cellM < m;
@@ -689,16 +729,15 @@ export function* trollLoopSteps(o) {
       // time and fishes nothing new. On Moultrie from Short Stay, three of four loops left up the same
       // mile of the east edge and two came home along the same stretch of the dam.
       const sharedM = sharedWaterM(outC, backC, sameM, earlier);
-      tried.push({ T, out: outC, back: backC, coords, m, sharedM, newM: m - sharedM,
+      tried.push({ T, out: outC, back: backC, coords, m, sharedM, newM: m - sharedM, backM: lineM(backC),
                    score: scoreOf(coords, taken), apartM, cells: out.concat(back) });
     }
-    // THE LOOP FILLS ITS SHARE OF THE DAY WITH WATER IT TROLLS ONCE: of the loops that do, the one that
-    // passes the most; when none can, the one that trolls the most new water. A loop that comes home
-    // over the water it went out on is still laid -- it just does not count as filling the day.
-    const full = tried.filter((t) => t.newM >= petalM * 0.85);
-    const pool = full.length ? full : tried;
-    pool.sort((x, y) => full.length ? better(x.score, y.score) || (y.newM - x.newM) : (y.newM - x.newM) || better(x.score, y.score));
-    return pool[0] || null;
+    // THE LOOP PASSES THE MOST OF HIS FISH, AND THEN FILLS ITS SHARE OF THE DAY WITH WATER IT TROLLS
+    // ONCE (fishThenFill): between loops past as many of his catches, one that fills before one that
+    // does not, then the most structure; when none can, the one that trolls the most new water. A loop
+    // that comes home over the water it went out on is still laid -- it just does not count as filling.
+    tried.sort(fishThenFill(petalM * 0.85));
+    return tried[0] || null;
   }
 
   const tries = [];
@@ -740,17 +779,22 @@ export function* trollLoopSteps(o) {
                     structure: petals.reduce((a, p) => a + p.score.structure, 0) };
     const m = petals.reduce((a, p) => a + p.m, 0);
     const newM = petals.reduce((a, p) => a + p.newM, 0);
-    tries.push({ petals, score, m, newM });
+    const backM = petals.reduce((a, p) => a + p.backM, 0);
+    tries.push({ petals, score, m, newM, backM });
   }
     if (tries.length) break;
   }
   if (!tries.length) return { error: `no loop on water ${floor} ft deep fits the day from this ramp` };
-  // THE DAY FILLS THE DAY, the same rule as each loop: of the days that troll most of the time he
-  // has on water they troll once, the one that passes the most; when none can, the most new water.
-  const fullDays = tries.filter((t) => t.newM >= loopBudgetM * 0.85);
-  const dayPool = fullDays.length ? fullDays : tries;
-  dayPool.sort((a, b) => fullDays.length ? better(a.score, b.score) || (b.newM - a.newM) : (b.newM - a.newM) || better(a.score, b.score));
-  const day = dayPool[0];
+  // THE DAY FILLS THE DAY, the same rule as each loop -- after his fish (fishThenFill): of the days
+  // passing the most of his catches, one that trolls most of the time he has on water it trolls once,
+  // then the most structure; when none of them can, the most new water.
+  tries.sort(fishThenFill(loopBudgetM * 0.85));
+  const day = tries[0];
+  // WHAT FILLING THE DAY WOULD HAVE COST, when the day chosen does not fill it: the best day that
+  // does, so the status line can say what the time left would have bought (Rowland: a 16.9 mi loop
+  // into the open lower lake, past 2 of his stripers, against 3.9 mi past 4).
+  const fills = (t) => t.newM >= loopBudgetM * 0.85;
+  const filler = fills(day) ? null : tries.find(fills) || null;
   const loopM = day.m;
   // ── THE LEGS: each loop's way out and its way back ───────────────────────────────────────────
   // Two legs a loop, and no more: one pair of rods out, one back, and a new Contour alarm only at
@@ -794,6 +838,14 @@ export function* trollLoopSteps(o) {
     runM: Math.round(2 * coveM),
     minutes: Math.round(minutesFor(loopM, trollMph) + 2 * minutesFor(coveM, transitMph)),
     budgetMin: Math.round(budgetMin),
+    // Whether the day fills the time he has on water, and what the best day that does would have been.
+    // fillsDay counts water trolled once, as the choice did; fillsTime counts it all, repeats included
+    // (Moultrie from Short Stay, 10/4: 8 h 53 min of a 9 h day, 3.1 mi of it trolled twice, so it
+    // fills the time and not with new water). onceMinutes is the day less its repeats.
+    fillsDay: fills(day),
+    fillsTime: day.m >= loopBudgetM * 0.85,
+    onceMinutes: Math.round(minutesFor(day.newM, trollMph) + 2 * minutesFor(coveM, transitMph)),
+    fillingDay: filler ? { petals: filler.petals.length, m: Math.round(filler.m), score: filler.score } : null,
     score: day.score,
     tried: tries.map((t) => ({ petals: t.petals.length, score: t.score, m: Math.round(t.m), newM: Math.round(t.newM) })),
     grid: { w: G.w, h: G.h, cellM: G.cellM },
