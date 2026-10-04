@@ -683,7 +683,16 @@ export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeed
           : `fish ${bandFt[0]}–${bandFt[1]} ft` + (holdWord ? ` · ${holdWord}` : '');
       const speedLabel = entry.speedMph ? `${entry.speedMph} mph` : `${speedMph} mph`;
       const estMin = entry.stats?.estTimeMin ?? entry.stats?.timeMin;
-      const statsBadge = entry.stats?.distMi != null ? `${entry.stats.distMi}mi · est ${estMin}min` : '';
+      // A LEG'S TIME INCLUDES ITS STOPS, AND THE CARD SAYS SO. Ryan, 10/4, on a 2.9 mi leg reading
+      // "est 202 min": "i have ran this loop for real and i feel like it only takes about half this
+      // amount of time". It was 87 min trolling and 115 at three stops; the card showed one number.
+      const legStops = unifiedTimeline.filter((e) => e.type === 'stop_and_cast' && e.parentLegId === entry.key);
+      const stopMin = legStops.reduce((a, e) => a + (Number(e.estDurationMin) || 0), 0);
+      const trollMin = estMin != null && stopMin > 0 ? Math.max(0, Math.round(estMin - stopMin)) : estMin;
+      const statsBadge = entry.stats?.distMi == null ? ''
+        : stopMin > 0
+          ? `${entry.stats.distMi}mi · ${trollMin} min trolling + ${stopMin} min at ${legStops.length} stop${legStops.length === 1 ? '' : 's'}`
+          : `${entry.stats.distMi}mi · est ${estMin}min`;
       // Where this leg starts on the day's spine. Distance is the spine; the clock starts
       // drifting the moment he hooks a fish and never catches up.
       const markBadge = entry.atM != null ? `${(entry.atM / 1609.34).toFixed(2)} mi in` : '';
@@ -787,6 +796,25 @@ export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeed
       const stopLine = [stopId ? `${stopId}${parentCard ? ` on ${parentCard.shortLabel}` : ''}` : '',
                         mark ? `${mark} in` : '',
                         entry.targetStructure || entry.typeDetail || 'Structure'].filter(Boolean).join(' · ');
+      // HOW LONG, AND ABOUT WHEN. The minutes were in the plan and on no card. Ryan, 10/4: "where on
+      // the plan tab does it say that the length of time for each of these stops?" The time is the
+      // leg's start, the trolling to this stop at the leg's speed, and the stops before it on the leg.
+      const stopMinutes = Number(entry.estDurationMin) || null;
+      const legEntry = entry.parentLegId ? unifiedTimeline.find((e) => e.type === 'troll' && e.key === entry.parentLegId) : null;
+      const reachAt = (() => {
+        const t0 = /^(\d{1,2}):(\d{2})$/.exec(String((legEntry && legEntry.estStartTime) || ''));
+        const mph = Number(legEntry && legEntry.speedMph) || Number(speedMph) || 0;
+        if (!t0 || !(mph > 0) || entry.atLegM == null) return '';
+        const before = unifiedTimeline.filter((e) => e.type === 'stop_and_cast' && e.parentLegId === entry.parentLegId
+          && e.atLegM != null && (e.atLegM < entry.atLegM || (e.atLegM === entry.atLegM && unifiedTimeline.indexOf(e) < unifiedTimeline.indexOf(entry))));
+        const min = Number(t0[1]) * 60 + Number(t0[2]) + Number(entry.atLegM) / (mph * 1609.34 / 60)
+          + before.reduce((a, e) => a + (Number(e.estDurationMin) || 0), 0);
+        const m = Math.round(min) % (24 * 60);
+        return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+      })();
+      const timeBadge = stopMinutes
+        ? `<span style="font-size:10px;font-weight:700;color:#ffb300;background:rgba(255,179,0,0.14);padding:3px 7px;border-radius:999px;border:1px solid rgba(255,179,0,0.25)">⏱ ${stopMinutes} min${reachAt ? ` · about ${reachAt}` : ''}</span>`
+        : '';
       const geoBadge = hasCoords
         ? `<span style="font-size:10px;color:#ffb300;background:rgba(255,179,0,0.12);border:1px solid rgba(255,179,0,0.25);padding:2px 6px;border-radius:999px">📍 ${Number(entry.lat).toFixed(4)}, ${Number(entry.lon).toFixed(4)}</span>`
         : `<span style="font-size:10px;color:var(--muted);background:rgba(255,255,255,0.04);border:1px solid var(--line);padding:2px 6px;border-radius:999px">No GPS — visual target</span>`;
@@ -803,6 +831,7 @@ export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeed
               </div>
             </div>
             <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
+              ${timeBadge}
               <span style="font-size:10px;font-weight:700;color:#ffb300;background:rgba(255,179,0,0.14);padding:3px 7px;border-radius:999px;border:1px solid rgba(255,179,0,0.25);text-transform:uppercase">No Spot-Lock</span>
               ${hasCoords ? `<span style="font-size:10px;color:#00e5ff;background:rgba(0,229,255,0.12);padding:3px 7px;border-radius:999px;border:1px solid rgba(0,229,255,0.2)">📏 ${esc(mark ? `${mark} in` : 'On route')}</span>` : ''}
             </div>
@@ -826,13 +855,13 @@ export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeed
           </div>` : ''}
 
           <div style="font-size:11px;background:rgba(0,0,0,0.22);border:1px solid var(--line);border-radius:7px;padding:8px 10px;color:var(--text);line-height:1.45;margin-bottom:8px">
-            <b style="color:#ffb300">🛶 Positioning Note:</b> ${esc(entry.tacticalNote || entry.positioning || 'Pedal-hover or tie-off to hold position.')}
+            <b style="color:#ffb300">🛶 Positioning Note:</b> ${esc(entry.positioning || entry.tacticalNote || 'Pedal-hover or tie-off to hold position.')}
           </div>
+          ${(entry.reason || entry.tacticalNote) ? `<div style="font-size:11px;color:var(--muted);font-style:italic;line-height:1.45;margin-bottom:8px">💡 ${esc(entry.reason || entry.tacticalNote)}</div>` : ''}
 
           <div style="display:flex;gap:6px;flex-wrap:wrap">
             ${geoBadge}
             ${ctxLine}
-            ${entry.reason ? `<span style="font-size:10px;color:var(--muted);background:rgba(255,255,255,0.03);border:1px solid var(--line);padding:2px 6px;border-radius:999px">${esc(entry.reason).slice(0,120)}</span>` : ''}
           </div>
         </div>`;
     } else if (entry.type === 'change') {
