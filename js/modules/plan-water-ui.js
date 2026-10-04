@@ -1373,26 +1373,33 @@ function fmtHours(min) {
   return h ? `${h} h${r ? ` ${r} min` : ''}` : `${r} min`;
 }
 
-export async function trollForMe() {
+export async function trollForMe(opts = {}) {
   const say = (m, bad) => {
     const el = $('wgStatus');
     if (el) { el.textContent = m; el.style.color = bad ? 'var(--warn)' : 'var(--muted)'; }
   };
-  if (!T.pieces.length) return say('Press Find water first — the loop is laid on the water it reads.', true);
+  // WHY THERE IS NO LOOP, kept for the map (loop-on-map.js), which says it where he is looking.
+  // `noWater` marks a reason no turn he clicks can fix -- the pack or the research -- so the map
+  // hands the day to the lane plan instead of asking him to click somewhere else.
+  T.lastLoop = null; T.loopWhy = null; T.loopNoWater = false;
+  const fail = (m, noWater = false) => { T.loopWhy = m; T.loopNoWater = noWater; say(m, true); return null; };
+  if (!T.pieces.length) return fail('Press Find water first — the loop is laid on the water it reads.', true);
   if (!T.depthAt || !(T.daFeatures && T.daFeatures.length)) {
-    return say(`${T.lake || 'This lake'}'s pack has no depth areas, so the water under a line cannot be `
-             + 'read. Tick the water by hand.', true);
+    return fail(`${T.lake || 'This lake'}'s pack has no depth areas, so the water under a line cannot be `
+             + 'read.', true);
   }
   const band = Array.isArray(T.band) && T.band.length === 2 ? T.band : null;
   const guide = Array.isArray(T.waterDepthFt) ? T.waterDepthFt : null;
 
   // The water Find water laid out, without a loop from an earlier press.
   const found = T.pieces.filter((p) => !p.loop);
-  // WHERE HE SAID TO TURN: a spot he ticked, or the middle of a piece he ticked.
-  const via = [
+  // WHERE HE SAID TO TURN: where he clicked the water on the main map (loop-on-map.js), exactly
+  // there; or on Pick Water, a spot he ticked, or the middle of a piece he ticked.
+  const fromMap = Array.isArray(opts.via);
+  const via = (fromMap ? opts.via : [
     ...T.spots.filter((sp) => T.pickedSpots.has(sp.key)).map((sp) => sp.at),
     ...found.filter((p) => T.picked.has(p.key)).map((p) => p.coords[Math.floor(p.coords.length / 2)]),
-  ].filter(Array.isArray).slice(0, 4);   // a day is at most four loops (trollLoop's maxPetals)
+  ]).filter(Array.isArray).slice(0, 4);   // a day is at most four loops (trollLoop's maxPetals)
   // HIS CATCHES OF THIS FISH, wherever the journal has a position for one.
   const want = String(T.species || '').trim().toLowerCase();
   const catches = (state.CATCHES || [])
@@ -1406,8 +1413,8 @@ export async function trollForMe() {
   const line = loopLine({ catches, depthAt: T.depthAt, offsetFt: T.offsetFt, waterFt: guide, band,
                           holding: T.holding, steerFt: steer });
   if (!line) {
-    return say('No catches of this fish on this lake, no water the research names and no fish band, so nothing '
-             + 'says what depth to troll. Tick the water by hand.', true);
+    return fail('No catches of this fish on this lake, no water the research names and no fish band, so nothing '
+             + 'says what depth to troll.', true);
   }
   const { lineFt, floorFt } = line;
   const lineFrom = line.from === 'catches'
@@ -1430,8 +1437,11 @@ export async function trollForMe() {
       windowMin: T.windowMin, stopMin: stopsWanted() * DEFAULT_STOP_MIN, minM: T.minM,
       marks: T.spots, catches, via,
     }, (n) => say(`Laying the loop from ${T.rampName || 'the ramp'}… ${n} turn-arounds tried`));
-  } catch (e) { return say(e.message, true); }
-  if (!loop || loop.error) return say(`No loop: ${(loop && loop.error) || 'nothing came back'}.`, true);
+  } catch (e) { return fail(e.message); }
+  if (!loop || loop.error) {
+    // With turns asked for, the turns may be why; without, no click can make one.
+    return fail(`No loop: ${(loop && loop.error) || 'nothing came back'}.`, !via.length);
+  }
 
   const pieces = loopPieces(loop, {
     depthAt: T.depthAt, spots: T.spots, slug: T.r2Key, rampName: T.rampName,
@@ -1461,7 +1471,7 @@ export async function trollForMe() {
     + (zones ? `, out of ${zones} keep-out zone${zones === 1 ? '' : 's'}` : '')
     + `. It passes ${loop.score.fish} of your ${catches.length} ${T.species || ''} catch${catches.length === 1 ? '' : 'es'} in the journal`
     + ` and ${loop.score.structure} charted mark${loop.score.structure === 1 ? '' : 's'}`
-    + (via.length ? `, and turns at the ${via.length === 1 ? 'water' : `${via.length} places`} you ticked` : '')
+    + (via.length ? `, and turns at the ${via.length === 1 ? 'water' : `${via.length} places`} you ${fromMap ? 'clicked' : 'ticked'}` : '')
     + (guide ? `. ${onGuide} of its ${pieces.length} legs cross the ${guide[0]}–${guide[1]} ft of water the research says the fish are over` : '')
     // THE DOCKS CLOSED THE CANAL AT THE APP'S 25 m GRID, so the way out was found on the depth bands
     // alone (Rowland Subdivision, 2026-10-03). It is lines up and his eyes on the water; say so.
@@ -1477,7 +1487,32 @@ export async function trollForMe() {
         + (loop.fillsTime ? '' : ', so the rest of the day is yours to go round it again or turn where you choose')
       : '')
     + (loop.coveCrossesShore ? `. The way out of the cove runs past charted docks and shore lines that close it on the app's ${loop.grid && loop.grid.cellM ? `${loop.grid.cellM} m` : ''} grid, so it is drawn on the depth chart alone — steer it by eye` : '')
-    + '. Tick a spot or a piece and press it again to make a loop turn there.');
+    + (fromMap ? '.' : '. Tick a spot or a piece and press it again to make a loop turn there.'));
+  T.lastLoop = loop;
+  T.lastVia = via;
+  return loop;
+}
+
+/**
+ * WHAT THE MAIN MAP NEEDS TO DRAW THE LOOP JUST LAID -- see loop-on-map.js. The loop, the turns it
+ * was asked for, and the names the bar on the map reads them under.
+ */
+export function loopForMap() {
+  return {
+    loop: T.lastLoop || null, via: T.lastVia || [], why: T.loopWhy || null, noWater: !!T.loopNoWater,
+    pieces: T.pieces,   // the water Find water read -- a new array each time it reads any
+    slug: T.r2Key || null, lake: T.lake || null, rampName: T.rampName || null, ramp: T.ramp || null,
+    species: T.species || null, status: $('wgStatus')?.textContent || '',
+  };
+}
+
+/**
+ * THE SAME "IS THIS A RIVER" FIND WATER ASKS, before it is pressed: a river day is one path up one
+ * bank and back down the other, which the Smart Plan path lays (river-drifts.js), not a loop.
+ */
+export function riverHere() {
+  const inp = readInputs();
+  return !!(inp.lakeName && saysRiver(registryRecordFor(inp.lakeName)));
 }
 
 /**
@@ -1910,7 +1945,12 @@ export function initWaterTab() {
   $('wgFind')?.addEventListener('click', () => findWater());
   $('wgBuild')?.addEventListener('click', () => buildFromPicked());
   $('wgTroll')?.addEventListener('click', () => trollForMe());
-  $('runTrollPlanBtn')?.addEventListener('click', () => trollPlan());
+  // ONE BUTTON: the loop on the main map, turns clicked on the water, then Build. A dynamic import,
+  // because loop-on-map.js reads this module (findWater, trollForMe, buildFromPicked).
+  $('runTrollPlanBtn')?.addEventListener('click', async () => {
+    try { (await import('./loop-on-map.js')).planAsOneTroll(); }
+    catch (e) { console.error('[plan-water-ui] loop on the map failed to load', e); trollPlan(); }
+  });
   $('wgSort')?.addEventListener('change', (e) => { T.sortBy = e.target.value; paint(); });
   // The total counts the stops he asks for, so it moves when he changes them.
   $('wgStops')?.addEventListener('input', () => total());

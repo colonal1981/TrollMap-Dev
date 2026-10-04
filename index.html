@@ -739,7 +739,11 @@
         <!-- Two tabs: Plan and Preview -->
         <div class="subtabs" id="planSubtabs">
           <button data-plansub="plan" class="active">🎣 Smart Plan</button>
-          <button data-plansub="water">🌊 Pick Water</button>
+          <!-- OFF THE SCREEN, NOT DELETED (Ryan, 10/4: "Would this then work to replace pickwater and
+               generate smartplan? we keep adding stuff and none of it actually works the way i
+               want"). Its panel stays below, hidden, because Plan it as one troll still reads the
+               water through it -- see js/modules/loop-on-map.js. -->
+          <button data-plansub="water" style="display:none">🌊 Pick Water</button>
           <button data-plansub="preview">📄 Preview / Print</button>
           <button data-plansub="library">📚 Saved Plans</button>
         </div>
@@ -920,17 +924,29 @@
             <textarea id="planStructure" style="display:none"></textarea>
             <textarea id="planSmartPlanOutput" style="display:none"></textarea>
 
-            <!-- Generate button -->
-            <button id="runSmartPlanBtn" type="button" class="primary"
-              style="width:100%;height:42px;font-size:14px;font-weight:700;margin-top:4px;border-radius:8px">
+            <!-- GENERATE SMART PLAN IS OFF THE SCREEN, NOT DELETED. It is the river plan (up one bank
+                 and back down the other, river-drifts.js) and the lane plan where no loop can be laid,
+                 and Plan it as one troll presses it for him in those two cases. Ryan, 10/4: "Would this
+                 then work to replace pickwater and generate smartplan?" -->
+            <button id="runSmartPlanBtn" type="button" class="primary" style="display:none">
               ⚡ Generate Smart Plan
             </button>
-            <!-- Ryan, 2026-10-03: "Honestly i just troll... i don't jump from spot to spot". The same
-                 form, the day drawn as one continuous troll out of Pick Water's pieces and then rigged
-                 by the model. Find water, Troll it for me and Build the day, pressed in a row -- see
-                 trollPlan() in js/modules/plan-water-ui.js and js/modules/plan-troll-day.js. -->
-            <button id="runTrollPlanBtn" type="button"
-              style="width:100%;height:36px;font-size:13px;font-weight:700;margin-top:6px;border-radius:8px">
+            <!-- THE TWO SETTINGS THAT LIVED ONLY ON PICK WATER, moved here with their ids, so the loop
+                 reads them as it always did. -->
+            <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;font-size:12px;margin:2px 0 6px">
+              <label>Shortest pass worth having
+                <input id="wgMinPass" type="number" min="0.05" step="0.05" value="0.5" style="width:64px"> mi</label>
+              <!-- HIS NUMBER, NOT THE APP'S. WHAT_SMARTPLAN_IS is explicit that the app must not
+                   pick a stop count. It does not rule out Ryan asking. Blank = no opinion. -->
+              <label>Stop-and-casts
+                <input id="wgStops" type="number" min="0" max="12" step="1" placeholder="any" style="width:56px"></label>
+            </div>
+            <!-- ONE BUTTON. Ryan, 2026-10-03: "Honestly i just troll... i don't jump from spot to spot";
+                 10/4: "if i just have to click something and not actually draw an entire route i will
+                 give a chance". It lays the day as loops from the ramp on the MAIN map; a click on the
+                 water is where a loop turns; Build this loop rigs it. See js/modules/loop-on-map.js. -->
+            <button id="runTrollPlanBtn" type="button" class="primary"
+              style="width:100%;height:42px;font-size:14px;font-weight:700;margin-top:4px;border-radius:8px">
               🎣 Plan it as one troll
             </button>
             <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
@@ -1057,15 +1073,7 @@
         <div id="plan-water" class="plan-sub hidden" data-plansub="water">
           <div class="card plan-section">
             <div class="wg-bar">
-              <label>Shortest pass worth having
-                <input id="wgMinPass" type="number" min="0.05" step="0.05" value="0.5"> mi</label>
-              <!-- HIS NUMBER, NOT THE APP'S. WHAT_SMARTPLAN_IS is explicit that the app must not
-                   pick a stop count -- "I kept trying to pick a number. There is no number. There
-                   is water that is worth stopping on today and water that is not." That rules out
-                   the APP choosing. It does not rule out Ryan asking, and § 2 of
-                   THE_FISHERMAN_CHOOSES puts it in the wants-first form. Blank = no opinion. -->
-              <label>Stop-and-casts
-                <input id="wgStops" type="number" min="0" max="12" step="1" placeholder="any"></label>
+              <!-- Shortest pass worth having and Stop-and-casts moved to the Smart Plan card, ids and all. -->
               <label>Sort by
                 <select id="wgSort">
                   <option value="ramp">nearest the ramp</option>
@@ -1185,7 +1193,9 @@
     <button data-tab="edit"><span class="ico">✏️</span>Edit</button>
     <button data-tab="catch"><span class="ico">🐟</span>Catch</button>
     <button data-tab="plan"><span class="ico">🎣</span>Plan</button>
-    <button data-tab="bench"><span class="ico">🧪</span>Bench</button>
+    <!-- The Bench, off the screen and not deleted. Ryan, 10/4: "i can't use the plan bench because it
+         doesn't actually draw the lanes so i never know what the actual plan looks like". -->
+    <button data-tab="bench" style="display:none"><span class="ico">🧪</span>Bench</button>
   </nav>
 </div>
 

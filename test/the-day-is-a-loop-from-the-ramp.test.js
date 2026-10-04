@@ -155,7 +155,8 @@ test('7. Troll it for me lays the loop without freezing the page; Plan it as one
   const r = await trollLoopAsync(BASE);
   assert.ok(r.petals.length >= 1);
   const ui = read('js/modules/plan-water-ui.js');
-  assert.match(ui, /export async function trollForMe\(\)/);
+  // since 10/4 it also takes the turns he clicks on the main map (loop-on-map.js)
+  assert.match(ui, /export async function trollForMe\(opts = \{\}\)/);
   assert.match(ui, /loop = await trollLoopAsync\(/);
   assert.match(ui, /T\.trollSteps = loopSteps\(loop, pieces\);/);
   assert.match(ui, /await trollForMe\(\);/);
@@ -240,6 +241,7 @@ test('12. a loop added to the day is mostly new water, or the day stops before i
     const r = trollLoop({ ...BASE, maxPetals: 4, windowMin });
     for (const p of r.petals.slice(1)) assert.ok(p.sharedM <= p.m - p.sharedM, `${p.sharedM} of ${p.m} m trolled twice`);
   }
-  // The rule, where the loops are assembled: a loop he ticked a turn for is kept.
-  assert.match(read('js/modules/plan-troll-loop.js'), /if \(petals\.length && !vias\[p\] && pt\.sharedM > pt\.newM\) break;/);
+  // The rule, where the loops are assembled: a loop laid for a turn he asked for is kept (a turn no
+  // loop could reach is laid like any other loop since 10/4, and that one is held to the rule).
+  assert.match(read('js/modules/plan-troll-loop.js'), /if \(petals\.length && !asked && pt\.sharedM > pt\.newM\) break;/);
 });

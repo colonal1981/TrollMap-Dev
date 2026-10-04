@@ -215,6 +215,9 @@ export function suggestName() {
  */
 export function renderMap() {
   if (!state.MAP_OK) return;
+  // A LOOP BEING LAID ON THE MAP (loop-on-map.js) ENDS when anything else draws it -- the plan it
+  // builds, a saved plan opened -- and puts this layer back, so two days are never drawn at once.
+  if (typeof window.endLoopPreview === 'function') window.endLoopPreview();
   state.LAYER.clearLayers();
   const bounds = [];
 

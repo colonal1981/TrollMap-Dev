@@ -905,7 +905,14 @@ export function* trollLoopSteps(o) {
     for (let p = 0; p < k; p++) {
       const pm = left / (k - p);
       yield 'petal';
-      const pt = yield* petal(pm, used, taken, vias[p], petals.map((q) => q.coords));
+      let pt = yield* petal(pm, used, taken, vias[p], petals.map((q) => q.coords));
+      const asked = !!(vias[p] && pt);
+      // A TURN NO LOOP CAN REACH DOES NOT COST HIM THE REST OF THE DAY. Rowland, 10/4: a second turn
+      // at Potato Creek's mouth, past the channel the first loop had taken, came back with no loop --
+      // and took the Wyboo Creek loop past his four largemouth with it. That loop is now chosen the way
+      // every loop he did not click is, and `via` on each loop says which turn it was laid for, so the
+      // map can say which turn the day could not reach (turnsReached()).
+      if (!pt && vias[p]) pt = yield* petal(pm, used, taken, null, petals.map((q) => q.coords));
       if (!pt) break;
       // A LOOP ADDED TO THE DAY IS MOSTLY NEW WATER, OR IT IS A DOUBLE BACK. Where the water near
       // the ramp runs out, the next loop could only go out and come home over water the day already
@@ -913,7 +920,8 @@ export function* trollLoopSteps(o) {
       // and a line that comes back on itself is what he threw the stitched day out for. The day stops
       // at the loops before it; the time left is his, for going back over what produced. A loop he
       // asked for by ticking where it turns is kept.
-      if (petals.length && !vias[p] && pt.sharedM > pt.newM) break;
+      if (petals.length && !asked && pt.sharedM > pt.newM) break;
+      pt.via = asked ? p : null;
       petals.push(pt);
       left -= pt.m;
       for (const a of marksAlong(pt.coords, marks, corridorM)) taken.add(a.mark);
@@ -979,7 +987,7 @@ export function* trollLoopSteps(o) {
     start: G.lonLat(S),
     legs,
     petals: day.petals.map((p) => ({ out: p.out, back: p.back, m: Math.round(p.m), sharedM: Math.round(p.sharedM),
-                                     score: p.score })),
+                                     score: p.score, via: p.via != null ? p.via : null })),
     trolledM: Math.round(loopM), sharedM: Math.round(day.petals.reduce((a, p) => a + p.sharedM, 0)),
     runM: Math.round(2 * coveM),
     minutes: Math.round(minutesFor(loopM, trollMph) + 2 * minutesFor(coveM, transitMph)),
@@ -1089,6 +1097,52 @@ export function loopSteps(loop, pieces) {
     at = p.coords[p.coords.length - 1];
   });
   return steps;
+}
+
+/**
+ * WHERE HE CLICKED FOR A LOOP TO TURN, AND WHETHER ONE DID. Ryan, 10/4: "if i just have to click
+ * something and not actually draw an entire route i will give a chance". trollLoop turns a loop at
+ * the open cell nearest a turn, looking three times SAME_WATER_M round it; a turn it cannot reach on
+ * water the loop may troll leaves that loop out of the day rather than failing it. So each turn comes
+ * back with how far the nearest line of the day passes it, and whether that is the loop turning there
+ * -- the map says which turns the day went to and which it could not, instead of dropping one quietly.
+ *
+ * @param {Array<[number, number]>} turns  [lon, lat] each, in the order he clicked them
+ * @param {object} loop                    trollLoop()'s answer
+ * @param {number} [withinM]               how near counts; the search radius plus a cell by default
+ */
+export function turnsReached(turns, loop, withinM) {
+  const lim = withinM != null ? withinM : 3 * SAME_WATER_M + ((loop && loop.grid && loop.grid.cellM) || 25);
+  const legs = (loop && loop.legs) || [];
+  const petals = (loop && loop.petals) || [];
+  // THE LOOP SAYS WHICH TURN EACH OF ITS LOOPS WAS LAID FOR, when it was laid since that was recorded.
+  // That is the answer; the distance is then only how far from his click the loop turned -- a click on
+  // the bank, or on water shallower than the floor, turns it at the nearest water it may troll, which on
+  // Potato Creek's mouth was 400 m off and still the loop he asked for.
+  const told = petals.some((p) => p && p.via != null);
+  return (turns || []).map((at, i) => {
+    const pi = told ? petals.findIndex((p) => p && p.via === i) : -1;
+    const mine = pi >= 0 ? legs.filter((l) => l.petal === pi) : legs;
+    let best = Infinity;
+    for (const l of mine) for (const c of densify(l.coords || [], 20)) {
+      const d = metresBetween(at, c);
+      if (d < best) best = d;
+    }
+    // A TURN ON WATER THE DAY ALREADY TROLLS has no loop of its own -- a second loop there would come
+    // back over the first -- but the day goes past it: Rowland, 10/4, a turn clicked on the channel
+    // the Potato Creek loop runs down. Said, so it is not shown as water the day could not reach.
+    let passM = Infinity, passPetal = null;
+    if (pi < 0) {
+      for (const l of legs) for (const c of densify(l.coords || [], 20)) {
+        const d = metresBetween(at, c);
+        if (d < passM) { passM = d; passPetal = l.petal; }
+      }
+    }
+    return { at, offM: Number.isFinite(best) ? Math.round(best) : null,
+             reached: told ? pi >= 0 : best <= lim, petal: pi >= 0 ? pi : null,
+             // within the same distance a turn is looked for in -- the water there is that loop's own
+             passedBy: pi < 0 && passM <= lim ? passPetal : null };
+  });
 }
 
 /** trollLoopSteps() run straight through. */
