@@ -53,14 +53,19 @@ DA.push(rect(ARM[0], W - yOf(25), ARM[1], ARM[2], 25));
 const RAMP = at(8000, W - 10);
 const BASE = { ramp: RAMP, daFeatures: DA, floorFt: 20, windowMin: 180, stopMin: 0, maxPetals: 1 };
 const inPocket = (pt) => xOf(pt) > POCKET[0] - 30 && xOf(pt) < POCKET[1] + 30 && yAt(pt) > W - yOf(25) + 50;
-const pocketFish = [1000, 900, 800].map((y) => ({ at: at(5000, y) }));
+// His fish are at the head of the pocket, 500 m and more in from its mouth.
+const pocketFish = [1060, 1030, 1000].map((y) => ({ at: at(5000, y) }));
 
-test('a pocket full of his fish is not where the loop turns, if it has to come back out on its own track', () => {
+test('the head of a pocket full of his fish is not where the loop turns, if it has to come back out on its own track', () => {
   const r = trollLoop({ ...BASE, catches: pocketFish });
   assert.ok(!r.error, r.error);
   const p = r.petals[0];
   const turn = p.out[p.out.length - 1];
-  assert.ok(!inPocket(turn), `turned at ${xOf(turn).toFixed(0)}, ${yAt(turn).toFixed(0)} -- in the pocket`);
+  // A turn has 2 x 100 m where the way home may come back beside the way out, and no more: a loop may
+  // dip that far into the pocket (and cross its own way in at the mouth), not run up to its head.
+  assert.ok(!inPocket(turn) || yAt(turn) < POCKET[2] - 2 * SAME_WATER_M,
+    `turned at ${xOf(turn).toFixed(0)}, ${yAt(turn).toFixed(0)} -- at the head of the pocket`);
+  assert.equal(r.score.fish, 0);
   // and it comes home on other water, as every loop that turns in open water does
   assert.ok(r.sharedM < 0.1 * r.trolledM, `${r.sharedM} m of ${r.trolledM} m trolled twice`);
 });
@@ -73,7 +78,7 @@ test('the order: a loop whose way home kept clear comes before one that turned i
 });
 
 test('a turn he ticked in the pocket is where the loop turns, and only the pocket is trolled twice', () => {
-  const r = trollLoop({ ...BASE, catches: pocketFish, via: [at(5000, 1000)] });
+  const r = trollLoop({ ...BASE, catches: pocketFish, via: [at(5000, 1040)] });
   assert.ok(!r.error, r.error);
   const p = r.petals[0];
   assert.ok(inPocket(p.out[p.out.length - 1]));

@@ -433,6 +433,65 @@ export function sharedWaterM(out, back, sameM = SAME_WATER_M, earlier = []) {
  * @param {object[]} [o.marks]       [{at:[lon,lat], value, ...}] what the loop should pass
  * @param {number}   [o.maxPetals]   the most loops from the ramp a day is made of (4)
  */
+/** The cell of `line` nearest cell c of grid G, and how far, in cells. */
+function nearestCell(G, line, c) {
+  const ci = c % G.w, cj = (c - ci) / G.w;
+  let k = 0, bd = Infinity;
+  for (let q = 0; q < line.length; q++) {
+    const li = line[q] % G.w, lj = (line[q] - li) / G.w, d = (li - ci) ** 2 + (lj - cj) ** 2;
+    if (d < bd) { bd = d; k = q; }
+  }
+  return { k, cells: Math.sqrt(bd) };
+}
+
+/** Which side of `line` cell c is on: the sign of the turn from the line's direction where it is nearest c. */
+function sideOfLine(G, line, c) {
+  const { k } = nearestCell(G, line, c);
+  const a = line[Math.max(0, k - 1)], b = line[Math.min(line.length - 1, k + 1)], m = line[k];
+  const ai = a % G.w, aj = (a - ai) / G.w, bi = b % G.w, bj = (b - bi) / G.w;
+  const mi = m % G.w, mj = (m - mi) / G.w, ci = c % G.w, cj = (c - ci) / G.w;
+  return Math.sign((bi - ai) * (cj - mj) - (bj - aj) * (ci - mi));
+}
+
+/**
+ * Whether a way home (`path`, grid cells) that comes within sameM of the way out (`line`) only
+ * CROSSES it: every stretch of it inside `within` (the cells within sameM of the way out, away from
+ * the cove mouth and the turn) either never comes closer than sameM -- the ring of cells at exactly
+ * sameM is the corridor's edge, which is where a 106 m gap between two edges lands on the 25 m grid
+ * -- or goes in on one side of the way out and out on the other, and lies within sameM x 1.41 of the
+ * cell where it is nearest it: the most a crossing at 45 degrees, the grid's diagonal, spends within
+ * sameM of the line. Shallower than that, or running beside the line before going over it, is
+ * travelling along it. A stretch that comes near and goes back the side it came from is beside the
+ * way out, not across it.
+ *
+ * Rowland Subdivision on Marion, 10/4: up the channel toward Potato Creek the two edges are 106-140 m
+ * apart the whole way, but the way out swings east round the mouth of Wyboo Creek before it heads
+ * west, and the way home has to cross it to reach the creek's east side. Ryan: "it looks like the 28ft
+ * line on the north side and the 29 ft line on the south side are more than 100m apart... why can't
+ * smart plan use those to make a loop?"
+ */
+export function onlyCrosses(G, path, within, line, sameM = SAME_WATER_M) {
+  const r2 = 2 * (sameM / G.cellM) ** 2;
+  for (let i = 0; i < path.length; i++) {
+    if (!within[path[i]]) continue;
+    let j = i;
+    while (j + 1 < path.length && within[path[j + 1]]) j++;
+    if (i === 0 || j === path.length - 1) return false;
+    let x = i, xd = Infinity;
+    for (let q = i; q <= j; q++) { const d = nearestCell(G, line, path[q]).cells; if (d < xd) { xd = d; x = q; } }
+    if (xd * G.cellM >= sameM) { i = j; continue; }
+    const s0 = sideOfLine(G, line, path[i - 1]), s1 = sideOfLine(G, line, path[j + 1]);
+    if (!s0 || !s1 || s0 === s1) return false;
+    const xi = path[x] % G.w, xj = (path[x] - xi) / G.w;
+    for (let q = i; q <= j; q++) {
+      const qi = path[q] % G.w, qj = (path[q] - qi) / G.w;
+      if ((qi - xi) ** 2 + (qj - xj) ** 2 > r2) return false;
+    }
+    i = j;
+  }
+  return true;
+}
+
 /**
  * HIS FISH COME BEFORE FILLING THE DAY -- the order loops, and days of loops, are chosen in.
  *
@@ -747,13 +806,20 @@ export function* trollLoopSteps(o) {
       let homeCost = cost;
       if (!back) {
         homeCost = Float64Array.from(cost);
+        const within = new Uint8Array(n);
         for (const keepM of [sameM, o.wanderM || 25]) {
-          for (const c of nearOut(keepM, 2)) { homeCost[c] += crossM; corridor[c] = 0; }
+          for (const c of nearOut(keepM, 2)) {
+            homeCost[c] += crossM; corridor[c] = 0;
+            if (keepM === sameM) within[c] = 1;
+          }
         }
         both = blockA;
         const home = shortestFrom(G, homeCost, T, { blocked: both, dst: S });
         back = pathTo(home.prev, T, S);
         apartM = 0;
+        // A WAY HOME THAT ONLY CROSSES THE WAY OUT kept clear of it: it trolls none of it twice, it
+        // goes over it (onlyCrosses: Rowland Subdivision, 10/4, the channel toward Potato Creek).
+        if (back && onlyCrosses(G, back, within, out, sameM)) apartM = sameM;
       }
       if (!back) continue;
       const backC = straighten(G, homeCost, back, both).map(G.lonLat);
