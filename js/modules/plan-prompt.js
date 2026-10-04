@@ -2449,6 +2449,13 @@ is the reason a leg is worth fishing in one direction and not the other. \`struc
 everything on the leg and \`structuresShown\` counts what you were handed; where they differ, the
 list is the best of the targets plus every hazard, and there is more castable water than you see.
 
+THE SAME THING ON TWO LEGS IS ONE THING. Where the day goes round the same water more than once, a
+later leg passes structure an earlier leg already passed, under an id of its own. Such an entry
+carries \`passedBefore\`: the \`runId\` and the \`id\` it was first listed under. It is that same hump,
+point or ledge, not another one like it. A stop there is a second visit: make it only knowingly, say
+in its \`why\` that it is a return and what the hours between change, and weigh it against water on
+that leg no stop has touched.
+
 ${o.isRiver ? `THE ORDER IS NOT YOURS HERE AND NEITHER IS THE DEADHEAD. \`transitToM\` and
 \`transitToMIfFishedBack\` are on the candidates because the same objects describe a lake day, where
 they are a real choice. On a river they are not being offered to you: the app drew the path and the

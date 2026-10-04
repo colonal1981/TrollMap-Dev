@@ -58,6 +58,45 @@ function positionOn(coords, cum, fraction) {
  *
  * @param {?{mph:number,deg:number}} wind  the day's worst hour, or null when nothing was forecast
  */
+/**
+ * Whether two marks are the same thing on the water: the same charted structure, or the same kind
+ * within 15 m. The rule a cast spot is folded into a pass by (legFrom()), and the one a later leg's
+ * pass is called a repeat of an earlier leg's by (markRepeats()) -- one rule, so the two cannot
+ * disagree about whether a hump is the hump.
+ */
+export function sameMark(h, s) {
+  if (!h || !s) return false;
+  if (h.structureId && s.structureId && h.structureId === s.structureId) return true;
+  return h.type === s.type && Array.isArray(h.at) && Array.isArray(s.at) && metresBetween(h.at, s.at) <= 15;
+}
+
+/**
+ * THE SAME HUMP ON TWO LEGS IS ONE HUMP. On a day of loops round the same water a later leg passes
+ * what an earlier one already passed, and each leg lists it under its own id. Ryan's 10/5 Rowland
+ * plan (built 10/4): S5.1 was S1.1's 18 ft hump and S6.1 was S3.1's point -- 27 of the day's 67
+ * stop minutes on second looks the model could not know were second looks (`lake_marion#0:p7` and
+ * `#4:p18`), and it wrote the hump up the second time as "the best stack of the day". Each pass on
+ * a later leg that is the same thing (sameMark()) as one on an earlier leg carries `passedBefore`:
+ * that leg and the id it was first listed under. Nothing is dropped and nothing is ranked: going
+ * back to a spot is the model's call, made knowing it. Ryan: *"you can fix the little things you
+ * found"*.
+ *
+ * @param {object[]} legs  legFrom() output, in the day's order -- changed in place
+ */
+export function markRepeats(legs) {
+  const seen = [];
+  for (const l of (legs || [])) {
+    const mine = [];
+    for (const h of (l.passes || [])) {
+      const first = seen.find((e) => sameMark(e, h));
+      if (first) h.passedBefore = { runId: first.runId, id: first.id };
+      mine.push({ structureId: h.structureId, type: h.type, at: h.at, runId: l.runId, id: h.id });
+    }
+    seen.push(...mine);
+  }
+  return legs;
+}
+
 /** How far along a line the vertex nearest `at` sits, and how far off the line that vertex is. */
 function alongLine(coords, cum, at) {
   let best = 0, bestM = Infinity;
@@ -141,8 +180,7 @@ function legFrom(piece, i, ramp, slug, wind, extra = {}) {
   let sk = 0;
   for (const s of (extra.spots || [])) {
     if (!Array.isArray(s.at)) continue;
-    const same = passes.find((h) => (s.structureId && h.structureId === s.structureId)
-      || (h.type === s.type && metresBetween(h.at, s.at) <= 15));
+    const same = passes.find((h) => sameMark(h, s));
     const chosen = !!(extra.chosenKeys && extra.chosenKeys.has(s.key));
     if (same) {
       same.spotKey = s.key;
@@ -432,6 +470,7 @@ export async function planFromWater(o) {
     structures: o.structures || null, spots: spotsOn.get(p.key) || [], chosenKeys,
   }));
   if (trolled) legs.forEach((l, i) => trollLeg(l, shape.get(ordered[i].key), o.ramp, wind));
+  markRepeats(legs);
   // Which pass each spot became, so the prompt's spot lists name a leg and an id the model can
   // return, rather than the tab's own piece key.
   const passOfSpot = new Map();
@@ -550,7 +589,9 @@ export async function planFromWater(o) {
                                          what: h.what, depthFt: h.depthFt,
                                          worthFishing: h.weight > 0 || undefined,
                                          // A spot he ticked on the Water tab -- a stop, not an option.
-                                         heTickedIt: h.chosen || undefined })),
+                                         heTickedIt: h.chosen || undefined,
+                                         // The same thing an earlier leg passes. See markRepeats().
+                                         passedBefore: h.passedBefore || undefined })),
       structuresShown: l.passes.length,
       structuresTotal: l.passes.length,
       // The reasons the app already computed, so the model is arguing with the same facts Ryan saw.

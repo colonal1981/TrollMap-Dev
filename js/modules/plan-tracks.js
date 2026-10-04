@@ -571,15 +571,25 @@ export function planWaypoints(plan, launch = null, runId = null, opts = {}) {
   // THE START CARRIES THE BAND, the same text as the leg's cue line (legBand), because the start is
   // where he sets the Contour alarm and Depth Shading for the leg.
   //
-  // ONE MARK PER PLACE, AND THE PLACE IS EXACT. A leg fished back starts on the very coordinate the
-  // one before it ended on, and ends on that one's start. There the start is kept -- `L2 start` says
-  // what to do at that spot and `L1 end` would sit on top of it -- and so is the first mark to claim
-  // a spot, in the order of the day. Equal coordinates, not near ones: no distance is chosen here.
+  // ONE END MARK PER PLACE, AND THE PLACE IS EXACT. A leg fished back starts on the very coordinate
+  // the one before it ended on, and ends on that one's start. There the start is kept -- `L2 start`
+  // says what to do at that spot and `L1 end` would sit on top of it. Equal coordinates, not near
+  // ones: no distance is chosen here.
+  //
+  // BUT EVERY START GETS ITS FLAG, even where starts share a spot. This kept the first mark to claim
+  // a spot, which was harmless while only an end could land on a start -- and then the day became
+  // loops from the ramp, all of them starting on one coordinate. Ryan's 10/5 Rowland plan (built
+  // 10/4): three loops, and the one green flag at their start read `L1 22-32ft`; nothing on the unit
+  // but the cue routes said 18-28 for loop 2 or 14-24 for loop 3, which is the one thing a start is
+  // there to tell him. *"you can fix the little things you found"*. A start is dropped now only when
+  // an earlier start on that spot already carries the same band -- a third pass of one leg, which
+  // starts where the first did and is set the same, still gets no second flag.
   const legs = ((plan && plan.legs) || []).filter((leg) => leg.type !== 'transit'
     && Array.isArray(leg.coordinates) && leg.coordinates.length >= 2);
   const sameSpot = (p, q) => p[0] === q[0] && p[1] === q[1];
   const startSpots = legs.map((leg) => leg.coordinates[0]);
   const placed = [];
+  const startsPlaced = [];
   for (const leg of legs) {
     const co = leg.coordinates;
     const start = co[0];
@@ -588,14 +598,16 @@ export function planWaypoints(plan, launch = null, runId = null, opts = {}) {
     // Depth Shading paints the CHART, which has no level offset on the unit, so where the lake is
     // off its chart's level the shading pair is the chart's and only the alarm's is today's.
     const shade = legBand({ ...leg, drawdownFt: null });
-    if (!placed.some((p) => sameSpot(p, start))) {
+    // `L3 27-37ft`, NOT `L3 start 27-37ft`: his unit keeps ten characters, and that read
+    // `L3 start 2`. The green flag already says it is a start; the band is what he sets there.
+    const startName = band ? fitUnit([cueSafe(`${leg.id} ${band}`), cueSafe(`${leg.id} ${band.replace(/ft$/, '')}`)],
+                                     UNIT_CHARS.name)
+      : cueSafe(`${leg.id} start`);
+    if (!startsPlaced.some((p) => sameSpot(p.at, start) && p.band === band)) {
+      startsPlaced.push({ at: start, band });
       placed.push(start);
       out.push({
-        // `L3 27-37ft`, NOT `L3 start 27-37ft`: his unit keeps ten characters, and that read
-        // `L3 start 2`. The green flag already says it is a start; the band is what he sets there.
-        name: band ? fitUnit([cueSafe(`${leg.id} ${band}`), cueSafe(`${leg.id} ${band.replace(/ft$/, '')}`)],
-                             UNIT_CHARS.name)
-          : cueSafe(`${leg.id} start`),
+        name: startName,
         cmt: startComment(band, shade),
         lat: start[1], lon: start[0], sym: 'Flag, Green',
         legStart: true, scoutWaypoint: true, planRunId: runId,

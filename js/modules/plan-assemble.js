@@ -650,7 +650,19 @@ function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warn
     // pack's own depth areas under the same point and nothing in the profile marks which 13 --
     // see sustainedMin() in plan-pieces.js. A shoal across 100 m survives into `ceilingFt` and is
     // flagged below exactly as before.
-    if (w.max <= ceilingFt) continue;
+    //
+    // ── AND A LEAD BAIT WHOSE DEEP END IS THE FLOOR IS ON THE BOTTOM, NOT CLEAR OF IT ─────────
+    //
+    // This read `if (w.max <= ceilingFt) continue;`, so a bait that ran to exactly the floor was
+    // never lifted, while the card, asking bottomGapFt(), printed gap 0, taps, "rides right on the
+    // 24 ft rise". Ryan's 10/5 Rowland plan (built 10/4): the 4" lipless on L1 on 100 ft, 20-24 over
+    // a 24 ft floor, and the A-rig on L2 on 115 ft, 19-23 over 23 -- the hole the whole-pass rule
+    // closed for a bait deeper than the floor, left open for one that lands on it. Asked to fix it:
+    // *"you can fix the little things you found"*. A lead bait now has to be the foot off the bottom
+    // the card can print as up. A bill bait whose deep end is the floor is left alone: `cannotUse`
+    // offers it on that floor (`w.max > ceilingFt` there), and no lead lifts a bill anyway.
+    const onFloor = w.max <= ceilingFt;
+    if (onFloor && (w.mode !== 'lead' || bottomGapFt(ceilingFt, w.max) >= 1)) continue;
 
     // AIMING AT THE CEILING IS NOT CLEARING IT, and the first version of this did exactly that.
     //
@@ -690,6 +702,9 @@ function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warn
       return null;
     };
     const shorter = leadClearing(ceilingFt);
+    // On the floor rather than under it, and no shorter lead found: left as it was, not called the
+    // wrong bait for a pass its deep end only touches.
+    if (onFloor && !(shorter && shorter < leadFt)) continue;
 
     // Lead-controlled baits can be brought up by shortening the lead. A lipped or weighted bait
     // that dives on its own cannot, and there the honest answer is that it is the wrong bait for
