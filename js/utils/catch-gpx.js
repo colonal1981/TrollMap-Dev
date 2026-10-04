@@ -21,6 +21,10 @@ import { hasPosition, oneFishEach } from './catch-pins.js';
 import { resolveR2Key } from '../data/lake-keys.js';
 
 const NAME_CHARS = 10, COMMENT_CHARS = 20;
+// THE SYMBOL HE MARKS A FISH WITH, read off his own unit: the waypoints he dropped at his catches on 9/27
+// and 9/28 (0002, 0003, 0005, 0006 in 27SEP26EXPORT.GPX and 28SEP26EXPORT.GPX) all came back "Fishing
+// Area". Ryan, 10/4: "there should be waypoints in there that have the fish symbol i use".
+export const CATCH_SYMBOL = 'Fishing Area';
 
 // Short names for the species he logs, three letters so a number always fits beside them. Anything
 // else takes its first three letters.
@@ -174,7 +178,7 @@ export function catchesGpx(catches, o = {}) {
     if (t) lines.push(`    <time>${t}</time>`);
     lines.push(`    <name>${esc(name)}</name>`);
     if (cmt) lines.push(`    <cmt>${esc(cmt)}</cmt>`);
-    lines.push(`    <desc>${esc(describe(c))}</desc>`, '    <sym>Fish</sym>', '    <type>CATCH</type>', '  </wpt>');
+    lines.push(`    <desc>${esc(describe(c))}</desc>`, `    <sym>${CATCH_SYMBOL}</sym>`, '    <type>CATCH</type>', '  </wpt>');
   }
   lines.push('</gpx>', '');
   return { gpx: lines.join('\n'), n: kept.length, offWater };

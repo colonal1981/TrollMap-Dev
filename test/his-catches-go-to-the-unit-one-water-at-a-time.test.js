@@ -47,7 +47,8 @@ test('one waypoint per fish on the water picked, numbered in the order he caught
   for (const c of cmts) assert.ok(c.length <= 20, c);
   // and the whole of it in the desc, for anything else that reads the file
   assert.match(r.gpx, /<desc>Striped Bass, 24\.75 in; 2025-01-25 2:17 PM; A-Rig Heavy; 31 ft \(his sounder at the bite\); water 49\.1 F; then: air 51\.3 F, 0% cloud, wind 1\.7 mph from WSW, 1029 hPa, Waning Crescent<\/desc>/);
-  assert.equal((r.gpx.match(/<sym>Fish<\/sym>/g) || []).length, 4);
+  // the symbol his own unit gives the waypoints he drops at a catch (27SEP26EXPORT.GPX: 0002, 0003)
+  assert.equal((r.gpx.match(/<sym>Fishing Area<\/sym>/g) || []).length, 4);
   // not the photo model's notes on the length
   assert.doesNotMatch(catchesGpx([{ ...J[3], notes: 'Tail tip reaches the 19' }], { key }).gpx, /Tail tip/);
   // the Wateree fish is not in Moultrie's file
