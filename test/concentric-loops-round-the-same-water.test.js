@@ -171,3 +171,29 @@ test('the loop on the day\'s line past the most of his fish is fished first; a l
   assert.ok(src.includes('const bi = loopFishedFirst(day.petals, (q) => scoreOf(q.coords, new Set()));'));
   assert.ok(src.includes('q.sharedM = sharedWaterM(q.out, q.back, sameM, earlierOf(seq.slice(0, i), q.lineFt));'));
 });
+
+test('a loop is not added to water none of his fish came from, whatever it passes by the ramp', () => {
+  // Ryan, 10/4, on Moultrie from Short Stay: "the problem is that the entire loop goes to a section of
+  // water where i have caught exactly 0 fish". The levee loop passed six fish -- all by the ramp, on
+  // its way out and back in -- and miles of water with none.
+  // One fish 300 m west of the ramp on the edge a westward loop leaves by; two far out to the east. His
+  // shortest pass is 3 km, so a loop west passes the fish by the ramp in its first 300 m and then
+  // trolls 5 km of water with none. Laid before this rule: a loop east to 11.4 km past one far fish,
+  // then that loop west to 4.3 km.
+  const near = { at: at(7700, W - yOf(25)), chartFt: 25 };
+  const far = [11500, 11900].map((x) => ({ at: at(x, W - yOf(25)), chartFt: 25 }));
+  const r = trollLoop({ ramp: RAMP, daFeatures: DA, windowMin: 300, stopMin: 0, catches: [near, ...far], minM: 3000 });
+  assert.ok(!r.error, r.error);
+  const xOf = (pt) => (pt[0] + 80) * KX;
+  assert.ok(r.petals.length >= 1);
+  // every loop of the day turns east, out where the far fish are; none goes west for the one by the ramp
+  for (const p of r.petals) assert.ok(xOf(turnOf(p)) > 8000, `a loop turns at x ${xOf(turnOf(p)).toFixed(0)}`);
+  assert.equal(r.score.fish, 2);
+  const src = read('../js/modules/plan-troll-loop.js');
+  assert.ok(src.includes('if (petals.length && !asked && pt.toFish === false) break;'));
+  assert.ok(src.includes('.filter((a) => a.atM >= outLen / 2 && a.atM <= outLen + backLen / 2).length;'));
+  // and where the line's own way home will not fit, the cheapest one that does crosses deeper water
+  assert.ok(src.includes('let lo = 0, hi = Math.ceil((maxD - ctx.lineFt) / steer), best = null, bestShort = null;'));
+  // and where no turn by the water's shape goes to his fish, his fish are turns too
+  assert.ok(src.includes("if (!catches.length || (byShape && byShape.toFish !== false)) return byShape;"));
+});

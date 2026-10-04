@@ -565,7 +565,10 @@ export function fishBeforeFilling(fillM) {
     const clean = t.kept !== false && 2 * own <= t.backM;
     const full = t.newM >= fillM;
     const passes = (t.score && t.score.passes) || 0;
-    return [clean ? 1 : 0, clean ? t.score.fish : -1, clean ? passes : -1, full ? 1 : 0,
+    // A loop that goes out to water none of his fish came from (`toFish` false: trollLoopSteps()) comes
+    // after every loop that goes to his fish, whatever it passes on the way out of the ramp and back in.
+    const toFish = t.toFish !== false;
+    return [clean ? 1 : 0, clean && toFish ? 1 : 0, clean ? t.score.fish : -1, clean ? passes : -1, t.acrossDeep ? 0 : 1, full ? 1 : 0,
             full ? t.score.structure : t.newM, full ? t.newM : t.score.structure];
   };
   return (x, y) => {
@@ -902,7 +905,35 @@ export function* trollLoopSteps(o) {
         if (picks.every((p) => !near(c, p, 600))) { picks.push(c); if (++k >= perBin) break; }
       }
     }
-    return yield* evaluate(ctx, picks, tree, blockA, petalM, taken, false, earlier);
+    const byShape = yield* evaluate(ctx, picks, tree, blockA, petalM, taken, false, earlier);
+    if (!catches.length || (byShape && byShape.toFish !== false)) return byShape;
+    // AND OUT TO HIS FISH, WHERE THE SHAPE OF THE WATER OFFERS NO LOOP THAT GOES THERE. The turn-arounds
+    // above are chosen by the shape of the water, and his catches only judge the loops through them: on
+    // Moultrie from Short Stay none of them was out by his stripers on the hump off the west arm, and
+    // the day went up the levee instead, to water where he has caught none (Ryan, 10/4: *"the problem
+    // is that the entire loop goes to a section of water where i have caught exactly 0 fish"*). Then
+    // the water on this line nearest each of his fish is a turn-around too, placed the way a turn he
+    // clicks is, held to the same quarter-to-most of the loop and spread apart the way the others are.
+    // Only then: where a loop by the water's shape already goes to his fish, the day is the one it was.
+    const fishPicks = [];
+    for (const mk of catches) {
+      const vc = G.cellOf(mk.at);
+      if (vc < 0) continue;
+      const vi = vc % G.w, vj = (vc - vi) / G.w, r = Math.ceil(sameM * 3 / G.cellM);
+      let T = -1, bd = Infinity;
+      for (let dj = -r; dj <= r; dj++) for (let di = -r; di <= r; di++) {
+        const i2 = vi + di, j2 = vj + dj;
+        if (i2 < 0 || j2 < 0 || i2 >= G.w || j2 >= G.h) continue;
+        const c = j2 * G.w + i2, dd = Math.hypot(di, dj);
+        if (dd > r || !ctx.inBand(c) || !(tree.len[c] >= petalM * 0.25 && tree.len[c] <= petalM * 0.8)) continue;
+        if (dd < bd) { bd = dd; T = c; }
+      }
+      if (T >= 0 && !picks.includes(T) && fishPicks.every((q) => !near(T, q, 600))) fishPicks.push(T);
+    }
+    const byFish = fishPicks.length ? yield* evaluate(ctx, fishPicks, tree, blockA, petalM, taken, false, earlier) : null;
+    if (!byFish) return byShape;
+    if (!byShape) return byFish;
+    return [byShape, byFish].sort(fishThenFill(petalM * 0.85))[0];
   }
   function* evaluate(ctx, picks, tree, blockA, petalM, taken, forced, earlier) {
     const cost = ctx.cost, crossM = ctx.crossM;
@@ -1010,10 +1041,56 @@ export function* trollLoopSteps(o) {
         }
       }
       if (!back) continue;
-      const backC = straighten(G, homeCost, back, both).map(G.lonLat);
-      const coords = outC.concat(backC.slice(1));
-      const m = lineM(coords);
+      let acrossDeep = false;
+      let backC = straighten(G, homeCost, back, both).map(G.lonLat);
+      let coords = outC.concat(backC.slice(1));
+      let m = lineM(coords);
+      // TOO LONG HOME ON ITS OWN CONTOUR: HOME ACROSS THE DEEP WATER. The way home keeps off the way out
+      // and costs more the deeper it goes off its line, by the square, so where the only water on the
+      // line away from the way out is round the lake, it went round the lake. On Moultrie from Short
+      // Stay, the loop along Pinopolis Dam to his stripers on the hump off the west arm came home round
+      // the whole lake (26 mi) unless a loop up the levee had closed that way first -- so the day was
+      // the levee loop, on water where he has caught none, to make room for the one he wanted (Ryan,
+      // 10/4: *"the problem is that the entire loop goes to a section of water where i have caught
+      // exactly 0 fish"*). Every bait on a loop is set for its shallow edge, so deeper water is water
+      // they all clear: when the line's own way home will not fit the loop, deeper water costs the way
+      // home only its distance, and it comes home across it. Between loops past as many of his fish,
+      // as often, one that keeps to its own contour is laid first (fishBeforeFilling's `acrossDeep`).
+      if (m > petalM * 1.02) {
+        // The cheapest way home that fits: deeper water costs at most what water `j` steering bands off
+        // the line costs, for the largest whole `j` that brings the loop inside its share of the day --
+        // so it crosses where the crossing is shallowest, not in a straight line over the deepest hole.
+        let maxD = 0;
+        for (let c = 0; c < n; c++) if (G.d[c] > maxD && homeCost[c] < Infinity) maxD = G.d[c];
+        const homeWith = (j) => {
+          const deep = Float64Array.from(homeCost);
+          for (let c = 0; c < n; c++) {
+            if (deep[c] < Infinity && G.d[c] > ctx.lineFt + steer) deep[c] = homeCost[c] - cost[c] + Math.min(cost[c], (1 + j * j) * flat[c]);
+          }
+          const home2 = shortestFrom(G, deep, T, { blocked: both, dst: S });
+          const back2 = pathTo(home2.prev, T, S);
+          if (!back2) return null;
+          const backC2 = straighten(G, deep, back2, both).map(G.lonLat);
+          const coords2 = outC.concat(backC2.slice(1));
+          return { back2, backC2, coords2, m2: lineM(coords2) };
+        };
+        let lo = 0, hi = Math.ceil((maxD - ctx.lineFt) / steer), best = null, bestShort = null;
+        while (lo <= hi) {
+          const j = (lo + hi) >> 1, h = homeWith(j);
+          if (h && h.m2 <= petalM * 1.02) { best = h; lo = j + 1; } else { if (!best && h && (!bestShort || h.m2 < bestShort.m2)) bestShort = h; hi = j - 1; }
+        }
+        best = best || bestShort;
+        if (best && best.m2 < m) { back = best.back2; backC = best.backC2; coords = best.coords2; m = best.m2; acrossDeep = true; }
+      }
       if (!forced && m > petalM * 1.02) continue;
+      // WHERE THE LOOP GOES: the half of it farthest from the ramp, from halfway along its way out to
+      // halfway along its way home. A loop whose only fish of his are on its way out of the ramp and
+      // back in -- the levee loop from Short Stay, past six caught by the ramp and then miles of water
+      // with none -- goes to water none of his fish came from (`toFish` false). Any of his catches
+      // counts, passed before or not: going round his fish's water again is going to his fish.
+      const outLen = lineM(outC), backLen = lineM(backC);
+      const farFish = marksAlong(coords, catches, sameM)
+        .filter((a) => a.atM >= outLen / 2 && a.atM <= outLen + backLen / 2).length;
       // Water trolled a second time -- the way out again, or a loop earlier in the day -- takes the
       // time and fishes nothing new. On Moultrie from Short Stay, three of four loops left up the same
       // mile of the east edge and two came home along the same stretch of the dam.
@@ -1021,7 +1098,7 @@ export function* trollLoopSteps(o) {
       const cleanSharedM = earlier.some((e) => !e.sameLine)
         ? sharedWaterM(outC, backC, sameM, earlier.filter((e) => e.sameLine)) : sharedM;
       tried.push({ T, lineFt: ctx.lineFt, out: outC, back: backC, coords, m, sharedM, cleanSharedM, newM: m - sharedM, backM: lineM(backC),
-                   kept: apartM >= sameM,
+                   kept: apartM >= sameM, acrossDeep, farFish, toFish: !catches.length || farFish > 0,
                    score: scoreOf(coords, taken), apartM, cells: out.concat(back) });
     }
     // THE LOOP PASSES THE MOST OF HIS FISH, AND THEN FILLS ITS SHARE OF THE DAY WITH WATER IT TROLLS
@@ -1133,6 +1210,10 @@ export function* trollLoopSteps(o) {
         // at the loops before it; the time left is his, for going back over what produced. A loop he
         // asked for by clicking where it turns is kept.
         if (petals.length && !asked && pt.sharedM > pt.newM) break;
+        // NOR IS A LOOP ADDED TO WATER NONE OF HIS FISH CAME FROM. Ranked after every loop that goes to
+        // his fish, it is here only when none does; the day stops before it and the time left is his,
+        // for going back over what produced. A loop he asked for by clicking is kept.
+        if (petals.length && !asked && pt.toFish === false) break;
         pt.via = asked ? p : null;
         petals.push(pt);
         left -= pt.m;
@@ -1148,7 +1229,8 @@ export function* trollLoopSteps(o) {
       const newM = petals.reduce((a, q) => a + q.newM, 0);
       const backM = petals.reduce((a, q) => a + q.backM, 0);
       const cleanSharedM = petals.reduce((a, q) => a + (Number.isFinite(q.cleanSharedM) ? q.cleanSharedM : q.sharedM), 0);
-      tries.push({ petals, score, m, newM, backM, cleanSharedM, kept: petals.every((q) => q.kept) });
+      tries.push({ petals, score, m, newM, backM, cleanSharedM, kept: petals.every((q) => q.kept),
+                   toFish: petals.every((q) => q.toFish !== false), acrossDeep: petals.some((q) => q.acrossDeep) });
     }
     if (tries.length) break;
   }
@@ -1158,17 +1240,15 @@ export function* trollLoopSteps(o) {
   // it trolls once, then the most structure; when none of them can, the most new water.
   tries.sort(fishThenFill(loopBudgetM * 0.85));
   const day = tries[0];
-  // THE LOOP PAST THE MOST OF HIS FISH IS FISHED FIRST. The day is laid a loop at a time, and some
-  // loops can be laid only after an earlier one has closed water to them: on Moultrie from Short Stay
-  // the loop along the dam, out to the hump off the west arm and home across the dam basin -- past 18 of
-  // his 23 stripers -- came home round the whole lake (26 mi) until the loop up the levee had closed
-  // that way, so the levee loop was laid first and he would have fished it first, past only the six
-  // by the ramp in its first mile (Ryan, 10/4: *"i am not liking the purple loop on moultrie at all...
-  // it goes no where near any of my previous caught fish"*, *"it completely ignores all of the fish by
-  // the dam that i have caught"*). So of the day's loops on its line, the one past the most of his
-  // fish, then the most times, goes first -- the same loops, water and fish -- and the rest follow as
-  // laid, so a loop round the same water a band over still comes after the one it goes round. A day
-  // he set the turns of by clicking stays in his order.
+  // THE LOOP PAST THE MOST OF HIS FISH IS FISHED FIRST. The day is laid a loop at a time, and a loop can
+  // be laid only once those before it have closed their water, so the order they were laid in is not
+  // the order worth fishing them in. On Moultrie from Short Stay (`e543a79`) the loop up the levee was
+  // laid first and the loop along the dam past 15 of his stripers second (Ryan, 10/4: *"i am not liking
+  // the purple loop on moultrie at all... it goes no where near any of my previous caught fish"*). That
+  // levee loop is gone now -- it went to water none of his fish came from (`toFish`) -- but the rule
+  // stands: of the day's loops on its line, the one past the most of his fish, then the most times, goes
+  // first, and the rest follow as laid, so a loop round the same water a band over still comes after the
+  // one it goes round. A day he set the turns of by clicking stays in his order.
   {
     const bi = loopFishedFirst(day.petals, (q) => scoreOf(q.coords, new Set()));
     if (bi > 0) {
