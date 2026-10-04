@@ -476,34 +476,40 @@ export function* trollLoopSteps(o) {
   const inBand = (c) => G.d[c] >= floor && G.d[c] <= floor + 2 * steer;
 
   // ── OUT OF THE COVE: the nearest water deep enough for the baits, by water ─────────────────────
-  const any = new Float64Array(n);
-  for (let c = 0; c < n; c++) any[c] = Number.isFinite(G.d[c]) ? 1 : Infinity;
-  let rc = G.cellOf(ramp);
-  if (rc < 0) return { error: 'the ramp is outside the chart' };
-  if (!(any[rc] < Infinity)) {
-    // A ramp sits on the bank: start from the nearest charted water.
-    let best = -1, bd = Infinity;
-    const ri = rc % G.w, rj = (rc - ri) / G.w;
-    for (let r = 1; r < 40 && best < 0; r++) {
-      for (let j = rj - r; j <= rj + r; j++) for (let i = ri - r; i <= ri + r; i++) {
-        if (i < 0 || j < 0 || i >= G.w || j >= G.h) continue;
-        const c = j * G.w + i;
-        if (any[c] < Infinity) { const dd = Math.hypot(i - ri, j - rj); if (dd < bd) { bd = dd; best = c; } }
+  const fromRamp = (g) => {
+    const any = new Float64Array(n);
+    for (let c = 0; c < n; c++) any[c] = Number.isFinite(g.d[c]) ? 1 : Infinity;
+    let rc = g.cellOf(ramp);
+    if (rc < 0) return { error: 'the ramp is outside the chart' };
+    if (!(any[rc] < Infinity)) {
+      // A ramp sits on the bank: start from the nearest charted water.
+      let best = -1, bd = Infinity;
+      const ri = rc % g.w, rj = (rc - ri) / g.w;
+      for (let r = 1; r < 40 && best < 0; r++) {
+        for (let j = rj - r; j <= rj + r; j++) for (let i = ri - r; i <= ri + r; i++) {
+          if (i < 0 || j < 0 || i >= g.w || j >= g.h) continue;
+          const c = j * g.w + i;
+          if (any[c] < Infinity) { const dd = Math.hypot(i - ri, j - rj); if (dd < bd) { bd = dd; best = c; } }
+        }
       }
+      if (best < 0) return { error: 'no charted water near the ramp' };
+      rc = best;
     }
-    if (best < 0) return { error: 'no charted water near the ramp' };
-    rc = best;
-  }
-  const cove = shortestFrom(G, any, rc);
+    return { rc, cove: shortestFrom(g, any, rc) };
+  };
+  let fr = fromRamp(G);
+  if (fr.error) return { error: fr.error };
+  let { rc, cove } = fr;
+  let coveCrossesShore = false;
   // WHERE THE LINES GO IN: the nearest water deep enough, by water -- in a body of it a loop fits in.
   // From Short Stay on Moultrie with the fish band at 20-40 ft, the nearest 40 ft water was one cell
   // of a hole, cut off from the rest; every loop from it failed and the day said no loop fits. Each
   // body of open water (cells joined the way a line can pass between them) is tried nearest first;
   // one too small to hold a turn-around a quarter of the shortest loop out (the turn-around rule
   // below, at the most loops a day has) is passed over, and the first that holds a day is the day's.
-  const body = new Int32Array(n).fill(-1);
-  const bodies = [];
-  {
+  const findBodies = (cove) => {
+    const body = new Int32Array(n).fill(-1);
+    const bodies = [];
     const q = new Int32Array(n);
     const open = (c) => cost[c] < Infinity;
     for (let c0 = 0; c0 < n; c0++) {
@@ -526,8 +532,26 @@ export function* trollLoopSteps(o) {
       }
       if (near >= 0) bodies.push({ size, near, bl });
     }
+    return bodies.sort((a, b) => a.bl - b.bl);
+  };
+  let bodies = findBodies(cove);
+  // A CANAL LINED WITH DOCKS IS NOT SEALED. Garmin draws docks and piers in the shoreline layer --
+  // on Lake Marion 3,011 lines, median 43 m -- and every cell a shore line touches is closed, which
+  // is right for the Pinopolis wall and wrong for the canal at Rowland Subdivision: 40-60 m wide with
+  // 4-41 m docks out from both banks, it closed solid at 25 m, and from the ramp the nearest open
+  // water was one cell cut off from the lake. Ryan's Wyboo Creek day (2026-10-03) came back "No loop:
+  // no water 23 ft deep can be reached from the ramp", 583 m from 23 ft water. So when the shore
+  // closes the ramp off from every water deep enough, the run OUT OF THE COVE -- lines up, his eyes
+  // on the docks -- is found on the bands alone (land, uncharted water and keep-out zones still
+  // closed), and said. The loops themselves stay on the grid with the shore in it.
+  if (!bodies.length && (o.shoreFeatures || []).length) {
+    const G2 = depthGrid(o.daFeatures, { bbox, cellM: o.cellM || 25, offsetFt: o.offsetFt, keepOut: o.koFeatures });
+    const fr2 = G2.w === G.w && G2.h === G.h ? fromRamp(G2) : { error: 'grid' };
+    if (!fr2.error) {
+      const b2 = findBodies(fr2.cove);
+      if (b2.length) { ({ rc, cove } = fr2); bodies = b2; coveCrossesShore = true; }
+    }
   }
-  bodies.sort((a, b) => a.bl - b.bl);
   if (!bodies.length) return { error: `no water ${floor} ft deep can be reached from the ramp` };
   let S = -1, outOfCove = null, coveM = 0, loopBudgetM = 0;
 
@@ -759,6 +783,9 @@ export function* trollLoopSteps(o) {
   return {
     ramp, floorFt: floor, lineFt: target, steerFt: steer,
     cove: outOfCove, coveM: Math.round(coveM),
+    // The way out of the cove had to be found without the charted shore line, because the docks in
+    // it closed it at this grid. The caller says so.
+    coveCrossesShore,
     start: G.lonLat(S),
     legs,
     petals: day.petals.map((p) => ({ out: p.out, back: p.back, m: Math.round(p.m), sharedM: Math.round(p.sharedM),

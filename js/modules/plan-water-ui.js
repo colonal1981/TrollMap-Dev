@@ -1425,6 +1425,9 @@ export async function trollForMe() {
     + ` and ${loop.score.structure} charted mark${loop.score.structure === 1 ? '' : 's'}`
     + (via.length ? `, and turns at the ${via.length === 1 ? 'water' : `${via.length} places`} you ticked` : '')
     + (guide ? `. ${onGuide} of its ${pieces.length} legs cross the ${guide[0]}–${guide[1]} ft of water the research says the fish are over` : '')
+    // THE DOCKS CLOSED THE CANAL AT THE APP'S 25 m GRID, so the way out was found on the depth bands
+    // alone (Rowland Subdivision, 2026-10-03). It is lines up and his eyes on the water; say so.
+    + (loop.coveCrossesShore ? `. The way out of the cove runs past charted docks and shore lines that close it on the app's ${loop.grid && loop.grid.cellM ? `${loop.grid.cellM} m` : ''} grid, so it is drawn on the depth chart alone — steer it by eye` : '')
     + '. Tick a spot or a piece and press it again to make a loop turn there.');
 }
 
