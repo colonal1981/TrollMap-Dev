@@ -2441,6 +2441,19 @@ REPORTED. One carrying \`offeredForReport\` was not in the ranking's list and wa
 lane in it crossed that water. It is a depth of water, not a bait depth, and it decides nothing on
 its own: weigh it as you would a person who was out there last week.
 
+HIS OWN FISH ON A LEG, AND THE WEATHER THEY CAME IN. \`yourHistory\` on a leg counts his catches
+within 300 m of it -- photo positions, a few hundred metres of drift, so "in this pocket", not "on
+this line". \`thisSpeciesWhen\` lists each of his catches of the day's species there: the date and the
+local time he caught it, the length, the lure where he logged one, the depth and where it came from
+(his sounder at the bite, or the chart under the photo), the water temperature his unit read, and
+\`then\`: the air temperature, cloud, wind, surface pressure and moon at the hour of the catch, from the
+weather archive. SET THEM AGAINST TODAY, which is in THE DAY above: the month, the hour you put the leg
+in, the sky, the wind, the pressure and the water. Say in the leg's \`why\` what today shares with the
+days he caught fish there and what it does not, and let it weigh the baits, the depth they run, the
+speed and where a stop earns its minutes. It is the days he CAUGHT fish, not the days he fished: a day
+he caught nothing is not in his journal, so a difference is a thing to say, never a reason to call the
+water dead. A leg with no \`yourHistory\` is a leg he has no fish on; say that too where it matters.
+
 NOT EVERYTHING ON A LEG IS THERE TO BE FISHED. An entry carrying \`worthFishing: true\` is a
 target. An entry with no \`worthFishing\` is a hazard, an obstruction or a pile — it is on the list
 because it is on the water, not because it is worth a cast. Never put a stop on one. Say where it

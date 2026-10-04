@@ -34,7 +34,7 @@
  */
 
 import { ampHoursAlong, minutesFor, metresBetween, cumulative, worstWind, resolveStructure,
-         lookupKind, RESOLVE_MARGIN_M } from './plan-candidates.js';
+         lookupKind, RESOLVE_MARGIN_M, catchSupport, historyForModel } from './plan-candidates.js';
 import { assemblePlan, DEFAULT_STOP_MIN } from './plan-assemble.js';
 import { buildPlanRequest, parsePlanResponse, planArgsFrom, MODEL_LEG_FIELDS, modelAnswer,
          cannotUseBreaks, correctedRequest, withRodsFrom } from './plan-prompt.js';
@@ -471,6 +471,16 @@ export async function planFromWater(o) {
   }));
   if (trolled) legs.forEach((l, i) => trollLeg(l, shape.get(ordered[i].key), o.ramp, wind));
   markRepeats(legs);
+  // HIS FISH ON EACH LEG, AND THE WEATHER THEY CAME IN. `support` was null on every leg this planner
+  // built, so neither the model nor the plan card heard what he had caught along the water -- only
+  // the loop's own count did. catchSupport() is the lane list's own reader, so a leg here says it the
+  // way a lane there does. His catches of the day's species, on this water's chart (`o.catches`).
+  if (Array.isArray(o.catches) && o.catches.length) {
+    for (const l of legs) {
+      l.support = catchSupport(l.coordinates || [], o.catches,
+                               { species: o.catchSpecies, month: o.month });
+    }
+  }
   // Which pass each spot became, so the prompt's spot lists name a leg and an id the model can
   // return, rather than the tab's own piece key.
   const passOfSpot = new Map();
@@ -597,6 +607,9 @@ export async function planFromWater(o) {
       // The reasons the app already computed, so the model is arguing with the same facts Ryan saw.
       whyThisWater: l.reasons ? { for: l.reasons.for, against: l.reasons.against } : undefined,
       ladderPartners: l.partners || undefined,
+      // His own fish along this leg: how many, and each of the species with when, on what, how deep
+      // and the weather it came in -- for the model to set against today's. See historyForModel().
+      yourHistory: historyForModel(l.support),
     })),
     // THE WATER AND THE ORDER ARE DECIDED. Said in the prompt, not just implied by the list
     // length -- a model handed N legs will otherwise rank them out of habit.

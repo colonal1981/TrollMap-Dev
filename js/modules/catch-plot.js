@@ -57,6 +57,26 @@ function catchesToDraw(catches, water) {
   return { drawn, offWater };
 }
 
+/**
+ * THE WATER AND THE WEATHER HE CAUGHT IT IN, on the pin: his unit's water temperature at the bite, and
+ * the air, sky, wind, pressure and moon at that hour (the journal's `weather`, from the archive). The
+ * journal gathered both and only the review queue showed the weather (Ryan, 10/4: "everything in this
+ * app is either supposed to be shown to me to help me plan or shown to smartplan to help it plan").
+ */
+export function weatherThen(c) {
+  const w = c && c.weather;
+  const bits = [];
+  if (c && c.waterTempF != null && c.waterTempF !== '') bits.push(`water ${esc(c.waterTempF)} °F`);
+  if (w) {
+    if (w.tempF != null) bits.push(`air ${esc(w.tempF)} °F`);
+    if (w.cloudPct != null) bits.push(`${esc(w.cloudPct)}% cloud`);
+    if (w.windMph != null) bits.push(`wind ${esc(w.windMph)} mph`);
+    if (w.pressureHpa != null) bits.push(`${esc(w.pressureHpa)} hPa`);
+    if (w.moonPhase) bits.push(esc(w.moonPhase));
+  }
+  return bits.length ? `<b>Then:</b> ${bits.join(' · ')}<br>` : '';
+}
+
 function buildCatchLayer() {
   const CATCH_LAYER = L.layerGroup();
   const { drawn, offWater } = catchesToDraw(state.CATCHES, loadedWater());
@@ -79,6 +99,7 @@ function buildCatchLayer() {
       <b>Lure:</b> ${esc(c.lure || '—')}<br>
       <b>Depth:</b> ${esc(describeCatchDepth(c).text)} · <b>Lead:</b> ${esc(c.lead || '—')} ft<br>
       <b>Time:</b> ${esc(c.time || '—')} · ${esc(c.date || '—')}<br>
+      ${weatherThen(c)}
       <div style="background:#f0f4f8;padding:6px;border-radius:4px;margin-top:6px;font-size:12px">${esc(c.notes || 'No notes.')}</div>
     `);
     CATCH_LAYER.addLayer(marker);

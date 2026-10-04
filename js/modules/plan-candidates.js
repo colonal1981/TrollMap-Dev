@@ -3490,7 +3490,7 @@ export function catchSupport(line, catches, o = {}) {
   // ignores three of his fish is the same shape of silence this file keeps being fixed for.
   const water = typeof o.water === 'function' ? o.water : null;
   const out = { n: 0, speciesN: 0, seasonN: 0, nearestM: null, lastDate: null, lures: {},
-                offWater: 0 };
+                offWater: 0, fish: [] };
   if (!Array.isArray(catches) || !catches.length || !Array.isArray(line) || line.length < 2) return out;
 
   // Bounding box with a margin, so most catches are rejected without any segment maths.
@@ -3520,7 +3520,16 @@ export function catchSupport(line, catches, o = {}) {
     out.n++;
     if (out.nearestM === null || best < out.nearestM) out.nearestM = Math.round(best);
     const sp = String(c.species || '').toLowerCase();
-    if (species && species.some((x) => sp.includes(x) || x.includes(sp))) out.speciesN++;
+    const ofSpecies = !!(species && species.some((x) => sp.includes(x) || x.includes(sp)));
+    if (ofSpecies) out.speciesN++;
+    // EACH FISH OF THE SPECIES, WITH WHEN AND THE WEATHER IT CAME IN. The journal has carried the
+    // weather at the hour of the catch (the Open-Meteo archive, "Check Missing History") and the
+    // water temperature his unit read at the bite, and nothing that plans read either. Ryan, 10/4:
+    // *"does it compare the weather today to the weather that was present when the fish were caught
+    // in that area... that was my point"*, and *"everything in this app is either supposed to be
+    // shown to me to help me plan or shown to smartplan to help it plan"*. No position goes with it:
+    // see the provenance note above.
+    if (ofSpecies || !species) out.fish.push(catchWhen(c));
     if (month && c.date) {
       const m = Number(String(c.date).split('-')[1]);
       // Within a month either side counts as the same season.
@@ -4147,15 +4156,58 @@ export function forModel(c, cap = MODEL_STRUCTURE_CAP) {
     // No distances go to the model. Catch positions are post-fight photo locations carrying a few
     // hundred metres of drift, so a count within the search radius is the honest resolution --
     // "in this pocket", not "on this line".
-    yourHistory: c.support
-      ? { catchesWithin300m: c.support.n, thisSpecies: c.support.speciesN,
-          sameSeason: c.support.seasonN, lastCaught: c.support.lastDate,
-          // Said out loud rather than dropped: these are his fish, at a position that is not on
-          // this water, and the reason the count above is lower than he expects.
-          ignoredOffWater: c.support.offWater || 0,
-          note: 'positions are post-fight photo locations, accurate to a few hundred metres',
-          ...yourMarks(c.markSupport) }
-      : undefined,
+    yourHistory: historyForModel(c.support, c.markSupport),
+  };
+}
+
+/**
+ * ONE CATCH AS THE MODEL READS IT: when, on what, how deep and in what weather -- every field the
+ * journal gathers that bears on a plan, and no position (catchSupport()'s provenance note). Fields the
+ * journal does not have are left off rather than sent as null.
+ *
+ * @param {object} c  a catch journal record
+ */
+export function catchWhen(c) {
+  const num = (v) => (v === '' || v == null || !Number.isFinite(Number(v)) ? undefined : Number(v));
+  const w = c && c.weather;
+  const sounder = c && c.depthSource === 'sounder_at_waypoint';
+  const out = {
+    date: c.date || undefined,
+    time: c.time || undefined,
+    lengthIn: num(c.length),
+    lure: c.lure || undefined,
+    depthFt: num(c.depth),
+    // His sounder at the waypoint he dropped at the bite, or the chart under the photo's position.
+    depthFrom: num(c.depth) === undefined ? undefined : sounder ? 'his sounder at the bite' : 'the chart at the photo',
+    waterF: num(c.waterTempF),
+    then: w ? {
+      airF: num(w.tempF), cloudPct: num(w.cloudPct), windMph: num(w.windMph), windFromDeg: num(w.windDir),
+      pressureHpa: num(w.pressureHpa), moon: w.moonPhase || undefined,
+    } : undefined,
+  };
+  for (const k of Object.keys(out)) if (out[k] === undefined) delete out[k];
+  return out;
+}
+
+/**
+ * HIS HISTORY ON A LEG, AS THE MODEL READS IT. One shape for the lane list, the loop's legs and the
+ * assembled plan, so the three cannot drift.
+ *
+ * @param {object} support      catchSupport() output, or null
+ * @param {object} [markSupport] marksSupport() output
+ */
+export function historyForModel(support, markSupport) {
+  if (!support) return undefined;
+  return {
+    catchesWithin300m: support.n, thisSpecies: support.speciesN,
+    sameSeason: support.seasonN, lastCaught: support.lastDate,
+    // Said out loud rather than dropped: these are his fish, at a position that is not on
+    // this water, and the reason the count above is lower than he expects.
+    ignoredOffWater: support.offWater || 0,
+    lures: support.lures && Object.keys(support.lures).length ? support.lures : undefined,
+    thisSpeciesWhen: support.fish && support.fish.length ? support.fish : undefined,
+    note: 'positions are post-fight photo locations, accurate to a few hundred metres',
+    ...yourMarks(markSupport),
   };
 }
 

@@ -24,7 +24,7 @@
  */
 
 import { ampHours, ampHoursAlong, minutesFor, metresBetween, cumulative, pointAt,
-         travelOrder, trimReach, riverPassFlipped, yourMarks } from './plan-candidates.js';
+         travelOrder, trimReach, riverPassFlipped, historyForModel } from './plan-candidates.js';
 import { depthWindow, lightWindowFor, leadForDepth, jigheadForSwimbait,
          requiresInlineWeight, changeCostFor, presentationDelta,
          LURE_KNOWLEDGE, gpsWindowFor, sharedSpeedWindow } from '../data/lure-knowledge.js';
@@ -2005,14 +2005,7 @@ export function assemblePlan(o) {
       })),
       // Reported, never scored. See catchSupport() in plan-candidates.js for why this is kept
       // out of the ranking, and why the resolution is "in this pocket" and not "on this line".
-      yourHistory: c.support
-        ? { catchesWithin300m: c.support.n, thisSpecies: c.support.speciesN,
-            sameSeason: c.support.seasonN, lastCaught: c.support.lastDate,
-            // Counted, not dropped -- catchSupport() says why.
-            ignoredOffWater: c.support.offWater || 0,
-            note: 'positions are post-fight photo locations, accurate to a few hundred metres',
-            ...yourMarks(c.markSupport) }
-        : undefined,
+      yourHistory: historyForModel(c.support, c.markSupport),
     });
     const first = legs[legs.length - 1];
     runM += legLen; fishingM += legLen; ah += a; clock += mins + stopMin;

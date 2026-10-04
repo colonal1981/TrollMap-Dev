@@ -1517,6 +1517,22 @@ export async function trollForMe(opts = {}) {
 }
 
 /**
+ * HIS CATCHES OF THE DAY'S FISH ON THIS WATER, whole journal records: each fish once, with a position on
+ * this water's chart. The same set the loop counts (trollForMe()), with everything the journal holds
+ * about each one, for the legs to hand the model.
+ */
+function catchesOnThisWater() {
+  const want = String(T.species || '').trim().toLowerCase();
+  if (!want || typeof T.depthAt !== 'function') return [];
+  return oneFishEach((state.CATCHES || [])
+    .filter((c) => c && String(c.species || '').trim().toLowerCase() === want && hasPosition(c)))
+    .filter((c) => {
+      const ft = T.depthAt([parseFloat(c.lon), parseFloat(c.lat)]);
+      return ft != null && Number.isFinite(Number(ft));
+    });
+}
+
+/**
  * WHAT THE MAIN MAP NEEDS TO DRAW THE LOOP JUST LAID -- see loop-on-map.js. The loop, the turns it
  * was asked for, and the names the bar on the map reads them under.
  */
@@ -1629,6 +1645,11 @@ export async function buildFromPicked() {
       todayOffsetFt: T.offsetFt || 0,
       ramp: T.ramp,
       slug: T.r2Key,
+      // HIS CATCHES OF THIS FISH ON THIS WATER'S CHART, whole records -- the loop took only their
+      // positions -- so each leg can tell the model when he caught them there and in what weather.
+      catches: catchesOnThisWater(),
+      catchSpecies: T.species ? [T.species] : undefined,
+      month: Number(String(T.dateStr || '').split('-')[1]) || undefined,
       usableAh: T.usableAh,
       windowMin: T.windowMin,
       // THE SAME FORECAST THE CARD PRICED THE DAY WITH. The Water tab's cost card has called
