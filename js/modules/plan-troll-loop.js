@@ -1158,6 +1158,31 @@ export function* trollLoopSteps(o) {
   // it trolls once, then the most structure; when none of them can, the most new water.
   tries.sort(fishThenFill(loopBudgetM * 0.85));
   const day = tries[0];
+  // THE LOOP PAST THE MOST OF HIS FISH IS FISHED FIRST. The day is laid a loop at a time, and some
+  // loops can be laid only after an earlier one has closed water to them: on Moultrie from Short Stay
+  // the loop along the dam, out to the hump off the west arm and home across the dam basin -- past 18 of
+  // his 23 stripers -- came home round the whole lake (26 mi) until the loop up the levee had closed
+  // that way, so the levee loop was laid first and he would have fished it first, past only the six
+  // by the ramp in its first mile (Ryan, 10/4: *"i am not liking the purple loop on moultrie at all...
+  // it goes no where near any of my previous caught fish"*, *"it completely ignores all of the fish by
+  // the dam that i have caught"*). So of the day's loops on its line, the one past the most of his
+  // fish, then the most times, goes first -- the same loops, water and fish -- and the rest follow as
+  // laid, so a loop round the same water a band over still comes after the one it goes round. A day
+  // he set the turns of by clicking stays in his order.
+  {
+    const bi = loopFishedFirst(day.petals, (q) => scoreOf(q.coords, new Set()));
+    if (bi > 0) {
+      // what each passes, and what each trolls again, counted against the loops now fished before it
+      const seq = [day.petals[bi], ...day.petals.filter((_, i) => i !== bi)], seen = new Set();
+      seq.forEach((q, i) => {
+        q.score = scoreOf(q.coords, seen);
+        q.sharedM = sharedWaterM(q.out, q.back, sameM, earlierOf(seq.slice(0, i), q.lineFt));
+        for (const a of marksAlong(q.coords, marks, corridorM)) seen.add(a.mark);
+        for (const a of marksAlong(q.coords, catches, sameM)) seen.add(a.mark);
+      });
+      day.petals = seq;
+    }
+  }
   // WHAT FILLING THE DAY WOULD HAVE COST, when the day chosen does not fill it: the best day that
   // does, so the status line can say what the time left would have bought (Rowland: a 16.9 mi loop
   // into the open lower lake, past 2 of his stripers, against 3.9 mi past 4).
@@ -1223,6 +1248,27 @@ export function* trollLoopSteps(o) {
                                lines: t.petals.map((p) => p.lineFt), kept: t.kept })),
     grid: { w: G.w, h: G.h, cellM: G.cellM },
   };
+}
+
+/**
+ * Which of a day's loops he fishes first: of the loops on the day's line (the first one's), the one
+ * past the most of his fish, then the most times; the first laid when none beats it, and always when
+ * he set the turns by clicking (a loop with `via`). trollLoopSteps() moves it to the front.
+ *
+ * @param {object[]} petals   the day's loops, as laid
+ * @param {function} passOf   loop -> { fish, passes }: his catches it passes, nothing taken
+ * @returns {number} its index
+ */
+export function loopFishedFirst(petals, passOf) {
+  if (!Array.isArray(petals) || petals.length < 2 || petals.some((q) => q.via != null)) return 0;
+  const dayLine = petals[0].lineFt;
+  let bi = 0, bs = null;
+  petals.forEach((q, i) => {
+    if (q.lineFt !== dayLine) return;
+    const s = passOf(q);
+    if (!bs || s.fish > bs.fish || (s.fish === bs.fish && s.passes > bs.passes)) { bi = i; bs = s; }
+  });
+  return bi;
 }
 
 /**

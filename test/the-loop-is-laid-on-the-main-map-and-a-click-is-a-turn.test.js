@@ -89,8 +89,11 @@ test('Troll it for me takes the turns from the map exactly where he clicked, not
   assert.ok(ui.includes('export async function trollForMe(opts = {}) {'));
   assert.ok(ui.includes('const fromMap = Array.isArray(opts.via);'));
   assert.ok(ui.includes('const via = (fromMap ? opts.via : ['));
-  // a reason no click can fix is marked, so the day goes to the lane plan instead
+  // a reason no click can fix is marked, so the bar says a click will not change it -- and no other
+  // planner's day is pressed in its place (Ryan, 10/4: a lane-plan NO-GO 13 miles from his ramp)
   assert.ok(ui.includes("T.loopNoWater = noWater"));
+  assert.ok(lom.includes('A turn clicked on the map will not change that.'));
+  assert.doesNotMatch(lom, /laneDayInstead|lane plan instead/);
   assert.ok(ui.includes('export function loopForMap() {'));
   assert.ok(ui.includes('export function riverHere() {'));
   // (spelled without the import call itself, which the audit would read as an import of this file)

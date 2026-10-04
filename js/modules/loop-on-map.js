@@ -112,11 +112,17 @@ async function relay({ fit = false } = {}) {
       const loop = await trollForMe({ via: S.turns.map((t) => t.at) });
       const snap = loopForMap();
       if (!loop) {
-        if (snap.noWater && !S.turns.length) return laneDayInstead(snap.why);
         clearLines();
         S.turns.forEach((t) => { t.reached = null; });
         drawTurns();
-        setBar({ error: snap.why || 'No loop came back.' });
+        // NO LOOP, AND THE BAR SAYS WHY -- not another planner's day in its place. This pressed the lane
+        // plan where no click could make a loop, and Ryan, 10/4, testing more lakes, got a Smart Plan
+        // NO-GO for two lanes 13 miles from his Marion ramp ("this warning below doesn't make sense????"):
+        // the lane plan had matched the only lanes it could, far away, and the model rightly called the
+        // commute a no-go. He chose one way to plan (`03a6380`); where it cannot lay a loop it says so.
+        setBar({ error: snap.noWater && !S.turns.length
+          ? `${snap.why || 'No loop came back from this ramp.'} A turn clicked on the map will not change that.`
+          : snap.why || 'No loop came back.' });
         continue;
       }
       S.lineFt = loop.lineFt;
@@ -131,15 +137,6 @@ async function relay({ fit = false } = {}) {
     S.busy = false;
     watch(false);
   }
-}
-
-/** No loop can be laid on this water whatever he clicks: the lane plan, and say why. */
-function laneDayInstead(why) {
-  endPreview();
-  const st = $('smartPlanStatus');
-  if (st) st.textContent = `No loop here (${why || 'no reason given'}), so this is the lane plan instead.`;
-  document.querySelector('#bottomNav button[data-tab="plan"]')?.click();
-  $('runSmartPlanBtn')?.click();
 }
 
 async function build() {

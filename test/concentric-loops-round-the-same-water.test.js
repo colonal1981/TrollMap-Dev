@@ -15,7 +15,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { trollLoop, fishBeforeFilling, linesSaid, SAME_WATER_M } from '../js/modules/plan-troll-loop.js';
+import { trollLoop, fishBeforeFilling, linesSaid, loopFishedFirst, SAME_WATER_M } from '../js/modules/plan-troll-loop.js';
 import { metresBetween } from '../js/modules/plan-candidates.js';
 
 const read = (p) => fs.readFileSync(new URL(p, import.meta.url), 'utf8');
@@ -147,4 +147,27 @@ test('a loop does not cut across water shallower than its alarm edge to reach a 
   }
   // it went round by the join
   assert.ok(Math.max(...p.out.concat(p.back).map(xOfPt)) > 14000);
+});
+
+test('the loop on the day\'s line past the most of his fish is fished first; a loop a band over stays after its own', () => {
+  // Ryan, 10/4, on Moultrie from Short Stay: "i am not liking the purple loop on moultrie at all... it
+  // goes no where near any of my previous caught fish". The levee loop, past the six by the ramp, was
+  // laid first; the loop along the dam to the hump, past 18 of his 23 stripers, could only be laid
+  // after it.
+  const fish = new Map();
+  const loop = (lineFt, f, p = f, via = null) => { const q = { lineFt, via }; fish.set(q, { fish: f, passes: p }); return q; };
+  const passOf = (q) => fish.get(q);
+  assert.equal(loopFishedFirst([loop(26, 6), loop(26, 18)], passOf), 1);
+  // Rowland, 10/4: the 23 ft loop round the same water passes his four, the 28 ft line's three. It is
+  // a band over the day's line and goes round the first loop, so the first stays first.
+  assert.equal(loopFishedFirst([loop(28, 3), loop(23, 4), loop(18, 0, 3)], passOf), 0);
+  // as many fish: the one past them more often; as many of both: as laid
+  assert.equal(loopFishedFirst([loop(27, 4, 4), loop(27, 4, 7)], passOf), 1);
+  assert.equal(loopFishedFirst([loop(27, 4, 4), loop(27, 4, 4)], passOf), 0);
+  // turns he clicked: his order
+  assert.equal(loopFishedFirst([loop(26, 6, 6, 0), loop(26, 18, 18, 1)], passOf), 0);
+  // the day moves it to the front and counts each loop's fish and twice-trolled water again in that order
+  const src = read('../js/modules/plan-troll-loop.js');
+  assert.ok(src.includes('const bi = loopFishedFirst(day.petals, (q) => scoreOf(q.coords, new Set()));'));
+  assert.ok(src.includes('q.sharedM = sharedWaterM(q.out, q.back, sameM, earlierOf(seq.slice(0, i), q.lineFt));'));
 });
