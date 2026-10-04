@@ -68,8 +68,14 @@ test('a way home that never comes near is clear', () => {
   assert.equal(onlyCrosses(G, run(line(5, 5, 55, 5)), WITHIN, OUT), true);
 });
 
-test('the loop uses it for the narrow-water step only, and counts such a way home as kept', () => {
+test('the loop uses it for the narrow-water step only, counts such a way home as kept, and pairs the lines the other way past a single crossing', () => {
   const src = fs.readFileSync(new URL('../js/modules/plan-troll-loop.js', import.meta.url), 'utf8');
-  assert.ok(src.includes('if (back && onlyCrosses(G, back, within, out, sameM)) apartM = sameM;'));
+  assert.ok(src.includes('const xs = back ? crossingsOf(G, back, within, out, sameM) : null;'));
+  assert.ok(src.includes('if (xs) apartM = sameM;'));
   assert.ok(src.includes('why can\'t\n * smart plan use those to make a loop?'));
+  // Ryan, 10/4: "why do they have to cross" -- they do not: past the crossing the way out carries on
+  // along the way home's line to the turn, and the way home comes back along the way out's.
+  assert.ok(src.includes('why do they\n        // have to cross'));
+  assert.ok(src.includes('const out2 = out.slice(0, k + 1).concat(back.slice(0, x + 1).reverse());'));
+  assert.ok(src.includes('back = out.slice(k).reverse().concat(back.slice(x));'));
 });

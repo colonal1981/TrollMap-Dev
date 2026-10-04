@@ -471,25 +471,39 @@ function sideOfLine(G, line, c) {
  * smart plan use those to make a loop?"
  */
 export function onlyCrosses(G, path, within, line, sameM = SAME_WATER_M) {
+  return crossingsOf(G, path, within, line, sameM) !== null;
+}
+
+/**
+ * Where `path` crosses `line`, as onlyCrosses() reads it: [{x, k}], x the index in `path` and k the
+ * index in `line` of the cells nearest each other at each crossing -- or null if any stretch near
+ * the line is beside it rather than across it.
+ */
+function crossingsOf(G, path, within, line, sameM) {
   const r2 = 2 * (sameM / G.cellM) ** 2;
+  const found = [];
   for (let i = 0; i < path.length; i++) {
     if (!within[path[i]]) continue;
     let j = i;
     while (j + 1 < path.length && within[path[j + 1]]) j++;
-    if (i === 0 || j === path.length - 1) return false;
-    let x = i, xd = Infinity;
-    for (let q = i; q <= j; q++) { const d = nearestCell(G, line, path[q]).cells; if (d < xd) { xd = d; x = q; } }
+    if (i === 0 || j === path.length - 1) return null;
+    let x = i, xd = Infinity, xk = 0;
+    for (let q = i; q <= j; q++) {
+      const nc = nearestCell(G, line, path[q]);
+      if (nc.cells < xd) { xd = nc.cells; x = q; xk = nc.k; }
+    }
     if (xd * G.cellM >= sameM) { i = j; continue; }
     const s0 = sideOfLine(G, line, path[i - 1]), s1 = sideOfLine(G, line, path[j + 1]);
-    if (!s0 || !s1 || s0 === s1) return false;
+    if (!s0 || !s1 || s0 === s1) return null;
     const xi = path[x] % G.w, xj = (path[x] - xi) / G.w;
     for (let q = i; q <= j; q++) {
       const qi = path[q] % G.w, qj = (path[q] - qi) / G.w;
-      if ((qi - xi) ** 2 + (qj - xj) ** 2 > r2) return false;
+      if ((qi - xi) ** 2 + (qj - xj) ** 2 > r2) return null;
     }
+    found.push({ x, k: xk });
     i = j;
   }
-  return true;
+  return found;
 }
 
 /**
@@ -753,9 +767,9 @@ export function* trollLoopSteps(o) {
     const tried = [];
     for (const T of picks) {
       yield 'turn';
-      const out = pathTo(tree.prev, S, T);
+      let out = pathTo(tree.prev, S, T);
       if (!out) continue;
-      const outC = straighten(G, cost, out, blockA).map(G.lonLat);
+      let outC = straighten(G, cost, out, blockA).map(G.lonLat);
       if (!forced && lineM(outC) > petalM * 0.6) continue;
       // The way home may not come within sameM of the way out, except at the two ends. Where the
       // water is too narrow for that -- one edge up a river arm -- it crosses the way out's water only
@@ -819,7 +833,37 @@ export function* trollLoopSteps(o) {
         apartM = 0;
         // A WAY HOME THAT ONLY CROSSES THE WAY OUT kept clear of it: it trolls none of it twice, it
         // goes over it (onlyCrosses: Rowland Subdivision, 10/4, the channel toward Potato Creek).
-        if (back && onlyCrosses(G, back, within, out, sameM)) apartM = sameM;
+        const xs = back ? crossingsOf(G, back, within, out, sameM) : null;
+        if (xs) apartM = sameM;
+        // AND THEY DO NOT HAVE TO CROSS. The way out is laid first, the cheapest line to the turn,
+        // with no thought for where the way home will have to go: from Rowland it went down the
+        // creek, round the end of the point and in along the channel's north edge, which left the way
+        // home the south edge and no way back to the creek's west side but across it. Ryan, 10/4:
+        // "why cant the solid line keep going straight and then turn into that creek and on the
+        // southern end then the northern end turn left and go back up the main channel... why do they
+        // have to cross". Where they cross once, the two lines are paired the other way past the
+        // crossing: the way out carries on along the line the way home took, to the turn, and the way
+        // home comes back along the line the way out took. The same water, the same distance apart;
+        // the two now meet where they crossed instead of going over each other. Each is straightened
+        // with the other's water as dear as the narrow-water step makes it, so a straight run does not
+        // cut across toward the other line.
+        if (xs && xs.length === 1) {
+          const { x, k } = xs[0];
+          const out2 = out.slice(0, k + 1).concat(back.slice(0, x + 1).reverse());
+          back = out.slice(k).reverse().concat(back.slice(x));
+          out = out2;
+          const apartFrom = (line) => {
+            const was = out;
+            out = line;
+            const c2 = Float64Array.from(cost);
+            for (const c of nearOut(sameM, 2)) { c2[c] += crossM; corridor[c] = 0; }
+            out = was;
+            return c2;
+          };
+          outC = straighten(G, apartFrom(back), out, blockA).map(G.lonLat);
+          homeCost = apartFrom(out);
+          both = blockA;
+        }
       }
       if (!back) continue;
       const backC = straighten(G, homeCost, back, both).map(G.lonLat);
