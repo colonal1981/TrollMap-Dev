@@ -16,6 +16,9 @@ WHAT THESE TESTS HOLD.
   3. A contour at k ft sits where the water is k ft.
   4. Inside his coverage his chart is the chart: a Garmin feature mostly inside it goes, one
      outside it stays. A layer the run did not read is not touched.
+  5. Where he sounded it, it is not "not sounded". Garmin's unsurveyed polygons are CUT by his
+     coverage -- on Bates the day this went live, 24.7 of 37.6 hatched acres sat on his water --
+     and the part past his coverage is kept.
 
 Personal use only, not for distribution or resale; not for navigation.
 """
@@ -148,6 +151,33 @@ def test_his_chart_wins_inside_his_coverage():
     st = sc.apply(layers, survey, allowed={'depth_areas'})
     assert 'contours' not in st, 'a layer the run did not read is not touched'
     eq(layers['contours'], garmin['contours'], 'and is left exactly as it was')
+
+
+def test_where_he_sounded_it_is_not_unsurveyed():
+    res = built()
+    cov = res['coverage']
+    survey = {'depth_areas': res['depth_areas'], 'contours': res['contours'], 'coverage': cov}
+    i0, j0 = round(LON0 / A), round(LAT0 / A)
+    # Garmin's "no survey here": one polygon half over his block and half over the water south of
+    # it he never drove, and one wholly inside his block.
+    half = box(i0 * A, (j0 - 10) * A, (i0 + 20) * A, (j0 + 10) * A)
+    inside = box((i0 + 25) * A, (j0 + 5) * A, (i0 + 30) * A, (j0 + 10) * A)
+    feats = [{'type': 'Feature', 'properties': {'layer': 'unsurveyed', 'k': n}, 'geometry': g.__geo_interface__}
+             for n, g in (('half', half), ('inside', inside))]
+    feats = json.loads(json.dumps(feats))
+    layers = {'unsurveyed': json.loads(json.dumps(feats))}
+    st = sc.apply(layers, survey)
+    u = st['unsurveyed']
+    eq((u['cut'], u['gone']), (1, 1), 'the straddling one is cut, the one inside goes')
+    left = unary_union([shape(f['geometry']) for f in layers['unsurveyed']])
+    assert left.intersection(cov).area < 1e-14, 'nothing hatched on water he sounded'
+    assert abs(left.area - half.difference(cov).area) < 1e-14, 'and all of the water past him still is'
+    eq({f['properties']['k'] for f in layers['unsurveyed']}, {'half'}, 'keeping the properties it had')
+
+    layers = {'unsurveyed': json.loads(json.dumps(feats))}
+    st = sc.apply(layers, survey, allowed={'depth_areas', 'contours'})
+    assert 'unsurveyed' not in st, 'a run that did not read it does not touch it'
+    eq(layers['unsurveyed'], feats, 'left exactly as it was')
 
 
 def test_load_says_none_when_he_has_not_recorded_it():

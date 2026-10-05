@@ -1455,7 +1455,10 @@ def _flush(slug, layers, mask, meta, a, report):
         _sst = survey_chart.apply(layers, _sv, getattr(a, 'layer_set', None))
         if _sst:
             print('   %s: his own survey -- %s' % (slug, ', '.join(
-                '%s %d his, %d of Garmin\'s replaced, %d kept' % (k, v['his'], v['garmin_replaced'], v['garmin_kept'])
+                ('%s: %.1f ac taken off where he sounded it, %d piece(s) left'
+                 % (k, v['acres_removed'], v['kept'])) if k == survey_chart.UNSURVEYED else
+                ('%s %d his, %d of Garmin\'s replaced, %d kept'
+                 % (k, v['his'], v['garmin_replaced'], v['garmin_kept']))
                 for k, v in sorted(_sst.items()))))
             rec['survey'] = _sst
 

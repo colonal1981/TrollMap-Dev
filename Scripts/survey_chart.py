@@ -268,7 +268,46 @@ def apply(layers, survey, allowed=None):
                 kept.append(f)
         layers[layer] = list(survey[layer]) + kept
         st[layer] = {'his': len(survey[layer]), 'garmin_replaced': gone, 'garmin_kept': len(kept)}
+    # AND WHERE HE SOUNDED IT, IT IS NOT UNSURVEYED. `unsurveyed` is Garmin's complement of ITS OWN
+    # depth areas (build_all_chartpacks reads it at the depth areas' level for that reason), so once
+    # his bands are the chart inside his coverage, Garmin's "no survey here" is false there. Found
+    # in the app on Bates the day this went live: 24.7 of its 37.6 hatched acres sat on water he had
+    # recorded, under the tooltip "Not sounded -- Garmin has no survey here". Cut, not dropped by
+    # vertex count -- one of these polygons can run on past his coverage into water he has not
+    # driven, and that part is still unsurveyed.
+    if (allowed is None or UNSURVEYED in allowed) and layers.get(UNSURVEYED):
+        st[UNSURVEYED] = _cut_unsurveyed(layers, survey['coverage'])
     return st
+
+
+UNSURVEYED = 'unsurveyed'
+
+
+def _cut_unsurveyed(layers, coverage):
+    from shapely.geometry import shape, mapping
+    out, cut, gone, removed = [], 0, 0, 0.0
+    for f in layers[UNSURVEYED]:
+        try:
+            g = shape(f['geometry'])
+        except Exception:
+            out.append(f)
+            continue
+        if not g.is_valid:
+            g = g.buffer(0)
+        if not g.intersects(coverage):
+            out.append(f)
+            continue
+        d = g.difference(coverage)
+        removed += acres(g) - (acres(d) if not d.is_empty else 0.0)
+        parts = [p for p in (getattr(d, 'geoms', None) or [d]) if p.geom_type == 'Polygon' and not p.is_empty]
+        if not parts:
+            gone += 1
+            continue
+        cut += 1
+        for p in parts:
+            out.append({'type': 'Feature', 'properties': dict(f.get('properties') or {}), 'geometry': mapping(p)})
+    layers[UNSURVEYED] = out
+    return {'cut': cut, 'gone': gone, 'kept': len(out), 'acres_removed': round(removed, 1)}
 
 
 # ── CLI ─────────────────────────────────────────────────────────────────────────────────────
