@@ -49,6 +49,8 @@ from build_chartpack import (LakeMask, BboxMask, build_mask, read_fc, verts, SHI
                              DROP, redp, _rings, collapse_ramps, touches_core,
                              clip_excluded, trim_geometry, split_multi,
                              clip_to_water, load_water, CUT_TO_WATER)   # noqa: E402
+# His own sounder's chart, where he has recorded the water. See survey_chart.py.
+import survey_chart  # noqa: E402
 
 # Which layers decide "is this lake charted". DEPTH AREAS, not contours -- see
 # LakeMask.charted_fraction for why counting contour vertices reported 0.66 for a fully
@@ -521,6 +523,8 @@ def main():
     ap.add_argument('--map', required=True, help='tile_lake_map.json')
     ap.add_argument('--out', required=True)
     ap.add_argument('--report', required=True, help='charted.json to write')
+    ap.add_argument('--surveys', default=None,
+                    help='his own surveys (survey_chart.py); default <registry>\\surveys')
     ap.add_argument('--buffer-m', type=float, default=250.0)
     ap.add_argument('--states', default='SC,NC,GA,TN')
     ap.add_argument('--min-charted', type=float, default=0.0,
@@ -743,6 +747,8 @@ def main():
                    '--max-segment-m', str(a.max_segment_m)]
             if a.only_layers:
                 cmd += ['--only-layers', a.only_layers]
+            if a.surveys:
+                cmd += ['--surveys', a.surveys]
             if a.ship_list:
                 cmd += ['--ship-list', a.ship_list]
             if a.require_depth_area:
@@ -1437,6 +1443,21 @@ def _flush(slug, layers, mask, meta, a, report):
         print('   %s: dropped %d line feature(s) longer than the lake itself'
               % (slug, span_dropped))
         rec['oversized_lines_dropped'] = span_dropped
+
+    # HIS OWN SOUNDER, WHERE HE HAS RECORDED THE WATER. registry/surveys/<slug>/ is his Quickdraw,
+    # turned into bands and contours by survey_chart.py; inside his coverage it replaces Garmin's,
+    # and Garmin's stays where he has not driven. Before `charted` and the ship gate, so both
+    # measure the chart the pack actually carries. Ryan, 2026-10-05: *"i think those contours will
+    # work... better than nothing at all"* -- on Bates his chart was within 1.5 ft of his sounder at
+    # 95% of a trip, Garmin's at 20%.
+    _sv = survey_chart.load(survey_chart.surveys_dir(a.registry, getattr(a, 'surveys', None)), slug)
+    if _sv is not None:
+        _sst = survey_chart.apply(layers, _sv, getattr(a, 'layer_set', None))
+        if _sst:
+            print('   %s: his own survey -- %s' % (slug, ', '.join(
+                '%s %d his, %d of Garmin\'s replaced, %d kept' % (k, v['his'], v['garmin_replaced'], v['garmin_kept'])
+                for k, v in sorted(_sst.items()))))
+            rec['survey'] = _sst
 
     if scoped:
         # CARRY FORWARD. charted comes from depth_areas; counts_core from contours+depth_areas.

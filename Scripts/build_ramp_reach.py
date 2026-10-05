@@ -219,7 +219,7 @@ def _metres(a, b):
                       (b['lat'] - a['lat']) * 110540.0)
 
 
-def access_points(registry):
+def access_points(registry, overrides=None):
     """Every landing we know, from every bucket, deduped on position.
 
     Keyed to 5 dp, which is 1.1 m -- the same two records from two feeds collapse, two real
@@ -354,9 +354,9 @@ def access_points(registry):
     # js/data/launch-reach.js folds two rows sharing a name within 250 m into one, so *"1 ramp at
     # hwy 378 on the wateree"* is answered by giving both records the one name rather than by a
     # rule about those two coordinates.
-    p = os.path.join(registry, '_launch_name_overrides.json')
+    p = overrides or os.path.join(registry, '_launch_name_overrides.json')
     if os.path.isfile(p):
-        fixed = dropped = gone = 0
+        fixed = dropped = gone = added = 0
         for key, r in (load_json(p).get('names') or {}).items():
             r = r or {}
             try:
@@ -364,6 +364,22 @@ def access_points(registry):
             except ValueError:
                 continue
             k = alias.get((round(la, 5), round(lo, 5)))
+            if k is None and r.get('add'):
+                # AND A LAUNCH NO FEED LISTS AT ALL, WHEN HE SAYS IT IS ONE. Ryan, 2026-10-05, of
+                # where he puts in on Bates Old River: *"where i launched is a kayak style launch its
+                # just a dirt rd down to the lake and you launch from the end of it"*. No feed has
+                # anything within 600 m of it, and this file could only NAME or DROP a landing some
+                # feed already carried -- so a water whose only launch is his had none, and nothing
+                # could plan from it. `add` is that: his position, his name, the water it is on.
+                # It is still only a landing; reach_for() decides as it does for every other one
+                # whether a boat gets from there to the water.
+                key = (round(la, 5), round(lo, 5))
+                out[key] = {'lat': la, 'lon': lo, 'name': str(r.get('name') or ''),
+                            'access': str(r.get('access') or ''), 'listing': str(r.get('listing') or ''),
+                            'filed': {str(r['water'])} if r.get('water') else set(), 'src': {'ryan'}}
+                alias[key] = key
+                added += 1
+                continue
             if k is None:
                 # A DROP WITH NOTHING TO DROP IS NOT A WARNING. All 36 of his drops are unnamed
                 # OSM slipway nodes, and on 2026-09-24 every one of them was already absent from
@@ -392,9 +408,9 @@ def access_points(registry):
             out[k]['name'] = str(r['name'])
             out[k]['src'].add('ryan')
             fixed += 1
-        if fixed or dropped or gone:
+        if fixed or dropped or gone or added:
             print("Ryan's own corrections applied: %d named, %d dropped, %d drop(s) already gone "
-                  "from the feeds" % (fixed, dropped, gone))
+                  "from the feeds, %d launch(es) of his own added" % (fixed, dropped, gone, added))
     return out
 
 
@@ -1237,6 +1253,8 @@ def main():
                          'charted water. The same gate upload_garmin_to_r2.py ships by, because '
                          'measuring water the app never shows is work nobody reads.')
     ap.add_argument('--out', help='default registry/_ramp_reach.json')
+    ap.add_argument('--overrides', default=None,
+                    help="his own launch names, drops and additions; default registry/_launch_name_overrides.json")
     # ── 2026-09-24: HIS DRAFT ARRIVED, AND STEERING BY IT WAS WORSE FOR HIS DRAFT ─────────────
     #
     # The note below ended "6.0 stays until Ryan says what his boat actually needs". He said it
@@ -1360,7 +1378,7 @@ def main():
               'approximation would put every landing on every river')
         return 2
 
-    points = access_points(a.registry)
+    points = access_points(a.registry, a.overrides)
     print('access points on file: %d' % len(points))
     if a.only:
         slugs = [s.strip() for s in a.only.split(',') if s.strip()]

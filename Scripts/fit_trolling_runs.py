@@ -110,6 +110,8 @@ from build_trolling_runs import metres, length_m, NodeIndex, read_graph, main_co
 # line, and the thresholds are fishing numbers -- 15 ft to a channel edge, 4 ft to a flat.
 # Restating them here is how they drift apart the first time one is tuned.
 from build_water_features import classify as classify_relief  # noqa: E402
+# THE THIRD KIND OF LANE, on the waters he trolls down the channel. See channel_lanes.py.
+from channel_lanes import CHANNEL_WATERS, channel_passes  # noqa: E402
 # THE COMPILED INNER LOOPS, 2026-09-27. On Wateree the fit spent 142 of its 196 seconds in numpy
 # call overhead inside smooth() and 30 more filling the raster through matplotlib. lane_kernels.py
 # does the same arithmetic in the same order, compiled, and gives the same numbers -- see that file
@@ -1384,6 +1386,153 @@ def graph_index(gpath, slug=''):
         return None, None
 
 
+
+def measure_pass(p2, piece, ll, depth, a, idx, mainset, grid, cell, lat0, st, seeded):
+    """WHAT A FINISHED PASS IS: its corners, the water under it, the water he could reach from it,
+    whether the graph reaches it, and what is beside it. Every pass the fitter writes goes through
+    here -- a fitted contour, a structure pass and a channel lane (channel_lanes.py) -- so no kind of
+    lane carries a different idea of what `envelope_ft` or `shallowest_ft` means. Moved here
+    unchanged from fit_pack()'s piece loop, 2026-10-05, when the channel lanes needed it too."""
+    tt = _turns(_resample(piece, 10.0)[0])
+    st['corners_after'] += int(np.sum(tt > 12))
+    p2['worst_corner_deg'] = round(float(tt.max()), 1) if len(tt) else 0.0
+    # WHAT WATER IS ACTUALLY UNDER THIS PASS.
+    #
+    # Ryan, 2026-08-10: "if the app thinks the fish are somewhere between 17 and 25 then
+    # that means that the average depth of that trolling run needs to be between that
+    # number... if the fish are not deeper than 25 ft and i can safely stay below 25ft
+    # then the trolling run should not run deeper than 25 feet... and that number needs
+    # to be flexible because it will be different on every lake at different times of the
+    # year."
+    #
+    # WHICH water to troll is a fishing decision. It changes with the lake, the season and
+    # the species, and this script runs once, months before anyone knows what will be
+    # planned on it, so it cannot make that call and must not try. What it CAN do is the
+    # measurement, and that is all this is: the real chart depth every 10 m along the
+    # finished pass, reduced to numbers the app can decide with.
+    #
+    # `at_raw` and never `at`. `at` is the chart with thin water widened a cell for
+    # safety, which is the right input to a DECISION about where the boat may go and the
+    # wrong input to a REPORT of how deep the water is. Reporting off the eroded raster is
+    # what once had a contour "dipping to 5.9 ft" where the chart says 15.1.
+    #
+    # The 10 m spacing is even, which is what makes the mean length-weighted instead of
+    # vertex-weighted: a bend carries more vertices per metre and would otherwise pull the
+    # average toward itself.
+    draw = depth.at_raw(_resample(piece, 10.0)[0])
+    ok = ~np.isnan(draw)
+    if np.any(ok):
+        good = draw[ok]
+        p2['shallowest_ft'] = round(float(good.min()) / 3.048, 1)
+        p2['deepest_ft'] = round(float(good.max()) / 3.048, 1)
+        p2['mean_depth_ft'] = round(float(good.mean()) / 3.048, 1)
+        # Uncharted water is not shallow water and it is not deep water -- it is water
+        # nobody sounded, and it has already caused two bugs by being treated as one or
+        # the other. So the share that IS charted is stated, and the app can tell a mean
+        # taken over the whole pass from one taken over a third of it.
+        p2['charted_frac'] = round(float(ok.mean()), 3)
+
+    # ── THE NUMBER THAT DECIDES A SNAG. 2026-08-11. ────────────────────────────────
+    #
+    # Everything above measures the water ON the line. Ryan does not troll the line:
+    #
+    #     "remember i do not have gps steering... i am going to be weaving between those
+    #      lines no matter what we decide"     -- and, on how far: "call it no more than
+    #      50 meters"... later revised: "50 meters is probably too much lets try maybe
+    #      25m i dont think i sway 150 ft to a side"
+    #
+    # So the depth that matters is the SHALLOWEST WATER HE COULD REACH, not the depth
+    # underneath a centreline he cannot hold. On Wateree run #7 those differ by more
+    # than they have any right to: the line never comes shallower than 18.0 ft, and
+    # within 25 m there is 3.9 ft. A bait set from the first number is on the bottom.
+    #
+    # This is a MEASUREMENT and stays one -- no clearance, no margin, no bait depth.
+    # What clears what is a decision the app makes on the day, from the lure that is
+    # actually on the rod. See claude/WHAT_SMARTPLAN_IS_2026-08-09.md.
+    #
+    # Sampled across the pass at `envelope_step_m` and across the boat at
+    # `envelope_m` either side, perpendicular to travel. One raster call for the whole
+    # pass: the cost is a rounding error next to 250 smoothing iterations.
+    ev = _resample(piece, a.envelope_step_m)[0]
+    if len(ev) >= 2:
+        tan = np.zeros_like(ev)
+        tan[1:-1] = ev[2:] - ev[:-2]
+        tan[0] = ev[1] - ev[0]
+        tan[-1] = ev[-1] - ev[-2]
+        tl = np.hypot(tan[:, 0], tan[:, 1])
+        tl[tl == 0] = 1.0
+        nrm = np.stack([-tan[:, 1] / tl, tan[:, 0] / tl], axis=1)
+        offs = np.linspace(-a.envelope_m, a.envelope_m, 7)
+        probe = np.concatenate([ev + nrm * o for o in offs], axis=0)
+        v = np.asarray(depth.at_raw(probe), dtype=float).reshape(len(offs), len(ev))
+        # +inf FOR UNCHARTED, NOT NaN. Both give the same answer, but `nanmin` over a
+        # station where all seven probes are unsurveyed warns "All-NaN slice encountered"
+        # -- which is true, harmless, and fires thousands of times across a card-wide run,
+        # where it would drown a warning that actually mattered. +inf never wins a minimum,
+        # so a real depth beats it and an all-uncharted station stays +inf and falls out as
+        # -1 below. The condition is removed rather than the message suppressed.
+        lo = np.where(np.isfinite(v), v, np.inf).min(axis=0) / 3.048
+        # THREE PROFILES OUT OF ONE PROBE, because all three are already in `v` and the
+        # raster work is done. They answer three different questions and the app needs
+        # all of them:
+        #
+        #   shallow  what can snag a bait          -> the decision
+        #   deep     how much depth 25 m buys      -> how steep the edge is, and so how
+        #                                             much attention this pass wants
+        #   line     what the chart says HERE      -> the centreline, kept so the gap
+        #                                             between it and `shallow` is visible
+        #
+        # The middle offset IS the line, so it costs an index rather than a lookup.
+        hi = np.where(np.isfinite(v), v, -np.inf).max(axis=0) / 3.048
+        mid = v[len(offs) // 2] / 3.048
+        # -1 means nobody sounded it. NOT zero, and not the deepest thing nearby --
+        # uncharted has been mistaken for both in this file before and cost two bugs.
+        q = lambda arr: [(-1 if not np.isfinite(x) else int(round(x))) for x in arr]
+        env = q(lo)
+        p2['envelope_ft'] = env
+        p2['envelope_deep_ft'] = q(hi)
+        p2['envelope_line_ft'] = q(mid)
+        p2['envelope_m'] = a.envelope_m
+        p2['envelope_step_m'] = a.envelope_step_m
+        real = [x for x in env if x >= 0]
+        if real:
+            # THE HONEST SHALLOWEST, and it replaces the centreline one because the
+            # centreline one describes a boat that does not exist. The old value is kept
+            # under its own name rather than deleted -- it is still what the chart says
+            # about the line, and the gap between the two is worth being able to see.
+            p2['shallowest_line_ft'] = p2.get('shallowest_ft')
+            p2['shallowest_ft'] = float(min(real))
+
+    # Reachability is a property of a PASS, not of the run it was cut from: one half can
+    # sit in a pocket the other half can be reached from.
+    if idx is not None:
+        step = max(1, len(ll) // 8)
+        best = (None, float('inf'))
+        for c in ll[::step]:
+            j, d = idx.nearest(c)
+            if j is not None and d < best[1]:
+                best = (j, d)
+        j, d = best
+        if j is not None and d <= a.reach_m:
+            p2['reach_node'] = j
+            p2['reach_m'] = round(d, 1)
+            p2['routable'] = bool(mainset and j in mainset)
+        else:
+            p2.pop('reach_node', None)
+            p2.pop('reach_m', None)
+            p2['routable'] = False
+
+    # A seeded pass has no parent to inherit `relief` from -- see seed_relief().
+    if seeded:
+        rel, mix, deep = seed_relief(piece, depth, p2.get('depth_ft'), a.relief_m)
+        if rel:
+            p2['relief'] = rel
+            p2['relief_mix'] = mix
+            p2['deepest_within_m'] = deep
+
+    annotate(p2, ll, grid, cell, a.annotate_m, depth, lat0)
+
+
 def fit_pack(pack, a):
     t_pack = time.time()
     slug = os.path.basename(pack.rstrip('/\\'))
@@ -1696,144 +1845,38 @@ def fit_pack(pack, a):
             if len(pieces) > 1:
                 p2['pass'] = k + 1
                 p2['passes'] = len(pieces)
-            tt = _turns(_resample(piece, 10.0)[0])
-            st['corners_after'] += int(np.sum(tt > 12))
-            p2['worst_corner_deg'] = round(float(tt.max()), 1) if len(tt) else 0.0
-            # WHAT WATER IS ACTUALLY UNDER THIS PASS.
-            #
-            # Ryan, 2026-08-10: "if the app thinks the fish are somewhere between 17 and 25 then
-            # that means that the average depth of that trolling run needs to be between that
-            # number... if the fish are not deeper than 25 ft and i can safely stay below 25ft
-            # then the trolling run should not run deeper than 25 feet... and that number needs
-            # to be flexible because it will be different on every lake at different times of the
-            # year."
-            #
-            # WHICH water to troll is a fishing decision. It changes with the lake, the season and
-            # the species, and this script runs once, months before anyone knows what will be
-            # planned on it, so it cannot make that call and must not try. What it CAN do is the
-            # measurement, and that is all this is: the real chart depth every 10 m along the
-            # finished pass, reduced to numbers the app can decide with.
-            #
-            # `at_raw` and never `at`. `at` is the chart with thin water widened a cell for
-            # safety, which is the right input to a DECISION about where the boat may go and the
-            # wrong input to a REPORT of how deep the water is. Reporting off the eroded raster is
-            # what once had a contour "dipping to 5.9 ft" where the chart says 15.1.
-            #
-            # The 10 m spacing is even, which is what makes the mean length-weighted instead of
-            # vertex-weighted: a bend carries more vertices per metre and would otherwise pull the
-            # average toward itself.
-            draw = depth.at_raw(_resample(piece, 10.0)[0])
-            ok = ~np.isnan(draw)
-            if np.any(ok):
-                good = draw[ok]
-                p2['shallowest_ft'] = round(float(good.min()) / 3.048, 1)
-                p2['deepest_ft'] = round(float(good.max()) / 3.048, 1)
-                p2['mean_depth_ft'] = round(float(good.mean()) / 3.048, 1)
-                # Uncharted water is not shallow water and it is not deep water -- it is water
-                # nobody sounded, and it has already caused two bugs by being treated as one or
-                # the other. So the share that IS charted is stated, and the app can tell a mean
-                # taken over the whole pass from one taken over a third of it.
-                p2['charted_frac'] = round(float(ok.mean()), 3)
+            measure_pass(p2, piece, ll, depth, a, idx, mainset, grid, cell, lat0, st, st_seed)
+            out.append({'type': 'Feature', 'properties': p2,
+                        'geometry': {'type': 'LineString', 'coordinates': ll}})
 
-            # ── THE NUMBER THAT DECIDES A SNAG. 2026-08-11. ────────────────────────────────
-            #
-            # Everything above measures the water ON the line. Ryan does not troll the line:
-            #
-            #     "remember i do not have gps steering... i am going to be weaving between those
-            #      lines no matter what we decide"     -- and, on how far: "call it no more than
-            #      50 meters"... later revised: "50 meters is probably too much lets try maybe
-            #      25m i dont think i sway 150 ft to a side"
-            #
-            # So the depth that matters is the SHALLOWEST WATER HE COULD REACH, not the depth
-            # underneath a centreline he cannot hold. On Wateree run #7 those differ by more
-            # than they have any right to: the line never comes shallower than 18.0 ft, and
-            # within 25 m there is 3.9 ft. A bait set from the first number is on the bottom.
-            #
-            # This is a MEASUREMENT and stays one -- no clearance, no margin, no bait depth.
-            # What clears what is a decision the app makes on the day, from the lure that is
-            # actually on the rod. See claude/WHAT_SMARTPLAN_IS_2026-08-09.md.
-            #
-            # Sampled across the pass at `envelope_step_m` and across the boat at
-            # `envelope_m` either side, perpendicular to travel. One raster call for the whole
-            # pass: the cost is a rounding error next to 250 smoothing iterations.
-            ev = _resample(piece, a.envelope_step_m)[0]
-            if len(ev) >= 2:
-                tan = np.zeros_like(ev)
-                tan[1:-1] = ev[2:] - ev[:-2]
-                tan[0] = ev[1] - ev[0]
-                tan[-1] = ev[-1] - ev[-2]
-                tl = np.hypot(tan[:, 0], tan[:, 1])
-                tl[tl == 0] = 1.0
-                nrm = np.stack([-tan[:, 1] / tl, tan[:, 0] / tl], axis=1)
-                offs = np.linspace(-a.envelope_m, a.envelope_m, 7)
-                probe = np.concatenate([ev + nrm * o for o in offs], axis=0)
-                v = np.asarray(depth.at_raw(probe), dtype=float).reshape(len(offs), len(ev))
-                # +inf FOR UNCHARTED, NOT NaN. Both give the same answer, but `nanmin` over a
-                # station where all seven probes are unsurveyed warns "All-NaN slice encountered"
-                # -- which is true, harmless, and fires thousands of times across a card-wide run,
-                # where it would drown a warning that actually mattered. +inf never wins a minimum,
-                # so a real depth beats it and an all-uncharted station stays +inf and falls out as
-                # -1 below. The condition is removed rather than the message suppressed.
-                lo = np.where(np.isfinite(v), v, np.inf).min(axis=0) / 3.048
-                # THREE PROFILES OUT OF ONE PROBE, because all three are already in `v` and the
-                # raster work is done. They answer three different questions and the app needs
-                # all of them:
-                #
-                #   shallow  what can snag a bait          -> the decision
-                #   deep     how much depth 25 m buys      -> how steep the edge is, and so how
-                #                                             much attention this pass wants
-                #   line     what the chart says HERE      -> the centreline, kept so the gap
-                #                                             between it and `shallow` is visible
-                #
-                # The middle offset IS the line, so it costs an index rather than a lookup.
-                hi = np.where(np.isfinite(v), v, -np.inf).max(axis=0) / 3.048
-                mid = v[len(offs) // 2] / 3.048
-                # -1 means nobody sounded it. NOT zero, and not the deepest thing nearby --
-                # uncharted has been mistaken for both in this file before and cost two bugs.
-                q = lambda arr: [(-1 if not np.isfinite(x) else int(round(x))) for x in arr]
-                env = q(lo)
-                p2['envelope_ft'] = env
-                p2['envelope_deep_ft'] = q(hi)
-                p2['envelope_line_ft'] = q(mid)
-                p2['envelope_m'] = a.envelope_m
-                p2['envelope_step_m'] = a.envelope_step_m
-                real = [x for x in env if x >= 0]
-                if real:
-                    # THE HONEST SHALLOWEST, and it replaces the centreline one because the
-                    # centreline one describes a boat that does not exist. The old value is kept
-                    # under its own name rather than deleted -- it is still what the chart says
-                    # about the line, and the gap between the two is worth being able to see.
-                    p2['shallowest_line_ft'] = p2.get('shallowest_ft')
-                    p2['shallowest_ft'] = float(min(real))
-
-            # Reachability is a property of a PASS, not of the run it was cut from: one half can
-            # sit in a pocket the other half can be reached from.
-            if idx is not None:
-                step = max(1, len(ll) // 8)
-                best = (None, float('inf'))
-                for c in ll[::step]:
-                    j, d = idx.nearest(c)
-                    if j is not None and d < best[1]:
-                        best = (j, d)
-                j, d = best
-                if j is not None and d <= a.reach_m:
-                    p2['reach_node'] = j
-                    p2['reach_m'] = round(d, 1)
-                    p2['routable'] = bool(mainset and j in mainset)
-                else:
-                    p2.pop('reach_node', None)
-                    p2.pop('reach_m', None)
-                    p2['routable'] = False
-
-            # A seeded pass has no parent to inherit `relief` from -- see seed_relief().
-            if st_seed:
-                rel, mix, deep = seed_relief(piece, depth, p2.get('depth_ft'), a.relief_m)
-                if rel:
-                    p2['relief'] = rel
-                    p2['relief_mix'] = mix
-                    p2['deepest_within_m'] = deep
-
-            annotate(p2, ll, grid, cell, a.annotate_m, depth, lat0)
+    # THE THIRD KIND OF LANE: DOWN THE CHANNEL, on the waters Ryan trolls that way (CHANNEL_WATERS).
+    # A contour lane follows one depth; on a water whose bottom rises and falls along a narrow
+    # channel no depth runs far enough to be a pass. These are measured by measure_pass(), the same
+    # as every other lane, and they say what they are in `seed_kind`. See channel_lanes.py.
+    if slug in CHANNEL_WATERS:
+        cps, why = channel_passes(pack, depth, lat0, a, _resample, _seglens, _xy, depth.at_raw)
+        st['channel_passes'] = len(cps)
+        if why:
+            st['channel_note'] = why
+        for piece, info in cps:
+            ll = _ll(piece, lat0)
+            under = np.asarray(depth.at_raw(_resample(piece, 10.0)[0]), float)
+            under = under[np.isfinite(under)]
+            med = float(np.median(under)) / 3.048 if len(under) else 0.0
+            p2 = {'depth_dm': int(round(med * 3.048)), 'depth_m': round(med * 0.3048, 2),
+                  'depth_ft': round(med, 1), 'closed': False, 'fitted': True,
+                  'length_m': round(float(_seglens(piece).sum()), 1), 'vertices': len(ll),
+                  'seed': 'channel', 'seed_kind': 'channel', 'channel_from': info['launch'],
+                  'parent_length_m': info['parent_length_m']}
+            if info['passes'] > 1:
+                p2['pass'] = info['pass']
+                p2['passes'] = info['passes']
+            # Its corners are not counted in `corners_after`: that is compared with
+            # `corners_before`, which is the contours' own, and a lane with no contour behind it
+            # would read as smoothing that added corners.
+            was = st['corners_after']
+            measure_pass(p2, piece, ll, depth, a, idx, mainset, grid, cell, lat0, st, 'channel')
+            st['corners_after'] = was
             out.append({'type': 'Feature', 'properties': p2,
                         'geometry': {'type': 'LineString', 'coordinates': ll}})
 
@@ -1928,6 +1971,9 @@ def _absorb(r, rows, a, total):
                   if r.get('seeds_in') else tail),
                  _hms(r['pack_s']), r['raster_s'],
                  '  [grid %.0f m]' % r['grid_m'] if r['coarsened'] > 1.01 else ''), flush=True)
+        if 'channel_passes' in r:
+            print('         %-40s channel lanes: %d%s' % ('', r['channel_passes'],
+                  ('  (' + r['channel_note'] + ')') if r.get('channel_note') else ''), flush=True)
     # THE REPORT SURVIVES A KILL. Rewritten after every pack rather than once at the end: this
     # run is hours long, and a machine that reboots at hour six used to leave nothing behind.
     # The fitted packs themselves were always safe -- each writes its own file and
