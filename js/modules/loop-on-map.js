@@ -21,11 +21,10 @@
  *   4. "Build this loop" asks the model for baits, stops and times (buildFromPicked) and the plan
  *      replaces the loop on the map.
  *
- * THE LOOP IS STILL HIS FISH AND THE STRUCTURE. A turn he clicks fixes where that loop turns and
- * nothing else: the depth it rides is the water under his catches of this species (loopLine), the
- * lines out and home stay on it, every other loop of the day is still chosen for the most of his
- * catches and then charted structure (fishBeforeFilling), and the bar says how many of each a loop
- * passes. See plan-troll-loop.js.
+ * THE LOOP IS HIS FISH. Where his catches of this species are within reach, the day is lines between
+ * the places he caught them (fishLines() in plan-troll-loop.js; Ryan, 10/5: "It should never have been
+ * built around 1 depth"), and a turn he clicks is one more place the day goes to. Where none are, it is
+ * the contour loop, and a click is where a loop turns. The bar says what each loop passes.
  */
 
 import { state } from '../core/state.js';
@@ -281,7 +280,8 @@ function drawTurns() {
       : bad ? (before
         ? `Turn ${i + 1}: no loop gets here without going back over the loop before it, so the day is laid without it.`
         : `Turn ${i + 1}: no loop can get here from the ramp, so the day is laid without it.`)
-      : t.offM > 60 ? `Turn ${i + 1}: the loop turns ${t.offM} m from here, at the nearest water on its line (near ${line}).`
+      : t.offM > 60 ? (S.lineFt == null ? `Turn ${i + 1}: the loop goes to the nearest water it may use, ${t.offM} m from here.`
+        : `Turn ${i + 1}: the loop turns ${t.offM} m from here, at the nearest water on its line (near ${line}).`)
       : `Turn ${i + 1}: the loop turns here.`;
     m.bindTooltip(`${esc(tip)}<br><i>Click to take this turn off.</i>`, { direction: 'top', offset: [0, -12] });
     m.on('click', () => removeTurn(i));
@@ -380,15 +380,16 @@ function setBar(o) {
         + `background:${col};margin-right:6px;vertical-align:-1px"></span><b>Loop ${i + 1}</b>`
         // and the shallow edge of its own Contour alarm, which it never goes under
         + `${p.lineFt != null ? ` on ${Math.round(p.lineFt)} ft` : ''}`
-        + `${p.edgeFt != null ? `, never under ${Math.round(p.edgeFt)} ft` : ''}: ${mi(out)} out, ${mi(back)} home`
+        + `${p.lineFt == null && p.places ? ' through the places you caught them' : ''}`
+        + `${p.edgeFt != null && (p.lineFt != null || p.edgeFt > 0) ? `, never under ${Math.round(p.edgeFt)} ft` : ''}: ${mi(out)} out, ${mi(back)} home`
         // Every catch it goes past, the ones an earlier loop passed too -- going round again is the point.
         + ` · past ${s.passes != null ? s.passes : (s.fish || 0)} of your ${esc(snap.species || '')} catches and ${plural(s.structure || 0, 'charted mark')}</div>`;
     }).join('');
     const missed = S.turns.filter((t) => t.reached === false && t.passedBy == null).length;
     // WHICH LINE EACH LOOP RIDES -- his fish's line first, then round the same water a band over.
     const lines = [...new Set((loop.petals || []).map((p) => Math.round(p.lineFt != null ? p.lineFt : loop.lineFt)))];
-    body = `<div style="margin-top:6px">${mi(loop.trolledM)} trolled on ${lines.length === 1 ? `the ${lines[0]} ft line`
-        : `the ${lines.slice(0, -1).join(', ')} and ${lines[lines.length - 1]} ft lines`}: `
+    body = `<div style="margin-top:6px">${mi(loop.trolledM)} trolled ${loop.mode === 'fish' ? 'on lines between the places you caught them'
+        : `on ${lines.length === 1 ? `the ${lines[0]} ft line` : `the ${lines.slice(0, -1).join(', ')} and ${lines[lines.length - 1]} ft lines`}`}: `
       + `about ${hours(loop.minutes)} of your ${hours(loop.budgetMin)}.</div>`
       + byPetal
       + (missed ? `<div style="margin-top:6px;color:#ff8a80">${missed === 1 ? 'The turn' : `${missed} turns`} in red can't be reached, `

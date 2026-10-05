@@ -24,9 +24,9 @@
 //      them; and the assembler puts no transit between a leg and the one starting where it ends;
 //   7. "Troll it for me" lays the loop (not trollDay) without freezing the page, and "Plan it as one
 //      troll" waits for it;
-//   8. a loop that comes home over the water it went out on, or over water an earlier loop of the day
-//      trolled, does not fill the day with it, however many of his fish it passes: his 10/3 Wateree day laid live (the lake 3.2 ft down) was four loops, and
-//      three came home within 100 m of the way out for 81-88% of the way;
+//   8. his fish up a creek with room for one line: the day goes up it to them and back the only way
+//      there is, and says what it trolls twice (since 10/5, lines between his fish; until then the loop
+//      went the other way, because a loop home on its own water did not fill the day);
 //   9. the lines go in where a loop fits: the nearest deep-enough water to Short Stay on Moultrie at
 //      a 40 ft floor was one cell of a hole, and the day said no loop fits;
 //  10. the line is the depth with the most of HIS catches of the fish inside the 5 ft he steers either
@@ -174,9 +174,11 @@ test('7. Troll it for me lays the loop without freezing the page; Plan it as one
   assert.doesNotMatch(ui, /day = trollDay\(/);
 });
 
-test('8. a loop that comes home over its own water does not fill the day, whatever it passes', () => {
-  // West of the ramp, a creek 100 m wide and all 25 ft: one line fits, so a loop up it comes home
-  // on the way out. East, the channel, where out and back are two edges. His fish are all up the creek.
+test('8. his fish up a creek with room for one line: the day goes up it to them and says what it trolls twice', () => {
+  // West of the ramp, a creek 100 m wide and all 25 ft: one line fits. His fish are all up the creek.
+  // Until 10/5 the loop went east instead, a loop home on its own water counting for nothing; with lines
+  // between his fish the day goes where he caught them -- up the creek and back the only way there is,
+  // the way he trolls Bates Old River -- and the water trolled twice is measured and said.
   const DA2 = DA.map((f) => ({ ...f, geometry: { ...f.geometry,
     coordinates: [f.geometry.coordinates[0].map(([x, y]) => [Math.max(x, -80 + 8000 / KX), y])] } }));
   DA2.push(rect(0, W / 2 - 50, 8000, W / 2 + 50, 25));
@@ -184,8 +186,13 @@ test('8. a loop that comes home over its own water does not fill the day, whatev
   const r = trollLoop({ ...BASE, daFeatures: DA2, catches: creek });
   assert.ok(!r.error, r.error);
   const p = r.petals[0];
-  assert.ok(xOf(p.out[p.out.length - 1]) > 8000, `turned at x ${xOf(p.out[p.out.length - 1]).toFixed(0)} -- up the creek`);
-  assert.ok(r.sharedM < 0.1 * r.trolledM, `${r.sharedM} m of ${r.trolledM} m trolled twice`);
+  assert.ok(xOf(p.out[p.out.length - 1]) < 8000, `turned at x ${xOf(p.out[p.out.length - 1]).toFixed(0)} -- not up the creek`);
+  // three hours reach the three nearest of his four (the fourth is past half the day by water, and does
+  // not count), and the day goes to all three
+  assert.equal(r.score.fish, 3);
+  assert.equal(r.catches.outOfReach, 1);
+  // up the creek to x 3500 and back the same way: 4.5 km both ways, less the ends a way home may share
+  assert.ok(r.sharedM > 4500 - 4 * SAME_WATER_M, `${r.sharedM} m of ${r.trolledM} m trolled twice -- the creek both ways`);
   // What it measures: a way home laid on the way out is all shared but its two ends.
   const line = [at(8000, 300), at(4000, 300)];
   const m = sharedWaterM(line, [...line].reverse());

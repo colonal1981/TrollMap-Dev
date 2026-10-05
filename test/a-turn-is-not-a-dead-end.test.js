@@ -56,8 +56,11 @@ const inPocket = (pt) => xOf(pt) > POCKET[0] - 30 && xOf(pt) < POCKET[1] + 30 &&
 // His fish are at the head of the pocket, 500 m and more in from its mouth.
 const pocketFish = [1060, 1030, 1000].map((y) => ({ at: at(5000, y) }));
 
-test('the head of a pocket full of his fish is not where the loop turns, if it has to come back out on its own track', () => {
-  const r = trollLoop({ ...BASE, catches: pocketFish });
+// WITH HIS FISH IN THE POCKET the day goes in to them (lines between his fish, 2026-10-05): see
+// the-day-is-lines-between-his-fish.test.js. The rule here is the contour loop's, on water where none of
+// his catches are within reach.
+test('the head of a pocket is not where a contour loop turns, if it has to come back out on its own track', () => {
+  const r = trollLoop({ ...BASE });
   assert.ok(!r.error, r.error);
   const p = r.petals[0];
   const turn = p.out[p.out.length - 1];

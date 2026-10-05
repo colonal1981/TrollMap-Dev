@@ -37,23 +37,19 @@ const RAMP = at(8000, W - 10);
 const FISH = [8600, 9000, 9400].flatMap((x) => [at(x, yOf(25)), at(x, W - yOf(25))]).map((a) => ({ at: a, chartFt: 25 }));
 const turnOf = (p) => p.out[p.out.length - 1];
 
-test('the first loop rides the depth with the most of his fish; the next goes round the same water a band over', () => {
-  const r = trollLoop({ ramp: RAMP, daFeatures: DA, windowMin: 300, stopMin: 0, catches: FISH, minM: 400 });
+// WITH HIS FISH WITHIN REACH THE DAY IS LINES BETWEEN THEM (2026-10-05, the-day-is-lines-between-his-
+// fish.test.js). The concentric loops are the day on a water where none are: the line the research gives.
+test('the first loop rides the line it is given; a loop after it is mostly new water', () => {
+  // Going round the same water a band over was chosen for passing his fish again; with his fish within
+  // reach the day is lines between them now, so on this water the second loop is whichever is the most
+  // new water.
+  const r = trollLoop({ ramp: RAMP, daFeatures: DA, windowMin: 300, stopMin: 0, lineFt: 25, lineFrom: 'research', minM: 400 });
   assert.ok(!r.error, r.error);
-  assert.deepEqual(r.line, { lineFt: 25, from: 'catches', n: 6, inBand: 6, rangeFt: [25, 25] });
+  assert.deepEqual(r.line, { lineFt: 25, from: 'research', rangeFt: null });
   assert.ok(r.petals.length >= 2, `${r.petals.length} loops`);
-  const [first, second] = r.petals;
-  assert.equal(first.lineFt, 25);
-  assert.equal(Math.abs(second.lineFt - 25), 5, `second loop on ${second.lineFt} ft`);
-  // round the same water: it turns where the first did, within the distance a turn is looked for in
-  assert.ok(metresBetween(turnOf(first), turnOf(second)) <= 3 * SAME_WATER_M + 50,
-    `turns ${metresBetween(turnOf(first), turnOf(second)).toFixed(0)} m apart`);
-  // past his fish again: each fish once in the day, every time past it in passes
-  assert.equal(r.score.fish, 6);
-  assert.ok(r.score.passes >= 12, `${r.score.passes} times past them`);
-  // and mostly new water, the rule the day stops on
+  assert.equal(r.petals[0].lineFt, 25);
   for (const p of r.petals.slice(1)) assert.ok(p.sharedM <= p.m - p.sharedM, `${p.sharedM} of ${p.m} m twice`);
-  assert.match(linesSaid(r), /^the 25 ft line; loop 2 round the same water on (20|30) ft/);
+  assert.match(linesSaid(r), /^the 25 ft line; loop 2 /);
 });
 
 test('a loop on another line may cross the first; what the two share is counted instead', () => {
@@ -78,8 +74,9 @@ test('his catches count only on this water and within reach of the ramp by water
   assert.equal(r.catches.reachM, 4828);
   assert.deepEqual({ used: r.catches.used, offWater: r.catches.offWater, outOfReach: r.catches.outOfReach },
                    { used: 6, offWater: 2, outOfReach: 2 });
-  // the 45 ft fish out of reach did not move the line
-  assert.equal(r.lineFt, 25);
+  // and the day is lines between the six, which are all it goes to
+  assert.equal(r.mode, 'fish');
+  assert.equal((r.places || []).reduce((a, p) => a + p.fish, 0), 6);
 });
 
 test('of two days past as many of his fish, the one past them more often wins; then the one that fills', () => {
@@ -95,7 +92,7 @@ test('of two days past as many of his fish, the one past them more often wins; t
 });
 
 test('a loop after the first is one he would fish: his shortest pass at least, and mostly new water', () => {
-  const r = trollLoop({ ramp: RAMP, daFeatures: DA, windowMin: 300, stopMin: 0, catches: FISH, minM: 3000 });
+  const r = trollLoop({ ramp: RAMP, daFeatures: DA, windowMin: 300, stopMin: 0, lineFt: 25, minM: 3000 });
   assert.ok(!r.error, r.error);
   for (const p of r.petals.slice(1)) assert.ok(p.m >= 6000, `a ${p.m} m loop under two 3 km passes`);
   const src = read('../js/modules/plan-troll-loop.js');
@@ -109,7 +106,7 @@ test('the status line and the bar say each loop\'s line and its alarm edge, not 
   assert.doesNotMatch(ui, /never over water under/);
   assert.doesNotMatch(lom, /never over water `/);
   assert.ok(ui.includes('the depth with the most of your ${ln.n} ${sp} catch'));
-  assert.ok(lom.includes("`${p.edgeFt != null ? `, never under ${Math.round(p.edgeFt)} ft` : ''}: ${mi(out)} out, ${mi(back)} home`"));
+  assert.ok(lom.includes("`${p.edgeFt != null && (p.lineFt != null || p.edgeFt > 0) ? `, never under ${Math.round(p.edgeFt)} ft` : ''}: ${mi(out)} out, ${mi(back)} home`"));
   assert.ok(ui.includes('no loop goes shallower than the shallow edge of its own Contour alarm'));
   // the planned lake's chart goes under its loop, so the catch markers are judged against it
   assert.ok(lom.includes('if (now.lake) window.loadSupplementalForLake?.(now.lake);'));
@@ -138,7 +135,8 @@ test('a loop does not cut across water shallower than its alarm edge to reach a 
   const r = trollLoop({ ramp, daFeatures: DA2, windowMin: 720, stopMin: 0, catches, via, maxPetals: 1 });
   assert.ok(!r.error, r.error);
   const p = r.petals[0];
-  assert.equal(p.lineFt, 25);
+  // his fish over 25 ft: the loop's edge is 20, so the 10 ft flat is closed to it
+  assert.equal(p.edgeFt, 20);
   // nothing of the loop is over the flat west of the join
   const yOfPt = (pt) => (pt[1] - LAT0) * KY, xOfPt = (pt) => (pt[0] + 80) * KX;
   for (const half of [p.out, p.back]) for (const pt of half) {
@@ -172,28 +170,17 @@ test('the loop on the day\'s line past the most of his fish is fished first; a l
   assert.ok(src.includes('q.sharedM = sharedWaterM(q.out, q.back, sameM, earlierOf(seq.slice(0, i), q.lineFt));'));
 });
 
-test('a loop is not added to water none of his fish came from, whatever it passes by the ramp', () => {
-  // Ryan, 10/4, on Moultrie from Short Stay: "the problem is that the entire loop goes to a section of
-  // water where i have caught exactly 0 fish". The levee loop passed six fish -- all by the ramp, on
-  // its way out and back in -- and miles of water with none.
-  // One fish 300 m west of the ramp on the edge a westward loop leaves by; two far out to the east. His
-  // shortest pass is 3 km, so a loop west passes the fish by the ramp in its first 300 m and then
-  // trolls 5 km of water with none. Laid before this rule: a loop east to 11.4 km past one far fish,
-  // then that loop west to 4.3 km.
+test('his fish by the ramp and his fish far out are both on the day: the lines go to every place the time holds', () => {
+  // Ryan, 10/4: "the problem is that the entire loop goes to a section of water where i have caught exactly
+  // 0 fish". With lines between his fish (10/5) a loop goes nowhere else: one fish 300 m west of the ramp,
+  // two far out to the east, and the day is lines through all three.
   const near = { at: at(7700, W - yOf(25)), chartFt: 25 };
   const far = [11500, 11900].map((x) => ({ at: at(x, W - yOf(25)), chartFt: 25 }));
   const r = trollLoop({ ramp: RAMP, daFeatures: DA, windowMin: 300, stopMin: 0, catches: [near, ...far], minM: 3000 });
   assert.ok(!r.error, r.error);
+  assert.equal(r.mode, 'fish');
+  assert.equal(r.score.fish, 3);
   const xOf = (pt) => (pt[0] + 80) * KX;
-  assert.ok(r.petals.length >= 1);
-  // every loop of the day turns east, out where the far fish are; none goes west for the one by the ramp
-  for (const p of r.petals) assert.ok(xOf(turnOf(p)) > 8000, `a loop turns at x ${xOf(turnOf(p)).toFixed(0)}`);
-  assert.equal(r.score.fish, 2);
-  const src = read('../js/modules/plan-troll-loop.js');
-  assert.ok(src.includes('if (petals.length && !asked && pt.toFish === false) break;'));
-  assert.ok(src.includes('.filter((a) => a.atM >= outLen / 2 && a.atM <= outLen + backLen / 2).length;'));
-  // and where the line's own way home will not fit, the cheapest one that does crosses deeper water
-  assert.ok(src.includes('let lo = 0, hi = Math.ceil((maxD - ctx.lineFt) / steer), best = null, bestShort = null;'));
-  // and where no turn by the water's shape goes to his fish, his fish are turns too
-  assert.ok(src.includes("if (!catches.length || (byShape && byShape.toFish !== false)) return byShape;"));
+  // and nothing of it is out past the far fish
+  for (const p of r.petals) for (const pt of p.out.concat(p.back)) assert.ok(xOf(pt) < 12100, `out to x ${xOf(pt).toFixed(0)}`);
 });

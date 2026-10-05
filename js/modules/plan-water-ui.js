@@ -1480,6 +1480,33 @@ export async function trollForMe(opts = {}) {
     ? `. ${cu.outOfReach} more of your ${sp} catches on this chart ${cu.outOfReach === 1 ? 'is' : 'are'} farther by water than half `
       + `the day reaches (${fmtMi(cu.reachM)}), so ${cu.outOfReach === 1 ? 'it does' : 'they do'} not count`
     : '';
+  // LINES BETWEEN HIS FISH (plan-troll-loop.js fishLines()): no line depth to name, so it says the places.
+  if (loop.mode === 'fish') {
+    const edges = [...new Set(loop.petals.map((p) => Math.round(p.edgeFt)))];
+    const range = ln.rangeFt ? ` over ${Math.round(ln.rangeFt[0])}–${Math.round(ln.rangeFt[1])} ft of water` : '';
+    say(`${n} loop${n === 1 ? '' : 's'} from ${T.rampName || 'the ramp'} and back: ${fmtMi(loop.trolledM)} trolled, `
+      + `${fmtMi(loop.runM)} with the lines up (out of the cove and back in)`
+      + (loop.sharedM > 0 ? `; ${fmtMi(loop.sharedM)} of it is back over water the day already trolled` : '')
+      + `. Lines between the places you caught ${sp}${range}, the shortest way round them by water, `
+      + 'not one depth line'
+      + (loop.placesLeftOut ? `; ${loop.placesLeftOut} more place${loop.placesLeftOut === 1 ? '' : 's'} of yours did not fit in the day` : '')
+      // Each line between two places keeps above the water his fish at its two ends came out of, less his band.
+      + `. No line between two places goes shallower than the water the fish at either end came out of, less the ${steer} ft `
+      + 'you steer within'
+      + (edges.some((e) => e > 0) ? ` (never under ${Math.min(...edges.filter((e) => e > 0))} ft anywhere)` : '')
+      + (zones ? `; out of ${zones} keep-out zone${zones === 1 ? '' : 's'}` : '')
+      + `. It passes ${loop.score.fish} of your ${cu.used} ${sp} catch${cu.used === 1 ? '' : 'es'} within reach`
+      + ` and ${loop.score.structure} charted mark${loop.score.structure === 1 ? '' : 's'}`
+      + (via.length ? `, and goes to the ${via.length === 1 ? 'water' : `${via.length} places`} you ${fromMap ? 'clicked' : 'ticked'}` : '')
+      + leftOut
+      + (guide ? `. ${onGuide} of its ${pieces.length} legs cross the ${guide[0]}–${guide[1]} ft of water the research says the fish are over` : '')
+      + (loop.fillsTime ? '' : `. That is about ${fmtHours(loop.minutes)} of the ${fmtHours(loop.budgetMin)} you have: the rest of the day is yours, to go back over what produces`)
+      + (loop.coveCrossesShore ? `. The way out of the cove runs past charted docks and shore lines that close it on the app's ${loop.grid && loop.grid.cellM ? `${loop.grid.cellM} m` : ''} grid, so it is drawn on the depth chart alone — steer it by eye` : '')
+      + (fromMap ? '.' : '. Tick a spot or a piece and press it again to make the day go there.'));
+    T.lastLoop = loop;
+    T.lastVia = via;
+    return loop;
+  }
   say(`${n} loop${n === 1 ? '' : 's'} from ${T.rampName || 'the ramp'} and back: ${fmtMi(loop.trolledM)} trolled, `
     + `${fmtMi(loop.runM)} with the lines up (out of the cove and back in)`
     // Where a line had to come back within 100 m of water the day already trolled, it says how much.
