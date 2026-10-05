@@ -29,6 +29,7 @@ const RAW = {
   lake_marion: row('Lake Marion', 'Lake Marion (Clarendon Co, SC)', ['Lake Marion, SC'], 80918.9, -80.38416, 33.56141, 'Clarendon'),
   cedar_creek_reservoir_2: row('Cedar Creek Reservoir', 'Cedar Creek Reservoir (Chester Co, SC)', [], 662, -81.0, 34.6, 'Chester'),
   cedar_creek: row('Cedar Creek', 'Cedar Creek (Richland Co, SC)', ['Cedar Creek, SC'], 275.8, -80.8312, 34.01217, 'Richland'),
+  falls_lake: { ...row('Falls Lake', 'Falls Lake (Wake Co, NC)', ['Falls Lake, NC'], 11240, -78.68, 36.01, 'Wake'), state: 'NC' },
 };
 
 globalThis.window = globalThis;
@@ -41,7 +42,8 @@ const { catchWaters, catchesGpx } = await import('../js/utils/catch-gpx.js');
 // What resolveR2Key() answers with no registry -- the curated map and the fuzzy pass alone.
 const NAMES = ['Lake Marion, SC', 'Lake Marion (Clarendon Co, SC)', 'Ashwood Lake (Lee Co, SC)', 'Lake Ashwood, SC',
   'Bates Old River (Richland/Calhoun Co, SC)', 'Bates Old River (Richland Co, SC)', 'Wittee Lake (Williamsburg Co, SC)',
-  'Wee Tee Lake, SC', 'Lowthers Lake (Darlington Co, SC)', 'Louthers Lake, SC', 'Wateree River', 'Lake Juniper, SC'];
+  'Wee Tee Lake, SC', 'Lowthers Lake (Darlington Co, SC)', 'Louthers Lake, SC', 'Wateree River', 'Lake Juniper, SC',
+  'Falls Lake (Wake Co, NC)', 'Great Falls Reservoir'];
 const before = Object.fromEntries(NAMES.map((n) => [n, resolveR2Key(n)]));
 await loadLakeRegistry();
 
@@ -61,14 +63,28 @@ test('every name his journal gives one water resolves to that water', () => {
   assert.equal(resolveR2Key('Lake Juniper, SC'), null);
 });
 
-test('the registry pass only turns a null into a water: no answer given before it changes', () => {
-  for (const n of NAMES) if (before[n] != null) assert.equal(resolveR2Key(n), before[n], n);
-  assert.equal(before['Ashwood Lake (Lee Co, SC)'], null);   // the defect, before the registry pass
-  // It is the last thing the resolver does.
+test('once the registry has loaded it answers before the fuzzy pass, and its answer is final', () => {
+  // Ryan, 10/5: "Lake name lookup you can work on". Measured over the 3,396 names the app holds, the
+  // fuzzy pass's own answers were a different water from the registry's 27 times and a water the
+  // registry does not know 18 times -- 44 of the 45 wrong. See Pass 5 in lake-keys.js.
+  //
+  // The exact passes above it are untouched: a name the curated map answers reads the same.
+  assert.equal(before['Lake Marion, SC'], 'lake_marion');
+  assert.equal(resolveR2Key('Lake Marion, SC'), 'lake_marion');
+  // The fuzzy pass, alone, sends Falls Lake's own display name to Blewett Falls ("blewett falls"
+  // contains "falls" and is the longer key) -- the live defect. The registry knows the water.
+  assert.equal(before['Falls Lake (Wake Co, NC)'], 'blewett_falls_lake');
+  assert.equal(resolveR2Key('Falls Lake (Wake Co, NC)'), 'falls_lake');
+  // A name the registry does not carry resolves to nothing, not to the nearest-sounding water:
+  // Great Falls is on the Catawba in South Carolina, Falls Lake is near Raleigh.
+  assert.equal(before['Great Falls Reservoir'], 'falls_lake');
+  assert.equal(resolveR2Key('Great Falls Reservoir'), null);
+  // The order, in the code: the registry is asked before the fuzzy loop, only once it has loaded.
   const src = fs.readFileSync(new URL('../js/data/lake-keys.js', import.meta.url), 'utf8');
   const body = src.slice(src.indexOf('export function resolveR2Key('));
-  assert.ok(body.indexOf('if (best) return best;') < body.indexOf('const rec = lakeRecordFor(trimmed);'));
-  assert.match(body, /const rec = lakeRecordFor\(trimmed\);\s*return \(rec && rec\.slug\) \|\| null;\s*\}/);
+  const reg = body.indexOf('if (reg && reg.loaded) {');
+  assert.ok(reg > 0 && reg < body.indexOf('for (const [kn, v, kStates] of _NORM_MAP)'));
+  assert.match(body, /if \(reg && reg\.loaded\) \{\s*const rec = lakeRecordFor\(trimmed\);\s*return \(rec && rec\.slug\) \|\| null;\s*\}/);
 });
 
 test('the GPX picker lists each water once, under the spelling he used most', () => {

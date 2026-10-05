@@ -232,7 +232,8 @@ const KNOWN_2026_08_14 = new Set([
   'Holbrook Pond|coast_ossabaw_st_catherines_ga',
   'Jones Creek|coast_ossabaw_st_catherines_ga',
   'Louis Scott Stell Lake|coast_savannah_ga',
-  'New River|coast_topsail_new_river_nc',
+  // 'New River|coast_topsail_new_river_nc' stopped firing 2026-10-05 and left, as this list asks:
+  // water-aliases.js, regenerated after the 10/5 registry rebuild, no longer points it there.
   'Riceboro Creek|coast_ossabaw_st_catherines_ga',
   'Richmond Hill Pond, West|coast_ossabaw_st_catherines_ga',
   'South Newport River|coast_ossabaw_st_catherines_ga',

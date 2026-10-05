@@ -13,8 +13,9 @@
  *      suffixes, and compares core name tokens. Handles word-order inversions
  *      ("Allatoona Lake" ↔ "Lake Allatoona"), all-caps, abbreviations, and
  *      variant suffixes without requiring explicit entries for every variant.
- *   5. The registry's own resolver (lakeRecordFor), only where every pass above
- *      answered nothing. See the comment at the end of resolveR2Key().
+ *   5. The registry's own resolver (lakeRecordFor). ONCE THE REGISTRY HAS LOADED it runs
+ *      BEFORE Pass 4 and its answer is final, null included -- Pass 4 then never runs. Before
+ *      it loads, and in the Worker, Pass 4 is all there is. See the comment at Pass 5.
  *
  * Only add explicit entries where normalization alone produces a wrong or
  * non-unique match (e.g. "Falls Lake" vs "Blewett Falls Lake"), or where the
@@ -22,7 +23,7 @@
  * catch-alls, border lakes with fixed canonical IDs).
  */
 import { resolveWaterKey } from './water-aliases.js';
-import { lakeRecordFor } from './lake-registry.js';
+import { lakeRecordFor, getLoadedRegistry } from './lake-registry.js';
 
 export const LAKE_NAME_TO_R2_KEY = {
   // ── SC Lakes ────────────────────────────────────────────────────────────────
@@ -521,7 +522,50 @@ export function resolveR2Key(displayName) {
   const placed = resolveWaterKey(trimmed);
   if (placed) return placed;
 
-  // Pass 4 — normalized fuzzy match
+  // Pass 5 — THE REGISTRY, ONCE IT HAS LOADED, AND ITS ANSWER IS FINAL.
+  //
+  // Ryan, 2026-10-04, on the catch GPX picker: "we need to fix the multiple name thing... both
+  // bates and ashwood are listed under 2 different names... they are the same lake". Two import
+  // paths name a catch's water two ways: the access index's feed spelling ("Lake Ashwood, SC") and
+  // the registry's display name ("Ashwood Lake (Lee Co, SC)"), plus older registry names ("Bates Old
+  // River (Richland/Calhoun Co, SC)") and bare river names ("Wateree River"). This function knew the
+  // first and not the rest. `7a2c2af` made lakeRecordFor() -- the registry's own resolver: exact
+  // slug, exact display name, then every name and legacy name with the county stamp removed,
+  // state-keyed first, null rather than a guess -- the last pass, answering only where every pass
+  // above it had answered nothing.
+  //
+  // THEN IT WENT AHEAD OF THE FUZZY PASS, 2026-10-05, on Ryan's "Lake name lookup you can work on".
+  // Measured in the app, over the 3,396 names it actually holds -- every access-index name, every
+  // registry name and legacy name, the curated map, his 426-catch journal, and each with its state
+  // suffix taken off -- with Pass 4 and without it:
+  //
+  //     3,351  the same answer
+  //        27  Pass 4 answered a DIFFERENT water than the registry, every one a registry row's own
+  //            name: "Falls Lake (Wake Co, NC)" -> blewett_falls_lake, "Lake Robinson (Greer)" ->
+  //            the Darlington Lake Robinson, "Lake Cherokee (Cherokee Co, SC)" -> Cherokee Lake in
+  //            Tennessee, "Gillis Public Fishing Area Lower Lake" -> fishing_creek_reservoir,
+  //            "Stuckey Boone Lake" -> boone_lake, "Mountain Lake" -> mountain_island_lake
+  //        18  Pass 4 answered where the registry says no such water: 17 wrong waters --
+  //            "Great Falls Reservoir" -> Falls Lake NC, "Tallulah Falls Lake" -> Falls Lake NC,
+  //            "Normandy Reservoir" (TN) -> Lake Norman, "LAKE JAMES TAILRACE, NC" -> lake_james,
+  //            "HIGH ROCK GAME LAND POND, NC" -> high_rock_lake -- and one stripped variant,
+  //            "Lake Norman (South)", that no source in the app actually carries
+  //
+  // A substring match will always beat an empty answer, and on these names that is all it did. So
+  // once the registry is in hand it decides, and a name it does not know resolves to nothing --
+  // the same answer lakeRecordFor() gives the conditions strip and the catch journal, which is the
+  // point: two resolvers asked one question should not give two waters.
+  //
+  // BEFORE IT LOADS, AND IN THE WORKER, NOTHING CHANGES. The registry is empty there
+  // (getLoadedRegistry().loaded is false), so Pass 4 runs exactly as before -- the Worker's
+  // limnology bbox fallback and every test without a registry read the same answers.
+  const reg = getLoadedRegistry();
+  if (reg && reg.loaded) {
+    const rec = lakeRecordFor(trimmed);
+    return (rec && rec.slug) || null;
+  }
+
+  // Pass 4 — normalized fuzzy match. ONLY BEFORE THE REGISTRY HAS LOADED; see Pass 5 above.
   // Derives R2 key from core lake name, handling word-order inversions,
   // all-caps, variant suffixes, and vendor naming differences automatically.
   // Prefers longer canonical key matches to avoid short tokens over-matching.
@@ -590,33 +634,5 @@ export function resolveR2Key(displayName) {
       }
     }
   }
-  if (best) return best;
-
-  // Pass 5 — THE REGISTRY'S OWN NAMES, WHICH THIS FUNCTION NEVER LEARNED.
-  //
-  // Ryan, 2026-10-04, on the catch GPX picker: "we need to fix the multiple name thing... both
-  // bates and ashwood are listed under 2 different names... they are the same lake... same with
-  // wittee and wee tee". Two import paths name a catch's water two ways: the access index's feed
-  // spelling ("Lake Ashwood, SC", "Wee Tee Lake, SC") and the registry's display name ("Ashwood
-  // Lake (Lee Co, SC)", "Wittee Lake (Williamsburg Co, SC)"). This function knew the first, from
-  // registerR2Key(), and not the second: access-index.js registers ONE name per water, the one
-  // its picker offers, so a registry display name -- the name the registry itself gives the
-  // water -- fell through every pass to null. So did an older registry name ("Bates Old River
-  // (Richland/Calhoun Co, SC)", 46 of his catches) and a bare river name ("Wateree River",
-  // "Cooper River", "Santee River").
-  //
-  // lakeRecordFor() is the registry's resolver: exact slug, exact display name, then its
-  // normalised names WITH the county stamp removed, over every name and legacy name each row
-  // carries, state-keyed first. It returns null rather than guessing. Its known limit is stated
-  // where it lives (three same-state pairs no key can separate); a full display name still
-  // reaches the right one of those, by the exact display-name lookup.
-  //
-  // LAST, SO IT CANNOT CHANGE AN ANSWER THIS FUNCTION ALREADY GIVES -- it only turns a null into
-  // a water. Measured over the 41 names his 426-catch journal holds, against the live registry:
-  // 26 answered the same by both resolvers, 11 nulls became waters (63 catches), 4 stay null
-  // (no registry row: Lake Juniper, Great Falls Reservoir, McEntire JNGB Pond, South East Park
-  // Pond), 0 changed. Every registry row is shipped (352 of 352), so a slug from here has a pack.
-  // Before the registry loads, and in the Worker, it has no rows and answers nothing.
-  const rec = lakeRecordFor(trimmed);
-  return (rec && rec.slug) || null;
+  return best;
 }

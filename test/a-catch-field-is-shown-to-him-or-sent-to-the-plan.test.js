@@ -60,19 +60,17 @@ const SHOWN = {
   structure: "the depth text on the card and the pin: how far off the contour a looked-up depth was (catch-depth.js)",
   waypoint: 'garmin-marks.js: a mark he dropped at a catch is not asked about again',
 };
-// NEITHER, AND HIS CALL: gathered, written to the CSV export, and read by nothing that plans or shows.
-// Either it adds to a plan and gets wired, or it should not be gathered (his rule). Listed so it is a
-// line someone has to justify, not a silence.
-const NEITHER = {
-  importedFrom: 'which import path wrote the row; CSV export only',
-  sourcePath: 'the photo\'s folder on his PC; CSV export only',
-  data_generation: 'gen1/gen2 by import path; nothing reads it',
-  trollmap_tags: "the photo ID model's tags; nothing reads them",
-};
+// NEITHER: gathered and read by nothing that plans or shows. Empty since 2026-10-05, when the four that
+// stood here stopped being gathered (Ryan: "Catch fields that aren't used and shouldn't be used should
+// disappear if they do not help the app"). A new field with no destination goes HERE only as a line
+// someone has to justify -- and then either gets wired or is not gathered.
+const NEITHER = {};
+// No longer gathered on a confirmed catch. Catches saved before may still carry them; nothing reads them.
+const NOT_GATHERED = ['importedFrom', 'sourcePath', 'data_generation', 'trollmap_tags'];
 
 test('every field the journal saves on a catch has a destination', () => {
   const fields = savedFields();
-  assert.ok(fields.size >= 20, [...fields].join(','));
+  assert.ok(fields.size >= 15, [...fields].join(','));   // the parser found the record
   const known = new Set([...TO_THE_PLAN, ...Object.keys(SHOWN), ...Object.keys(NEITHER)]);
   const unclassified = [...fields].filter((f) => !known.has(f));
   assert.deepEqual(unclassified, [], `a catch field with no destination: ${unclassified.join(', ')}`);
@@ -126,12 +124,25 @@ test('the lead is not gathered', () => {
   assert.doesNotMatch(journal, /lead: c\.lead/);
 });
 
-test('a field listed as read by nothing is still read by nothing', () => {
-  // So wiring one of them moves it out of NEITHER instead of leaving the list wrong.
+test('a field nothing reads is not gathered', () => {
+  // Ryan, 10/5: "Catch fields that aren't used and shouldn't be used should disappear if they do not help
+  // the app". The four that sat in NEITHER, and every part of `verification` but the length the card shows.
+  const fields = savedFields();
+  for (const f of NOT_GATHERED) assert.ok(!fields.has(f), `${f} is still saved on a catch`);
+  const entry = journal.slice(journal.indexOf('const entry = {', journal.indexOf('async function approveQueueItem')));
+  assert.match(entry, /verification: \{ length: q\.verified\.length \? 'human-visual' : 'ai-unverified' \},/);
+  for (const sub of ['reviewed', 'onBoard', 'sourceModel', 'approvedAt', 'length_source', 'board_detected', 'data_quality']) {
+    assert.doesNotMatch(entry.slice(0, entry.indexOf('};')), new RegExp(`\\b${sub}:`), `verification.${sub} is still saved`);
+  }
+  // the journal's CSV export carries none of them, and a manual catch is not stamped
+  const csv = journal.slice(journal.indexOf('function exportJournalCsv('), journal.indexOf('function renderAnalytics('));
+  for (const f of ['sourcePath', 'importedFrom', 'speciesVerification']) assert.doesNotMatch(csv, new RegExp(`\\b${f}\\b`));
+  assert.doesNotMatch(journal.slice(journal.indexOf('async function addManualCatch(')), /^[^\n]*importedFrom: 'manual'/);
+  // and nothing that plans or shows reads them -- so a catch saved before that still carries them is inert
   const all = fs.readdirSync(new URL('../js/modules/', import.meta.url))
     .filter((f) => f.endsWith('.js') && f !== 'catch-journal.js')
     .map((f) => read(`../js/modules/${f}`)).join('\n');
   for (const f of ['importedFrom', 'data_generation', 'trollmap_tags']) {
-    assert.ok(!new RegExp(`\\.${f}\\b`).test(all), `${f} is read now: move it out of NEITHER`);
+    assert.ok(!new RegExp(`\\.${f}\\b`).test(all), `${f} is read somewhere now`);
   }
 });

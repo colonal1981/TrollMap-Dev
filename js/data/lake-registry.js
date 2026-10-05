@@ -528,8 +528,24 @@ function withoutNotes(name, slug) {
 function buildNormIndexes() {
   _normIndex = new Map();
   _normStateIndex = new Map();
-  for (const r of registry.list) {
-    for (const n of [r.name, r.displayName, r.legacyDisplayName, ...r.legacyDisplayNames]) {
+  // A WATER'S OWN NAME OUTRANKS ANOTHER WATER'S ALIAS. Two passes: every row's own names first
+  // (`name`, `displayName`, and `legacyDisplayName`, the pre-county "Name, ST" of that same name),
+  // then every row's `legacyDisplayNames` -- the former names, the names in lake_display_names.json,
+  // and the names the ramp feeds hang on a water -- each only into a key nobody's own name holds.
+  //
+  // One pass, largest-first, let a big water's ALIAS take a small water's own name. Found
+  // 2026-10-05 by `lint:smoke` after Ryan's registry rebuild refreshed the feed names: SCDNR files a
+  // Charleston ramp under "Goose Creek", which went onto coast_charleston_sc, normalised to the same
+  // key as the row actually called Goose Creek Reservoir, and won it by size -- so "Goose Creek
+  // Reservoir, SC" opened the Charleston coastal zone. "Little River" did the same to "Little River
+  // Reservoir, NC" from pee_dee_river_2. Within each pass first-writer-wins over the same
+  // shipped-then-largest list, so a 30-acre namesake still cannot take a reservoir's own name.
+  const tiers = [
+    (r) => [r.name, r.displayName, r.legacyDisplayName],
+    (r) => r.legacyDisplayNames || [],
+  ];
+  for (const namesOf of tiers) for (const r of registry.list) {
+    for (const n of namesOf(r)) {
       if (!n) continue;
       const k = normName(n);
       if (!k) continue;

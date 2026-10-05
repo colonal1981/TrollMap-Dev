@@ -965,22 +965,16 @@ async function approveQueueItem(q) {
     weather: q.weather || null,
     structure: q.structure || null,
     sourceFile,
-    sourcePath: q.sourcePath || '',
-    importedFrom: q.importedFrom || 'review-queue',
-    verification: {
-      reviewed: true,
-      species: q.verified.species ? 'human-reviewed' : 'ai',
-      length: q.verified.length ? 'human-visual' : 'ai-unverified',
-      onBoard: q.verified.onBoard,
-      sourceModel: q.ai?.model || '',
-      approvedAt: new Date().toISOString(),
-      // v2 extended
-      length_source: q.ai?.length_source || '',
-      board_detected: q.ai?.board_detected || false,
-      data_quality: q.ai?.data_quality || null,
-    },
-    data_generation: q.importedFrom === 'nightly_upload' ? 'gen2_instrumented' : 'gen1_historical',
-    trollmap_tags: q.ai?.trollmap_tags || [],
+    // HOW THE LENGTH WAS READ, the one part of the review the card shows ("length: human-visual").
+    //
+    // NOT GATHERED, Ryan 2026-10-05: *"Catch fields that aren't used and shouldn't be used should
+    // disappear if they do not help the app"*. Gone from a saved catch: `importedFrom` and `sourcePath`
+    // (the import path and the photo's folder on his PC -- the review queue still uses both to find a
+    // photo, a confirmed catch never did), `data_generation`, `trollmap_tags` (the photo model's tags),
+    // and from `verification` everything but `length`: reviewed, species, onBoard, sourceModel,
+    // approvedAt, length_source, board_detected, data_quality. Nothing shown to him or sent to a plan
+    // read any of them. Catches saved before keep what they carry; nothing reads it.
+    verification: { length: q.verified.length ? 'human-visual' : 'ai-unverified' },
   };
   if (existingIx >= 0) catches[existingIx] = entry; else catches.unshift(entry);
   q.status = 'imported'; q.updatedAt = new Date().toISOString();
@@ -1290,8 +1284,7 @@ function exportJournalCsv() {
     waterTempF: c.waterTempF ?? '',
     lat: c.lat, lon: c.lon, lure: c.lure, notes: c.notes,
     tempF: c.weather?.tempF ?? '', windMph: c.weather?.windMph ?? '', windDir: c.weather?.windDir ?? '', cloudPct: c.weather?.cloudPct ?? '', pressureHpa: c.weather?.pressureHpa ?? '', moonPhase: c.weather?.moonPhase || '',
-    sourceFile: c.sourceFile, sourcePath: c.sourcePath, importedFrom: c.importedFrom,
-    lengthVerification: c.verification?.length || '', speciesVerification: c.verification?.species || ''
+    sourceFile: c.sourceFile, lengthVerification: c.verification?.length || ''
   }));
   downloadCsv('trollmap_catch_journal.csv', rows);
 }
@@ -1313,7 +1306,7 @@ function renderAnalytics(body) {
 async function addManualCatch() {
   const species = prompt('Species?'); if (species === null) return;
   const length = prompt('Length inches?') || '';
-  getCatches().unshift({ species, length, date: new Date().toISOString().slice(0,10), time: new Date().toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit'}), notes: '', importedFrom: 'manual' });
+  getCatches().unshift({ species, length, date: new Date().toISOString().slice(0,10), time: new Date().toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit'}), notes: '' });
   await saveCatches(); renderCatchSubtab();
 }
 
