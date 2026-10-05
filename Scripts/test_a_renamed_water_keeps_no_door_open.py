@@ -28,7 +28,7 @@ because the bug was that they were fixed one at a time.
 
 Personal use only, not for distribution or resale; not for navigation.
 """
-import importlib.util, io, json, os, sys, unittest
+import importlib.util, io, json, os, re, sys, unittest
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
@@ -86,6 +86,29 @@ def _run():
     check('a slug nothing else is called still resolves', nm2.get('lonely_water'), 'lonely')
     check('and in the multimap too', mm2.get('lonely_water'), ['lonely'])
 
+    # THE FOURTH DOOR, 2026-10-05. Lake Craig keeps the slug `lake_edwin_johnson`; the 40-acre lake
+    # really called Lake Edwin Johnson claims the name in consolidate and is then dropped from the
+    # index at 0% charted. With no row in the index called it, the slug answered, and SCDNR's Edwin
+    # Johnson page was written onto Lake Craig. Ryan: *"it is a page for a wrong lake..."* The row
+    # now carries `names_given_up`, and a slug never answers for one of those.
+    print('\na name the row gave up, whose owner is not in the index')
+    gave = {
+        'old_water': {'slug': 'old_water', 'name': 'True Name', 'display_name': 'True Name (X Co, SC)',
+                      'legacy_display_names': [], 'state': 'SC',
+                      'names_given_up': ['Old Water', 'Old Water (X Co, SC)', 'Old Water, SC']},
+        'lonely': {'slug': 'lonely', 'name': 'Lonely Water', 'display_name': 'Lonely Water (Z Co, SC)',
+                   'legacy_display_names': [], 'state': 'SC'},
+    }
+    mm3, nm3 = A.build_name_multimap(gave), R.build_name_map(gave)
+    check('the slug does not answer for a name its row gave up', nm3.get('old_water'), None)
+    check('nor in the multimap', mm3.get('old_water'), None)
+    check('a page titled with the given-up name resolves to nothing',
+          R.resolve('Old Water', nm3), None)
+    check('the renamed row still answers to its true name', nm3.get('true_name'), 'old_water')
+    check('and in the multimap', mm3.get('true_name'), ['old_water'])
+    check('a row that gave nothing up still answers by its slug', nm3.get('lonely'), 'lonely')
+    check('and in the multimap', mm3.get('lonely'), ['lonely'])
+
     print('\nacross the whole shipped index')
     # Where a slug and a real name collide, the name must win in BOTH maps. Checked together, because
     # the bug was that they were fixed one at a time.
@@ -100,6 +123,15 @@ def _run():
           [s for s in clashes if nm.get(s) not in named[s]], [])
     check('nor in the agency map',
           [s for s in clashes if not set(mm.get(s) or []) & named[s]], [])
+    def _k(c):
+        return re.sub(r'_(al|ga|nc|sc|tn|va)$', '', R.slugify(re.sub(r'\s*\(.*?\)\s*', ' ', str(c))))
+    given = {s: {_k(n) for n in row['names_given_up']} for s, row in idx.items()
+             if row.get('names_given_up')}
+    check('no slug answers for a name its own row gave up (regulations map)',
+          [s for s, g in given.items() if _k(s) in g and nm.get(_k(s)) == s], [])
+    check('nor in the agency map',
+          [s for s, g in given.items() if _k(s) in g and s in (mm.get(_k(s)) or [])], [])
+    print('        %d row(s) gave a name up%s' % (len(given), (': ' + ', '.join(sorted(given))) if given else ''))
     print('        %d slug(s) collide with another water\'s real name' % len(clashes))
     for s in clashes:
         print('           %-24s -> %-22s (called that: %s)'

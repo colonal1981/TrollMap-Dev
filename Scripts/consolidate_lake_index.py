@@ -499,6 +499,17 @@ def drop_stolen_legacy_names(idx, renamed_old):
         gone = {name_key(o) for o in bad}
         rec['legacy_display_names'] = [n for n in (rec.get('legacy_display_names') or [])
                                        if name_key(n) not in gone]
+        # AND THE ROW SAYS WHAT IT GAVE UP, because its SLUG cannot. The slug is the R2 key and
+        # the chartpack directory and stays the old name's spelling -- `lake_lucas` for Lake
+        # Reese, `lake_edwin_johnson` for Lake Craig -- and the binders downstream let a slug
+        # answer for a name nothing in the index is called. When the water that really has the
+        # name is in the index, its name wins and that is enough (Lake Lucas). When it is NOT --
+        # Lake Edwin B. Johnson claims the name here and is dropped later at 0% charted -- the slug
+        # was the only thing left answering, and SCDNR's 40-acre Lake Edwin Johnson page bound to
+        # the 147-acre Lake Craig. Ryan, 2026-10-05: *"it is a page for a wrong lake..."*
+        # build_regulations_table.build_name_map() and build_agency_lake_facts.build_name_multimap()
+        # read this and keep the slug from answering for any of these names.
+        rec['names_given_up'] = sorted(bad)
         if rec.get('legacy_display_name') and name_key(rec['legacy_display_name']) in gone:
             # The scalar is read directly by row_names(), so clearing the list alone would
             # leave the ambiguity in place through that door.

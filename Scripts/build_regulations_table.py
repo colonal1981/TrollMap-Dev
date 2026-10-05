@@ -95,15 +95,28 @@ def build_name_map(idx):
     #
     # Ryan, on the first pass of this fix reaching only build_agency_lake_facts: *"1 door out of
     # 2... half..."* This is the second.
+    #
+    # AND A SLUG NEVER ANSWERS FOR A NAME ITS ROW GAVE UP, even where nothing in the index is
+    # called that. consolidate_lake_index.drop_stolen_legacy_names() records them as
+    # `names_given_up`: Lake Craig (slug `lake_edwin_johnson`) gave up "Lake Edwin Johnson" to the
+    # 40-acre lake that is called it, which the charted gate then drops from the index -- so
+    # first-wins here had nothing to prefer over the slug, and SCDNR's Edwin Johnson page landed
+    # on Lake Craig. Ryan, 2026-10-05: *"it is a page for a wrong lake..."*
+    def _key(c):
+        k = slugify(re.sub(r'\s*\(.*?\)\s*', ' ', str(c)))
+        return re.sub(r'_(al|ga|nc|sc|tn|va)$', '', k)
+
     m, from_slug = {}, {}
     for slug, row in idx.items():
         cands = [row.get('name'), row.get('display_name'), row.get('legacy_display_name')]
         cands += list(row.get('legacy_display_names') or [])
+        given_up = {_key(n) for n in (row.get('names_given_up') or []) if n}
         for c in [slug] + cands:
             if not c:
                 continue
-            k = slugify(re.sub(r'\s*\(.*?\)\s*', ' ', str(c)))
-            k = re.sub(r'_(al|ga|nc|sc|tn|va)$', '', k)
+            k = _key(c)
+            if c is slug and k in given_up:
+                continue
             if k:
                 (from_slug if c is slug else m).setdefault(k, slug)
     for k, slug in from_slug.items():

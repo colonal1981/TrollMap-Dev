@@ -250,8 +250,15 @@ const DECLARED = [
   // pacolet_river, which the app does not offer, and the registry has no entry for the creek. A
   // dead alias is worse than a missing one: missing falls through to the fuzzy pass, dead
   // resolves confidently to a key with nothing behind it.
-  ['js/data/water-aliases.js', 'WATER_TO_R2_KEY', 119, 'alias',
-   'the biggest of them and the least worrying: 119 water names mapped to R2 keys, which '
+  //
+  // 119 -> 116, 2026-10-05, regenerated after Ryan's registry rebuilds of 10/5 refreshed the feed
+  // names: Ashepoo River and Chehaw River now point at coast_beaufort_sc and Wando River at
+  // coast_cape_romain_sc; Back River, Dunham Creek (now names of cooper_river), Bull Creek (of
+  // great_pee_dee_river), Peters Creek (of black_river), Colleton River and Station Creek (of
+  // coast_beaufort_sc) left, because the registry answers them now and a pointer may not answer a
+  // name differently. Nothing here was hand-edited.
+  ['js/data/water-aliases.js', 'WATER_TO_R2_KEY', 116, 'alias',
+   'the biggest of them and the least worrying: 116 water names mapped to R2 keys, which '
    + 'is exactly the job an alias table should have. GENERATED -- do not hand-edit; run '
    + 'Scripts/gen_water_aliases_js.py and update the count here.'],
 

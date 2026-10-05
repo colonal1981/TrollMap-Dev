@@ -57,6 +57,7 @@ stolen = C.drop_stolen_legacy_names(idx, {'dallas_lake': ['Dallas Lake, TN',
                                                           'Dallas Lake']})
 check('a name nobody else claims is KEPT', stolen, [])
 check('and stays on the row', len(idx['dallas_lake']['legacy_display_names']), 3)
+check('and nothing is recorded as given up', 'names_given_up' in idx['dallas_lake'], False)
 
 # The Lake Lucas shape: renamed, and the old name is another row's real name.
 idx = {'a': row('a', 'Lake Reese', ['Lake Lucas, NC', 'Lake Lucas (Randolph Co, NC)', 'Lake Lucas']),
@@ -72,6 +73,11 @@ check('nothing spelling it survives on the row',
 check('and the scalar is cleared too',
       'lucas' in str(idx['a']['legacy_display_name'] or '').lower(), False)
 check('the row that really is called that keeps it', idx['b']['name'], 'Lake Lucas')
+# The slug cannot give the name up -- `lake_lucas`, `lake_edwin_johnson` -- so the row says what it
+# gave up, for the binders that let a slug answer for a name (Lake Craig, 2026-10-05).
+check('and the row records the names it gave up', idx['a'].get('names_given_up'),
+      ['Lake Lucas', 'Lake Lucas (Randolph Co, NC)', 'Lake Lucas, NC'])
+check('the row that kept its name records nothing', 'names_given_up' in idx['b'], False)
 
 # A disambiguating rename must NOT give its old name away.
 idx = {'lake_robinson_greer': row('lake_robinson_greer', 'Lake Robinson (Greer)',

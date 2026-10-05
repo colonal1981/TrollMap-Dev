@@ -921,12 +921,30 @@ def build_name_multimap(idx):
     # So "lake lucas" kept resolving to two slugs here and every resolver refused it as ambiguous.
     # NC WRC's own Lake Lucas largemouth assessment bound to nothing. Ryan, 2026-09-03: *"so you
     # half fixed the lake lucas / lake reese thing?"* -- he was right, this was the other door.
+    #
+    # AND A SLUG NEVER ANSWERS FOR A NAME ITS ROW GAVE UP (`names_given_up`, written by
+    # consolidate_lake_index.drop_stolen_legacy_names()). Lake Craig keeps the slug
+    # `lake_edwin_johnson`; the 40-acre lake really called Lake Edwin Johnson is dropped from the
+    # index at 0% charted, so nothing outranked the slug and SCDNR's Edwin Johnson page -- 40
+    # acres, fertilized -- was written onto Lake Craig. Ryan, 2026-10-05: *"it is a page for a
+    # wrong lake..."* The same rule is in build_regulations_table.build_name_map().
+    def _key(c):
+        k = slugify(re.sub(r'\s*\(.*?\)\s*', ' ', str(c)))
+        while True:
+            k2 = re.sub(r'_(al|ga|nc|sc|tn|va)$', '', k)
+            if k2 == k:
+                return k
+            k = k2
+
     m, from_slug = {}, {}
     for slug, row in idx.items():
         cands = [row.get('name'), row.get('display_name'), row.get('legacy_display_name')]
         cands += list(row.get('legacy_display_names') or [])
+        given_up = {_key(n) for n in (row.get('names_given_up') or []) if n}
         for c in [slug] + cands:
             if not c:
+                continue
+            if c is slug and _key(c) in given_up:
                 continue
             k = slugify(re.sub(r'\s*\(.*?\)\s*', ' ', str(c)))
             # A BORDER LAKE CARRIES TWO STATES, SO STRIP UNTIL THERE ARE NONE LEFT.
