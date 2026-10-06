@@ -25,7 +25,7 @@
  * the track would go".
  *
  * ─────────────────────────────────────────────────────────────────────────────────────────────
- * SINCE 2026-10-06: WITH HIS FISH, THE DAY IS OPTIONS FROM THEM, NOT A DEPTH LINE
+ * SINCE 2026-10-05 (EVENING): WITH HIS FISH, THE DAY IS OPTIONS FROM THEM, NOT A DEPTH LINE
  *
  * Ryan: *"we already know that the one depth line is wrong... It should never have been built around 1
  * depth... that is implying that fish are only at 1 singular depth"*. Where his catches of the day's

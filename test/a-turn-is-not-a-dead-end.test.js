@@ -56,7 +56,7 @@ const inPocket = (pt) => xOf(pt) > POCKET[0] - 30 && xOf(pt) < POCKET[1] + 30 &&
 // His fish are at the head of the pocket, 500 m and more in from its mouth.
 const pocketFish = [1060, 1030, 1000].map((y) => ({ at: at(5000, y) }));
 
-// WITH HIS FISH IN THE POCKET the day is options from them (2026-10-06): see the-day-is-options.test.js.
+// WITH HIS FISH IN THE POCKET the day is options from them (2026-10-05): see the-day-is-options.test.js.
 // The rules here are the contour loop's, on water where none of his catches are within reach, where a
 // click on the map is where a loop turns.
 test('the head of a pocket is not where a contour loop turns, if it has to come back out on its own track', () => {

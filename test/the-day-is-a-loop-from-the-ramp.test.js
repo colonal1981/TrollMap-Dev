@@ -122,7 +122,7 @@ test('3. the line rides the 25 ft contour and comes home on the other edge', () 
 });
 
 test('4. his catches decide which way the day goes when the water does not', () => {
-  // The same water both ways from the ramp; his fish one way or the other. Since 10/6 the day with his
+  // The same water both ways from the ramp; his fish one way or the other. Since the evening of 10/5 the day with his
   // fish is options (the-day-is-options.test.js), and Option 1 is laid on the water they came from.
   const east = [at(11000, yOf(25)), at(11800, W - yOf(25)), at(12200, yOf(25))].map((a) => ({ at: a }));
   const west = [at(4000, yOf(25))].map((a) => ({ at: a }));
@@ -180,7 +180,7 @@ test('7. Troll it for me lays the loop without freezing the page; Plan it as one
 test('8. his fish up a creek with room for one line: the day goes up it to them, the way he trolls a river', () => {
   // West of the ramp, a creek 100 m wide and all 25 ft: one line fits. His fish are all up the creek.
   // Until 10/5 the loop went east instead, a loop home on its own water counting for nothing; with the
-  // day as options (10/6) Option 1 goes where he caught them -- up the creek in its deepest water and
+  // day as options (that evening) Option 1 goes where he caught them -- up the creek in its deepest water and
   // back, the way he trolls Bates Old River -- and runs on to the ones past it the time holds.
   const DA2 = DA.map((f) => ({ ...f, geometry: { ...f.geometry,
     coordinates: [f.geometry.coordinates[0].map(([x, y]) => [Math.max(x, -80 + 8000 / KX), y])] } }));

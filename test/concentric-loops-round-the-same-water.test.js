@@ -37,7 +37,7 @@ const RAMP = at(8000, W - 10);
 const FISH = [8600, 9000, 9400].flatMap((x) => [at(x, yOf(25)), at(x, W - yOf(25))]).map((a) => ({ at: a, chartFt: 25 }));
 const turnOf = (p) => p.out[p.out.length - 1];
 
-// WITH HIS FISH WITHIN REACH THE DAY IS OPTIONS FROM THEM (2026-10-06, the-day-is-options.test.js). The
+// WITH HIS FISH WITHIN REACH THE DAY IS OPTIONS FROM THEM (2026-10-05, the-day-is-options.test.js). The
 // concentric loops are the day on a water where none are: the line the research gives.
 test('the first loop rides the line it is given; a loop after it is mostly new water', () => {
   // Going round the same water a band over was chosen for passing his fish again; with his fish within
@@ -172,7 +172,7 @@ test('the loop on the day\'s line past the most of his fish is fished first; a l
 
 test('his fish by the ramp and his fish far out are both on the day: Option 1 runs out to the ones the time holds', () => {
   // Ryan, 10/4: "the problem is that the entire loop goes to a section of water where i have caught exactly
-  // 0 fish". With the day as options (10/6) Option 1 goes nowhere else: one fish 300 m west of the ramp,
+  // 0 fish". With the day as options (the evening of 10/5) Option 1 goes nowhere else: one fish 300 m west of the ramp,
   // two far out to the east, and the day is a lap past the one and a run out to the two.
   const near = { at: at(7700, W - yOf(25)), chartFt: 25 };
   const far = [11500, 11900].map((x) => ({ at: at(x, W - yOf(25)), chartFt: 25 }));

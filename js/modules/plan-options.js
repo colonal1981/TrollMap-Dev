@@ -19,7 +19,7 @@
  *
  * On the drawing: *"actually that is much much much better... i like that"*. Then his corrections on
  * Bates, Murray and Marion, and the three rules put back to him and answered *"ok lets redraw with those
- * rules"*, and on the pictures, 2026-10-06: *"go ahead and build it like you have it"*:
+ * rules"*, and on the pictures, 2026-10-05: *"go ahead and build it like you have it"*:
  *
  *   1. Option 1 starts at the ramp and is trolled the whole way, holding his depth: his sounder at his own
  *      fish, with his 5 ft steering either side (the deepest water, on a river).
