@@ -1587,17 +1587,24 @@ export function optionsSaid(loop, { rampName, species, steer, zones = 0, leftOut
     return `Option${n.length === 1 ? '' : 's'} ${said}`;
   };
   const own = ops.filter((o) => o.n > 1 && o.own), like = ops.filter((o) => o.n > 1 && !o.own);
-  const dropped = (loop.dropped || []).length;
+  const dropped = (loop.dropped || []).length, longer = (loop.longer || []).length;
+  // LINES IN AS SOON AS THE WATER IS DEEP ENOUGH (his words, 10/6): the cove is run with the lines up.
+  const lines = loop.coveM > 0
+    ? `, from the ramp and back: lines up for the ${fmtMi(loop.runM)} out of the cove and back in, until the water reaches your depth, and in the rest of the way`
+    : ', from the ramp and back with the lines in the whole way';
   return `${ops.length} option${ops.length === 1 ? '' : 's'} from ${rampName || 'the ramp'}, numbered on the map. `
-    + `Option 1 is the day: ${optionShapeSaid(o1)}, from the ramp and back with the lines in the whole way, `
-    + `${fmtMi(loop.trolledM)} in about ${fmtHours(loop.minutes)} of the ${fmtHours(loop.budgetMin)} you have${band}`
+    + `Option 1 is the day: ${optionShapeSaid(o1)}${lines}; `
+    + `${fmtMi(loop.trolledM)} trolled, in about ${fmtHours(loop.minutes)} of the ${fmtHours(loop.budgetMin)} you have${band}`
     + ` (from ${bandFromSaid(o1, k0.readings || 0)})`
     + `. It passes ${loop.score.fish} of your ${cu.used} ${sp} catch${cu.used === 1 ? '' : 'es'} within reach`
     + ` and ${loop.score.structure} charted mark${loop.score.structure === 1 ? '' : 's'}`
     + (o1.runs ? `, with ${o1.runs} run${o1.runs === 1 ? '' : 's'} off it to fish it does not pass` : '')
     + (o1.pins ? `; ${o1.pins} of your fish ${o1.pins === 1 ? 'is' : 'are'} too far for the day and stay${o1.pins === 1 ? 's' : ''} pins` : '')
-    + (own.length ? `. ${nums(own)} the other water your fish came from, laid the same way` : '')
+    + (own.length ? `. ${nums(own)} the other water your fish came from` : '')
     + (like.length ? `. ${nums(like)} water like the water your fish came from, no more open than water you have fished here` : '')
+    + (own.length || like.length ? '. Each is laid from the ramp too, out along one side of the way there at your depth, round a lap where the water '
+      + 'holds one or turned at the end of your depth, and back down the other side, and none is a longer troll than Option 1' : '')
+    + (longer ? `. ${longer} other place${longer === 1 ? '' : 's'} your fish came from ${longer === 1 ? 'is' : 'are'} a longer troll from this ramp than Option 1, and left out` : '')
     + (dropped ? `; ${dropped} more place${dropped === 1 ? ' was' : 's were'} like it but more open than any water you have fished here, and left out` : '')
     + (zones ? `. Out of ${zones} keep-out zone${zones === 1 ? '' : 's'}` : '')
     + leftOut

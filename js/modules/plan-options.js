@@ -33,6 +33,19 @@
  * into the app unchanged in what it decides. SETTLED_DO_NOT_REOPEN.md, "The day is options", and
  * "Option 1's three rules".
  *
+ * SINCE 10/6, from his two Murray plans from Hilton and the pictures that followed:
+ *   - Lines in as soon as the water is deep enough: *"i troll all the way there... i would be putting lines
+ *     in as soon as the water is deep enough in that channel on the way there"*. The way from the ramp to
+ *     the first water at his depth is the cove, run with the lines up, out and back in on one line.
+ *   - Every option is laid from the ramp, and none is a longer troll than Option 1: *"the rest are no where
+ *     near and i would not run that far to those to fish those options"*, *"are there other possible
+ *     options that are the same distance away?"*.
+ *   - Out one side and back the other, a lap only where the water holds one: *"option looks to have a lot
+ *     of switchbacks and isn't really a loop"*; of the redrawn Option 2, *"that water yeah"*.
+ *   - Nothing crosses itself: *"why does this way out from the ramp and the same one for option 1 cross
+ *     itself... and then it looks like option 1 crosses itself again in front of counts island"*, and
+ *     *"sure... and then if you think this is ready to built into the app go ahead"*.
+ *
  * ─────────────────────────────────────────────────────────────────────────────────────────────
  * EVERY NUMBER, AND WHERE IT CAME FROM (his tracks unless marked MINE)
  *
@@ -266,6 +279,177 @@ function beside(net, out, cost, ends) {
   return c2;
 }
 
+/**
+ * WHICH SIDE OF A LINE the water near it is on: +1 left of the way the line runs, -1 right, 0 on the line
+ * or farther than `reach` from it. A cell takes the side of the line's cell nearest it by water, against
+ * the line's direction there (two cells either way).
+ */
+function sidesOf(net, line, reach) {
+  const { w, h, open, cell } = net, n = w * h;
+  const near = new Int32Array(n).fill(-1), side = new Int8Array(n), q = new Int32Array(n);
+  let qh = 0, qt = 0;
+  line.forEach((c, k) => { if (c >= 0 && near[c] < 0) { near[c] = k; q[qt++] = c; } });
+  const R2 = (reach / cell) ** 2;
+  while (qh < qt) {
+    const c = q[qh++], i = c % w, j = (c - i) / w, m = line[near[c]], mi = m % w, mj = (m - mi) / w;
+    for (let t = 0; t < 8; t++) {
+      const i2 = i + NB_I[t], j2 = j + NB_J[t];
+      if (i2 < 0 || j2 < 0 || i2 >= w || j2 >= h) continue;
+      const c2 = j2 * w + i2;
+      if (!open[c2] || near[c2] >= 0 || (i2 - mi) ** 2 + (j2 - mj) ** 2 > R2) continue;
+      near[c2] = near[c]; q[qt++] = c2;
+    }
+  }
+  for (let t = 0; t < qt; t++) {
+    const c = q[t], k = near[c];
+    if (line[k] === c) continue;
+    const a = net.xy(line[Math.max(0, k - 2)]), b = net.xy(line[Math.min(line.length - 1, k + 2)]), m = net.xy(line[k]), p = net.xy(c);
+    const cr = (b[0] - a[0]) * (p[1] - m[1]) - (b[1] - a[1]) * (p[0] - m[0]);
+    side[c] = cr > 0 ? 1 : cr < 0 ? -1 : 0;
+  }
+  return side;
+}
+
+/**
+ * beside(), on the one side of the way out the way home keeps to, so the two never cross. Ryan, 10/6: "why
+ * does this way out from the ramp and the same one for option 1 cross itself... and then it looks like
+ * option 1 crosses itself again in front of counts island".
+ */
+function besideOn(net, out, cost, ends, side, sg) {
+  const c2 = beside(net, out, cost, ends);
+  for (let k = 0; k < c2.length; k++) if (side[k] !== sg && k !== ends[0] && k !== ends[1]) c2[k] = Infinity;
+  return c2;
+}
+
+/**
+ * ONE SIDE OF THE WAY THERE, from `from` to `to` on side `sg` of `mid`: at his depth -- his reading,
+ * dearer by the square of his steering off it -- within half one of his turns of the middle, so the two
+ * sides are never farther apart than one of his turns (beside()'s rule); no nearer the middle than half
+ * the gap he leaves between a way out and the way back (BESIDE) but where the water at his depth is too
+ * narrow for both; and shallower than his alarm only where it must. His rules in that order: the depth,
+ * then the sides. Within half a turn at a spot of either end, where the two sides meet, either side.
+ */
+function sideWay(net, mid, side, sg, from, to, lo, center, steer) {
+  const { open, D } = net, n = net.w * net.h;
+  const near = nearMask(net, mid, BESIDE / 2), ends = nearMask(net, [from, to], SPOT_TURN / 2);
+  const c = new Float64Array(n).fill(Infinity), tier = new Uint8Array(n);
+  let sum = 0, n1 = 0;
+  for (let k = 0; k < n; k++) {
+    if (!open[k]) continue;
+    const end = ends[k] === 1;
+    if (!end && side[k] !== sg) continue;
+    if (!(D[k] >= lo - steer)) { tier[k] = 2; continue; }
+    if (!end && near[k]) { tier[k] = 1; n1++; continue; }
+    c[k] = 1 + ((D[k] - center) / steer) ** 2; sum += c[k];
+  }
+  // dearer than any way round, then dearer than any number of those
+  const t1 = sum + 1, t2 = t1 * (n1 + 2);
+  for (let k = 0; k < n; k++) if (tier[k] === 1) c[k] = t1 + 1 + ((D[k] - center) / steer) ** 2; else if (tier[k] === 2) c[k] = t2;
+  return wayOf(net, from, to, c);
+}
+
+// ── A LINE THAT DOES NOT CROSS ITSELF ───────────────────────────────────────────────────────────────
+
+// in at a and out at b, against in at c and out at d, round the point m: across if one pair is between the other
+function aroundPoint(m, a, b, c, d) {
+  const t = (p) => Math.atan2(p[1] - m[1], p[0] - m[0]);
+  return between(t(a), t(b), t(c), t(d));
+}
+// four ways round a place, by where they leave it: across if c and d are on either side of a and b
+function between(a, b, c, d) {
+  const lo = Math.min(a, b), hi = Math.max(a, b);
+  if ([c, d].some((v) => Math.abs(v - lo) < 1e-9 || Math.abs(v - hi) < 1e-9)) return false;
+  return (lo < c && c < hi) !== (lo < d && d < hi);
+}
+// A stretch shared from e1 to e2 is one place, and the ways off it go round it in order: off e2 on its left,
+// off e1, off e2 on its right. Where each way leaves it, on that round.
+function offStretch(e1, e2) {
+  const dd = Math.atan2(e2[1] - e1[1], e2[0] - e1[0]);
+  const rel = (e, p) => { let v = Math.atan2(p[1] - e[1], p[0] - e[0]) - dd; while (v <= -Math.PI) v += 2 * Math.PI; while (v > Math.PI) v -= 2 * Math.PI; return v; };
+  return { at1: (p) => { const v = rel(e1, p); return Math.PI + (v > 0 ? v : v + 2 * Math.PI); },
+           at2: (p) => { const v = rel(e2, p); return v >= 0 ? v : 4 * Math.PI + v; } };
+}
+
+/**
+ * Every place a closed line (cells, from where the lines go in and back to it) goes over itself: two of its
+ * legs across each other, or water it passes twice gone into on one side and out of on the other -- each with
+ * the line that takes it away: the stretch between the two passings run the other way round, and where the
+ * two went along it the same way, the first up it and back, the second only across its end. The same cells,
+ * each as many times.
+ */
+function* overItself(net, P) {
+  const n = P.length, X = P.map((c) => net.xy(c));
+  const o = (p, q, r) => (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]);
+  for (let i = 0; i + 1 < n; i++) {
+    for (let j = i + 2; j + 1 < n; j++) {
+      if (i === 0 && j === n - 2) continue;
+      const a = X[i], b = X[i + 1], c = X[j], d = X[j + 1];
+      if (o(a, b, c) * o(a, b, d) < 0 && o(c, d, a) * o(c, d, b) < 0) {
+        yield [...P.slice(0, i + 1), ...P.slice(i + 1, j + 1).reverse(), ...P.slice(j + 1)];
+      }
+    }
+  }
+  const at = new Map();
+  P.forEach((c, k) => { if (k > 0 && k < n - 1) { if (!at.has(c)) at.set(c, []); at.get(c).push(k); } });
+  for (const ks of at.values()) {
+    for (let u = 0; u < ks.length; u++) for (let v = u + 1; v < ks.length; v++) {
+      const i = ks[u], j = ks[v];
+      if (j <= i + 1) continue;
+      if (P[i + 1] === P[j - 1] && P[i - 1] !== P[j + 1]) {
+        // along it the other way: the stretch from here to where they part
+        let t = 0;
+        while (i + t + 1 < j - t - 1 && P[i + t + 1] === P[j - t - 1]) t++;
+        if (P[i + t + 1] === P[j - t - 1]) continue;              // out to the end of it and back: not across
+        const w = offStretch(X[i], X[i + t]);
+        if (between(w.at1(X[i - 1]), w.at2(X[i + t + 1]), w.at1(X[j + 1]), w.at2(X[j - t - 1]))) {
+          yield [...P.slice(0, i + t + 1), ...P.slice(i + t + 1, j - t).reverse(), ...P.slice(j - t)];
+        }
+      } else if (P[i + 1] === P[j + 1] && P[i - 1] !== P[j - 1]) {
+        // along it the same way
+        let t = 0;
+        while (j + t + 1 < n - 1 && P[i + t + 1] === P[j + t + 1] && i + t + 1 < j) t++;
+        const w = offStretch(X[i], X[i + t]);
+        // the first time along it, up it and back off where the second comes on; the second, only across its end
+        if (between(w.at1(X[i - 1]), w.at2(X[i + t + 1]), w.at1(X[j - 1]), w.at2(X[j + t + 1]))) {
+          yield [...P.slice(0, i + t + 1), ...P.slice(i, i + t).reverse(), ...P.slice(i + t + 1, j).reverse(), ...P.slice(j + t)];
+        }
+      } else if (P[i - 1] !== P[j - 1] && P[i - 1] !== P[j + 1] && P[i + 1] !== P[j - 1] && P[i + 1] !== P[j + 1]) {
+        if (aroundPoint(X[i], X[i - 1], X[i + 1], X[j - 1], X[j + 1])) {
+          yield [...P.slice(0, i + 1), ...P.slice(i + 1, j).reverse(), ...P.slice(j)];
+        }
+      }
+    }
+  }
+}
+
+/** How many places a closed line goes over itself (overItself()). */
+const timesOver = (net, P) => { let k = 0; for (const x of overItself(net, P)) { void x; k++; } return k; };
+
+/**
+ * A LOOP THAT DOES NOT CROSS ITSELF. Wherever a day's line goes over itself, the stretch between the two
+ * passings is run the other way round, so the line meets itself there instead of crossing: the same water and
+ * the same lines, the contour loop's pairAtCrossings() (Ryan, 10/4: "why do they have to cross") at every
+ * crossing of a whole loop. Ryan, 10/6: "why does this way out from the ramp and the same one for option 1
+ * cross itself... and then it looks like option 1 crosses itself again in front of counts island". `cells`
+ * runs from the place the lines go in and back to it; returns the same cells in the order that does not cross,
+ * or crosses the fewest times it can.
+ */
+export function uncross(net, cells) {
+  let P = cells.filter((c, k) => k === 0 || c !== cells[k - 1]), over = timesOver(net, P);
+  // a change is kept only where the line then goes over itself fewer times, so it ends
+  while (over > 0) {
+    let next = null, less = over;
+    for (const x of overItself(net, P)) {
+      if (!x) continue;
+      const k = timesOver(net, x);
+      if (k < less) { next = x; less = k; break; }
+    }
+    if (!next) break;
+    P = next; over = less;
+  }
+  return P;
+}
+
 /** Euclidean distance (cells) from every cell to the nearest cell where `isSource` -- Felzenszwalb & Huttenlocher. */
 function edt(w, h, isSource) {
   const INF = 1e20, f = new Float64Array(Math.max(w, h)), d1 = new Float64Array(Math.max(w, h));
@@ -378,9 +562,16 @@ function flatAxis(net, sp) {
   }
   if (X.length < 3) return { x, y, ux: 1, uy: 0, emax: SPOT_R, emin: -SPOT_R };
   const { ux, uy } = axisOf(X, Y);
-  let emax = -Infinity, emin = Infinity;
-  for (let k = 0; k < X.length; k++) { const pr = (X[k] - x) * ux + (Y[k] - y) * uy; if (pr > emax) emax = pr; if (pr < emin) emin = pr; }
-  return { x, y, ux, uy, emax, emin };
+  let emax = -Infinity, emin = Infinity, wmax = -Infinity, wmin = Infinity;
+  for (let k = 0; k < X.length; k++) {
+    const pr = (X[k] - x) * ux + (Y[k] - y) * uy, pw = (X[k] - x) * -uy + (Y[k] - y) * ux;
+    if (pr > emax) emax = pr; if (pr < emin) emin = pr; if (pw > wmax) wmax = pw; if (pw < wmin) wmin = pw;
+  }
+  // A FLAT A LAP FITS ON: the water in the band at least one of his turns at a spot (SPOT_TURN) along
+  // the line and across it, as lapAxis() lays its two passes that far apart. Narrower, the lap is
+  // squeezed to one turn and its corners drop on whatever water the band allows, and it folds over itself
+  // (Ryan, 10/6: "a lot of switchbacks and isn't really a loop").
+  return { x, y, ux, uy, emax, emin, fits: emax - emin >= SPOT_TURN && wmax - wmin >= SPOT_TURN };
 }
 
 /**
@@ -977,7 +1168,7 @@ function chartExtent(da) {
  *              allCatches [{at}] (every catch of his, any species), sounderMarks [{at, date, datetime, depthFt}]
  * k.G          the grid trollLoopSteps() built (shore and keep-out zones closed)
  * k.catches    his catches of the species on this water's chart and within reach: [{at, chartFt, date, time, sounderFt}]
- * k.ramp, k.budgetM, k.budgetMin, k.trollMph, k.steer, k.off, k.counts, k.marks (cast spots, for the count)
+ * k.ramp, k.budgetM, k.budgetMin, k.trollMph, k.transitMph, k.steer, k.off, k.counts, k.marks (cast spots, for the count)
  */
 export function* lakeOptions(k) {
   try { return yield* layOptions(k); } finally { SCRATCH = null; }
@@ -1049,100 +1240,195 @@ function* layOptions(k) {
   yield 'opt';
 
   // ── THE OPTIONS ────────────────────────────────────────────────────────────────────────────────
-  const opts = [];
-  const cellsToLL = (cells) => cells.map((c) => s.lonLat(c));
-  let option1 = null;
-  for (let ki = 0; ki < kinds.length; ki++) {
-    const kd = kinds[ki], [lo, hi] = kd.band;
-    const lead = { ...kd.lead, lo, hi, center: kd.lead.node };
-    if (ki > 0) {
-      const { pieces, start } = racetrack(s, lead, steer);
-      if (!pieces) continue;
-      const ring = ringOf(pieces, start);
-      opts.push({ kind: ki, own: true, n: kd.spots.reduce((a, x) => a + x.n, 0), band: [lo, hi], bandFrom: kd.bandFrom,
-                  shape: 'flat', cells: ring, fromRampM: dr[start], lead: kd.lead });
-      yield 'opt';
-      continue;
-    }
-    // ── OPTION 1, FROM THE RAMP ──
-    const others = kd.spots.filter((x) => x !== kd.lead);
-    const rnode = s.open[rso] ? rso : nearest(s, ...so.xy(rso), (c) => s.open[c] && dr[c] < Infinity);
-    const width = riverWidth(s, lead);
-    let shape, info = {}, lap = null, start = -1, out = null, home = null, river = null;
-    if (width < SPOT_TURN) {
-      river = riverLoop(s, rnode, kd.lead, steer);
-      shape = 'river'; start = river.turn; info = { widthM: Math.round(river.width), turnFt: Math.round(river.turnFt) };
-    } else {
-      const ib = islandBy(s, kd.lead, others);
-      let pieces = null;
-      if (ib && ib.d <= LAP_REACH) { pieces = aroundIsland(s, ib.isl, lo, hi, steer); shape = 'around'; }
-      else if (ib) { pieces = alongIsland(s, ib.isl, kd.lead, lo, hi, steer).pieces; shape = 'along'; }
-      else { pieces = racetrack(s, lead, steer).pieces; shape = 'flat'; }
-      if (ib) info = { islandAcres: Math.round(ib.isl.acres * 10) / 10, islandM: Math.round(ib.d), islandLengthM: Math.round(ib.isl.length) };
-      if (!pieces || !pieces.length) { pieces = racetrack(s, lead, steer).pieces; shape = 'flat'; info = {}; }
-      if (!pieces || !pieces.length) return { error: 'no loop fits the water your fish came from' };
-      const all = pieces.flat();
-      start = all.reduce((b, c) => (dr[c] < dr[b] ? c : b), all[0]);
-      lap = ringOf(pieces, start);
-      // THE WAY OUT FROM THE RAMP AND THE WAY BACK BESIDE IT, holding the band, on the chart alone (as the
-      // app gets out of a cove), and through water shallower than the band only where it must.
-      const c = noInf(so, bandCost(so, lo, hi, steer));
-      out = wayOf(so, rso, start, c);
-      if (out) home = wayOf(so, start, rso, beside(so, out, c, [rso, start])) || out.slice().reverse();
-    }
-    yield 'opt';
-    // RUNS to his other fish of this kind the route does not pass, if the day holds them (approved 10/5)
-    const routeCells = [...(lap || []), ...(out || []), ...(home || []), ...(river ? [...river.out, ...river.back] : [])];
-    const routeXY = routeCells.map((c) => s.xy(c));
-    const onRoute = (x) => routeXY.some((p) => Math.hypot(p[0] - x.x, p[1] - x.y) <= SPOT_R);
-    let used = [lap, out, home, river && river.out, river && river.back].filter(Boolean).reduce((a, p) => a + lengthOf(s, p), 0);
-    for (const x of kd.spots) x.onRoute = onRoute(x);
-    let left = kd.spots.filter((x) => !x.onRoute);
-    const runs = [];
-    if (left.length) {
-      const dh = search(s, null, start).dist;
-      while (left.length) {
-        const far = left.reduce((b, x) => (dh[x.node] > dh[b.node] ? x : b), left[0]);
-        const df = search(s, null, far.node).dist;
-        const way = left.filter((x) => dh[x.node] + df[x.node] <= dh[far.node] + 2 * SPOT_R).sort((a, b) => dh[a.node] - dh[b.node]);
-        left = left.filter((x) => !way.includes(x));
-        const rlo = Math.min(lo, ...way.map((x) => x.lo)), rhi = Math.max(hi, ...way.map((x) => x.hi));
-        const outp = viaPath(s, [start, ...way.map((x) => x.node)], rlo, rhi, steer);
-        if (!outp) continue;
-        const c = bandCost(s, rlo, rhi, steer);
-        const { turn, B } = roundTurn(s, outp, TURN_W, c);
-        const back = wayOf(s, B, start, beside(s, [...outp, ...turn], c, [start]));
-        if (!back) continue;
-        const L = lengthOf(s, outp) + lengthOf(s, turn) + lengthOf(s, back);
-        if (used + L > budgetM) {
-          // too far for the day: the farthest is left as a pin, and the ones on the way get their own run
-          far.noRun = true; left.push(...way.filter((x) => x !== far)); continue;
+  const transitMph = k.transitMph || trollMph;
+  const mTroll = (trollMph * 1609.344) / 60, mRun = (transitMph * 1609.344) / 60;
+  // A loop's minutes: the cove run out and back with the lines up, the rest trolled.
+  const minutesOf = (coveM, trolledM) => (2 * coveM) / mRun + trolledM / mTroll;
+  // LINES IN AS SOON AS THE WATER IS DEEP ENOUGH. Ryan, 10/6: "i troll all the way there... i would be
+  // putting lines in as soon as the water is deep enough in that channel on the way there". The way from
+  // the ramp up to the first water at his depth is run with the lines up, out and back in on the one line,
+  // as the contour loop's cove is; the day is trolled from there.
+  const linesIn = (way, lo) => { const i = way.findIndex((c) => so.D[c] >= lo); return i < 0 ? way.length - 1 : i; };
+
+  // ── OPTION 1, FROM THE RAMP ──
+  const kd0 = kinds[0], [lo0, hi0] = kd0.band;
+  const lead0 = { ...kd0.lead, lo: lo0, hi: hi0, center: kd0.lead.node };
+  const others = kd0.spots.filter((x) => x !== kd0.lead);
+  const rnode = s.open[rso] ? rso : nearest(s, ...so.xy(rso), (c) => s.open[c] && dr[c] < Infinity);
+  const width = riverWidth(s, lead0);
+  let shape, info = {}, lap = null, start = -1, out = null, home = null, river = null, cove = null;
+  if (width < SPOT_TURN) {
+    river = riverLoop(s, rnode, kd0.lead, steer);
+    shape = 'river'; start = river.turn; info = { widthM: Math.round(river.width), turnFt: Math.round(river.turnFt) };
+  } else {
+    const ib = islandBy(s, kd0.lead, others);
+    let pieces = null;
+    if (ib && ib.d <= LAP_REACH) { pieces = aroundIsland(s, ib.isl, lo0, hi0, steer); shape = 'around'; }
+    else if (ib) { pieces = alongIsland(s, ib.isl, kd0.lead, lo0, hi0, steer).pieces; shape = 'along'; }
+    else { pieces = racetrack(s, lead0, steer).pieces; shape = 'flat'; }
+    if (ib) info = { islandAcres: Math.round(ib.isl.acres * 10) / 10, islandM: Math.round(ib.d), islandLengthM: Math.round(ib.isl.length) };
+    if (!pieces || !pieces.length) { pieces = racetrack(s, lead0, steer).pieces; shape = 'flat'; info = {}; }
+    if (!pieces || !pieces.length) return { error: 'no loop fits the water your fish came from' };
+    const all = pieces.flat();
+    start = all.reduce((b, c) => (dr[c] < dr[b] ? c : b), all[0]);
+    lap = ringOf(pieces, start);
+    // THE WAY OUT FROM THE RAMP, holding the band, on the chart alone (as the app gets out of a cove), and
+    // through water shallower than the band only where it must; the lines go in where it first reaches it.
+    const c = noInf(so, bandCost(so, lo0, hi0, steer));
+    const way = wayOf(so, rso, start, c);
+    if (way) {
+      const iS = linesIn(way, lo0);
+      cove = way.slice(0, iS + 1);
+      out = way.slice(iS);
+      const S = out[0];
+      // THE WAY HOME KEEPS TO ONE SIDE OF THE WAY OUT, the side the lap comes back on, and never crosses
+      // it; where that side has no way back, the lap the other way round and the other side.
+      if (out.length > 1 && start !== S) {
+        const side = sidesOf(so, out, TURN_W);
+        const toward = (cells) => Math.sign(cells.reduce((a, q) => a + side[q], 0));
+        // which way it goes over the first half of one of his turns at a spot
+        const m = Math.max(1, Math.min(Math.round(SPOT_TURN / 2 / so.cell), Math.floor(lap.length / 4)));
+        const leaves = toward(lap.slice(1, 1 + m)), returns = toward(lap.slice(-1 - m, -1));
+        const sg = returns && returns !== leaves ? returns : -leaves;
+        if (sg) {
+          home = wayOf(so, start, S, besideOn(so, out, c, [S, start], side, sg));
+          if (!home) {
+            const back = wayOf(so, start, S, besideOn(so, out, c, [S, start], side, -sg));
+            if (back) { home = back; lap = [lap[0], ...lap.slice(1, -1).reverse(), lap[0]]; }
+          }
         }
-        used += L;
-        runs.push({ out: outp, turn, back, fish: way.reduce((a, x) => a + x.n, 0) });
-        yield 'opt';
+      }
+      if (!home) home = start === S ? [S] : wayOf(so, start, S, beside(so, out, c, [S, start])) || out.slice().reverse();
+    }
+  }
+  yield 'opt';
+  // RUNS to his other fish of this kind the route does not pass, if the day holds them (approved 10/5)
+  const routeCells = [...(lap || []), ...(out || []), ...(home || []), ...(river ? [...river.out, ...river.back] : [])];
+  const routeXY = routeCells.map((c) => s.xy(c));
+  const onRoute = (x) => routeXY.some((p) => Math.hypot(p[0] - x.x, p[1] - x.y) <= SPOT_R);
+  let used = [lap, out, home, river && river.out, river && river.back].filter(Boolean).reduce((a, p) => a + lengthOf(s, p), 0);
+  for (const x of kd0.spots) x.onRoute = onRoute(x);
+  let left = kd0.spots.filter((x) => !x.onRoute);
+  const runs = [];
+  if (left.length) {
+    const dh = search(s, null, start).dist;
+    while (left.length) {
+      const far = left.reduce((b, x) => (dh[x.node] > dh[b.node] ? x : b), left[0]);
+      const df = search(s, null, far.node).dist;
+      const way = left.filter((x) => dh[x.node] + df[x.node] <= dh[far.node] + 2 * SPOT_R).sort((a, b) => dh[a.node] - dh[b.node]);
+      left = left.filter((x) => !way.includes(x));
+      const rlo = Math.min(lo0, ...way.map((x) => x.lo)), rhi = Math.max(hi0, ...way.map((x) => x.hi));
+      // OFF THE ROUTE WHERE IT COMES NEAREST HIS FIRST FISH ON IT, not from the lap's start: four lines on
+      // one stretch there -- the way out, the lap, the run, the way home -- were more than any order of them
+      // could keep from crossing (Murray from Hilton, 10/6)
+      const d1 = search(s, null, way[0].node).dist;
+      const from = routeCells.reduce((b, q) => (s.open[q] && d1[q] < d1[b] ? q : b), start);
+      const outp = viaPath(s, [from, ...way.map((x) => x.node)], rlo, rhi, steer);
+      if (!outp) continue;
+      const c = bandCost(s, rlo, rhi, steer);
+      const { turn, B } = roundTurn(s, outp, TURN_W, c);
+      const back = wayOf(s, B, from, beside(s, [...outp, ...turn], c, [from]));
+      if (!back) continue;
+      const L = lengthOf(s, outp) + lengthOf(s, turn) + lengthOf(s, back);
+      if (used + L > budgetM) {
+        // too far for the day: the farthest is left as a pin, and the ones on the way get their own run
+        far.noRun = true; left.push(...way.filter((x) => x !== far)); continue;
+      }
+      used += L;
+      runs.push({ from, out: outp, turn, back, fish: way.reduce((a, x) => a + x.n, 0) });
+      yield 'opt';
+    }
+  }
+  // The day in the order it is fished, from where the lines go in and back there -- and nowhere over itself:
+  // of the ways round it the lap and each run can be gone, each either way, the first that does not cross
+  // itself once its crossings are taken away (uncross()), else the one that crosses itself least.
+  const runCells = runs.map((r) => [...r.out.slice(1), ...r.turn.slice(1), ...r.back.slice(1)]);
+  const flip = (cells) => [...cells.slice(0, -1).reverse(), cells[cells.length - 1]];
+  // each run where it leaves the route, the first time the route comes there
+  const dayOf = (lapGo, runGo) => {
+    const d = river ? [...river.out, ...river.back.slice(1)] : [...(out || [start]), ...lapGo.slice(1), ...(home || []).slice(1)];
+    runGo.forEach((rc, q) => { const k = d.indexOf(runs[q].from); d.splice(k < 0 ? d.length - 1 : k + 1, 0, ...rc); });
+    return d;
+  };
+  const ways = [];
+  for (let m = 0; m < 2 ** (runs.length + (river ? 0 : 1)); m++) {
+    const lapGo = river || !(m & 1) ? lap : flip(lap), bit = river ? 0 : 1;
+    ways.push(() => dayOf(lapGo, runCells.map((rc, q) => ((m >> (q + bit)) & 1 ? flip(rc) : rc))));
+  }
+  let day = null, over = Infinity;
+  for (const way of ways) {
+    const d = uncross(so, way()), x = timesOver(so, d);
+    if (x < over) { day = d; over = x; }
+    if (!over) break;
+    yield 'opt';
+  }
+  // out to the farthest of it by water, and back from there
+  const kFar = day.reduce((b, c, q) => (dr[c] > dr[day[b]] ? q : b), 0);
+  let outCells = day.slice(0, kFar + 1), backCells = day.slice(kFar);
+  if (outCells.length < 2) { outCells = day.slice(0, 2); backCells = day.slice(1); }
+  const coveM1 = cove && cove.length > 1 ? lengthOf(so, cove) : 0;
+  const option1 = { kind: 0, own: true, shape, info, band: [lo0, hi0], bandFrom: shape === 'river' ? 'deepest' : kd0.bandFrom,
+                    n: kd0.spots.filter((x) => !x.noRun).reduce((a, x) => a + x.n, 0),
+                    pins: kd0.spots.filter((x) => x.noRun).reduce((a, x) => a + x.n, 0),
+                    out: outCells, back: backCells, lap: lap || [...river.out, ...river.back.slice(1)], cove: coveM1 ? cove : null,
+                    runs: runs.length, fromRampM: 0, lead: kd0.lead, readings: kd0.readings.length };
+  option1.minutes = minutesOf(coveM1, lengthOf(so, outCells) + lengthOf(so, backCells));
+
+  // ── EVERY OTHER OPTION, FROM THE RAMP AS WELL ─────────────────────────────────────────────────────
+  // Ryan, 10/6: "i troll all the way there", and of Murray's options 2 and 3, 7.5 and 5.5 km out: "the
+  // rest are no where near and i would not run that far to those to fish those options". So each is a loop
+  // from the ramp: lines up until the way there reaches his depth, then out along one side of it at his
+  // depth, a lap where the water there holds one (flatAxis().fits), else a turn at the head of his depth,
+  // and back along the other side -- his Bates, "down 1 side turn and back up the other". The way out is
+  // on the right going out, so each keeps to the right of the way it is going, as the narrow-channel rule
+  // has a boat do. One that takes longer to troll than Option 1 is not offered: the same distance away,
+  // as he asked ("are there other possible options that are the same distance away?").
+  const trees = new Map();
+  const treeOf = (lo) => {
+    if (!trees.has(lo)) trees.set(lo, search(so, noInf(so, bandCost(so, lo, Infinity, steer)), rso));
+    return trees.get(lo);
+  };
+  // The way there to a place: the lines-up stretch, the middle of the trolled way, a lap if one fits there.
+  function wayThere(kd, node, band) {
+    const lo = kd.band[0], tree = treeOf(lo);
+    let way = pathOf(tree.prev, rso, node);
+    if (!way) return null;
+    // the head of his depth: the last of the way there still at it
+    let iT = way.length - 1;
+    while (iT > 0 && !(so.D[way[iT]] >= lo)) iT--;
+    way = way.slice(0, iT + 1);
+    if (linesIn(way, lo) >= way.length - 1) return null;
+    let ring = null;
+    const fa = flatAxis(s, { node, lo: band[0], hi: band[1] });
+    if (fa.fits) {
+      const lt = lapAxis(s, fa, band[0], band[1], steer);
+      const r0 = lt.pieces ? ringOf(lt.pieces) : null;
+      if (r0 && r0.length > 3) {
+        const ls = r0.reduce((b, q) => (tree.dist[q] < tree.dist[b] ? q : b), r0[0]);
+        const w2 = pathOf(tree.prev, rso, ls);
+        if (w2 && linesIn(w2, lo) < w2.length - 1) { ring = ringOf(lt.pieces, ls); way = w2; }
       }
     }
-    // The day in the order it is fished, as one way out and one way home.
-    let outCells, backCells;
-    if (river) {
-      outCells = river.out;
-      backCells = [...runs.flatMap((r) => [...r.out, ...r.turn.slice(1), ...r.back.slice(1)]), ...river.back];
-    } else {
-      const half = Math.floor(lap.length / 2);
-      outCells = [...(out || [start]), ...lap.slice(1, half + 1)];
-      backCells = [...lap.slice(half), ...runs.flatMap((r) => [...r.out.slice(1), ...r.turn.slice(1), ...r.back.slice(1)]), ...(home || []).slice(1)];
+    const iS = linesIn(way, lo), mid = way.slice(iS);
+    return { mid, ring, coveM: lengthOf(so, way.slice(0, iS + 1)), midM: lengthOf(so, mid), lapM: ring ? lengthOf(s, ring) : 0 };
+  }
+  // The two sides of it, and the lap turned to match: it leaves on the side the way out came in on.
+  function sidesFor(r, kd) {
+    const [lo, hi] = kd.band, mid = r.mid, from = mid[0], to = mid[mid.length - 1];
+    const side = sidesOf(so, mid, TURN_W / 2);
+    let ring = r.ring;
+    if (ring) {
+      const m = Math.max(1, Math.min(Math.round(SPOT_TURN / 2 / so.cell), Math.floor(ring.length / 4)));
+      if (Math.sign(ring.slice(1, 1 + m).reduce((a, q) => a + side[q], 0)) > 0) ring = [ring[0], ...ring.slice(1, -1).reverse(), ring[0]];
     }
-    option1 = { kind: 0, own: true, shape, info, band: [lo, hi], bandFrom: shape === 'river' ? 'deepest' : kd.bandFrom,
-                n: kd.spots.filter((x) => !x.noRun).reduce((a, x) => a + x.n, 0),
-                pins: kd.spots.filter((x) => x.noRun).reduce((a, x) => a + x.n, 0),
-                out: outCells, back: backCells, lap: lap || [...river.out, ...river.back.slice(1)],
-                runs: runs.length, fromRampM: 0, lead: kd.lead, readings: kd.readings.length };
-    opts.unshift(option1);
+    const wayOut = sideWay(so, mid, side, -1, from, to, lo, (lo + hi) / 2, steer);
+    const wayHome = wayOut && sideWay(so, mid, side, 1, to, from, lo, (lo + hi) / 2, steer);
+    if (!wayOut || !wayHome) return null;
+    const cells = uncross(so, [...wayOut, ...(ring ? ring.slice(1) : []), ...wayHome.slice(1)]);
+    return { cells, ring, minutes: minutesOf(r.coveM, lengthOf(so, cells)) };
   }
 
-  // ── WATER LIKE EACH KIND: away from all his spots (500 m) and the routes above (300 m), within half the
-  // day by water, and no more open than water he has fished here (rule 3) ─────────────────────────────
+  // Taken: his spots (500 m) and Option 1's route (300 m), then each option's water as it is offered (700 m).
   const taken = new Uint8Array(s.w * s.h);
   const block = (x, y, r) => {
     const R = Math.floor(r / s.cell), i = Math.round(x / s.cell - 0.5), j = Math.round(y / s.cell - 0.5);
@@ -1151,13 +1437,26 @@ function* layOptions(k) {
     }
   };
   for (const x of spots) block(x.x, x.y, 500);
-  for (const op of opts) {
-    const cs = [...(op.out || []), ...(op.back || []), ...(op.cells || [])];
-    for (let q = 0; q < cs.length; q += 4) { const [px, py] = s.xy(cs[q]); block(px, py, 300); }
-  }
-  const like = [], dropped = [];
+  { const cs = [...option1.out, ...option1.back]; for (let q = 0; q < cs.length; q += 4) { const [px, py] = s.xy(cs[q]); block(px, py, 300); } }
+  const opts = [option1], like = [], dropped = [], longer = [];
+  const headOf = (r) => (r.ring ? r.ring : r.mid.slice(-Math.max(1, Math.round(SPOT_R / so.cell))));
   for (let ki = 0; ki < kinds.length; ki++) {
     const kd = kinds[ki];
+    // HIS OWN OTHER WATER, the same way
+    if (ki > 0) {
+      const r = wayThere(kd, kd.lead.node, kd.band);
+      const sd = r && minutesOf(r.coveM, 2 * r.midM + r.lapM) <= option1.minutes ? sidesFor(r, kd) : null;
+      const fish = kd.spots.reduce((a, x) => a + x.n, 0);
+      if (sd && sd.minutes <= option1.minutes) {
+        opts.push({ kind: ki, own: true, n: fish, band: kd.band, bandFrom: kd.bandFrom, shape: sd.ring ? 'flat' : 'turn',
+                    cells: sd.cells, ring: sd.ring, minutes: sd.minutes, fromRampM: r.coveM + r.midM,
+                    lead: kd.lead, at: so.lonLat(sd.ring ? sd.ring[Math.floor(sd.ring.length / 4)] : r.mid[r.mid.length - 1]) });
+        block(kd.lead.x, kd.lead.y, 700);
+      } else longer.push({ kind: ki, fish, at: s.lonLat(kd.lead.node) });
+      yield 'opt';
+    }
+    // WATER LIKE IT: away from his spots and the routes above, within half the day by water, no more open
+    // than water he has fished here (rule 3), and no longer a troll than Option 1
     const order = Array.from({ length: F.E }, (_, e) => e).sort((a, b) => kd.T[a] - kd.T[b]);
     let got = 0;
     for (const e of order) {
@@ -1171,38 +1470,45 @@ function* layOptions(k) {
       const p = s.xy(nd);
       if (Math.hypot(p[0] - x, p[1] - y) > 2 * s.cell || !(dr[nd] <= budgetM / 2)) continue;
       const [blo, bhi] = bandLike(so, kd.lead.node, kd.band, bc);
-      const { pieces, start } = racetrack(s, { node: nd, lo: blo, hi: bhi }, steer);
-      if (!pieces) { block(x, y, s.cell); continue; }
-      const ring = ringOf(pieces, start);
-      // THE WATER THE LOOP IS ON, as his catches are each a place he was: the middle of the loop's openness
-      // against the most open place he has caught a fish here (MINE: the middle, not the most open corner)
-      const op = median(ring.map((c) => OPEN[c]).filter(Number.isFinite));
+      const r = wayThere(kd, nd, [blo, bhi]);
+      if (!r) { block(x, y, s.cell); continue; }
+      // the least it can take, out and back the middle: past Option 1's time already, the sides only add to it
+      if (minutesOf(r.coveM, 2 * r.midM + r.lapM) > option1.minutes) continue;
+      // THE WATER THE OPTION IS ON, as his catches are each a place he was: the middle of its openness --
+      // the lap, or the head of his depth it turns at -- against the most open place he has caught a fish
+      // here (MINE: the middle, not the most open corner)
+      const op = median(headOf(r).map((c) => OPEN[c]).filter(Number.isFinite));
       if (op > lim) { dropped.push({ kind: ki, top, openM: Math.round(op), at: s.lonLat(nd) }); block(x, y, 700); continue; }
-      like.push({ kind: ki, own: false, top, band: [blo, bhi], shape: 'flat', cells: ring, fromRampM: dr[nd], openM: Math.round(op),
-                  at: s.lonLat(nd) });
+      const sd = sidesFor(r, kd);
+      if (!sd || sd.minutes > option1.minutes) continue;
+      like.push({ kind: ki, own: false, top, band: [blo, bhi], shape: sd.ring ? 'flat' : 'turn', cells: sd.cells, ring: sd.ring,
+                  minutes: sd.minutes, fromRampM: r.coveM + r.midM, openM: Math.round(op),
+                  at: so.lonLat(sd.ring ? sd.ring[Math.floor(sd.ring.length / 4)] : r.mid[r.mid.length - 1]) });
       block(x, y, 700); got++;
       yield 'opt';
       if (got >= N_LIKE) break;
     }
   }
+  trees.clear();
   like.sort((a, b) => a.top - b.top);
   const all = [...opts, ...like];
 
   // ── AS THE APP CARRIES A DAY: Option 1 is the loop the plan is built from; every option is on the map ──
-  const ll = (cells) => cellsToLL(cells);
+  const ll = (cells) => cells.map((c) => s.lonLat(c));
+  // a cove as the plan runs it: from the ramp itself
+  const coveLL = (cells) => (cells && cells.length > 1 ? [ramp, ...ll(cells.slice(1))] : null);
   const r1 = (v) => Math.round(v * 10) / 10;
   const options = all.map((op, i) => {
     const coords = op === option1 ? ll([...op.out, ...op.back.slice(1)]) : ll(op.cells);
-    const ring = op === option1 ? ll(op.lap) : ll(op.cells);
-    const mid = ring[Math.floor(ring.length / 4)] || coords[0];
+    const ring = op === option1 ? ll(op.lap) : op.ring ? ll(op.ring) : null;
     return { n: i + 1, kind: op.kind, own: op.own, shape: op.shape, info: op.info || null,
              band: [r1(op.band[0]), r1(op.band[1])], bandFrom: op.bandFrom || 'like',
              fish: op.n || 0, pins: op.pins || 0, runs: op.runs || 0, top: op.top != null ? Math.round(op.top * 100) / 100 : null,
              fromRampM: Math.round(op.fromRampM || 0), openM: op.openM != null ? op.openM : null,
-             lengthM: Math.round(lengthOfLL(coords)), coords, ring, at: op.at || mid };
+             lengthM: Math.round(lengthOfLL(coords)), minutes: Math.round(op.minutes), coords, ring,
+             at: op.at || (ring ? ring[Math.floor(ring.length / 4)] : coords[0]) };
   });
   const o1 = option1;
-  if (!o1) return { error: 'no loop fits the water your fish came from' };
   const legOf = (cells, half) => {
     const coords = ll(cells);
     return { coords, lengthM: Math.round(lengthOfLL(coords)), petal: 0, half, lineFt: null,
@@ -1210,12 +1516,14 @@ function* layOptions(k) {
   };
   const legs = [legOf(o1.out, 'out'), legOf(o1.back, 'back')].filter((l) => l.coords.length > 1);
   const trolledM = legs.reduce((a, l) => a + l.lengthM, 0);
+  const cove1 = coveLL(o1.cove), coveM = cove1 ? Math.round(lengthOfLL(cove1)) : 0;
   const fishAll = (k.catches || []).filter((m) => m && Array.isArray(m.at));
   const routeLL = legs.flatMap((l) => l.coords);
   const passed = fishAll.filter((m) => routeLL.some((p) => metresBetween(p, m.at) <= SPOT_R)).length;
   const structure = new Set();
   for (const l of legs) for (const a of marksAlongLL(l.coords, k.marks || [])) structure.add(a);
   const score = { fish: passed, passes: passed, structure: structure.size };
+  const minutes = Math.round(minutesFor(trolledM, trollMph) + 2 * minutesFor(coveM, transitMph));
   return {
     mode: 'options',
     ramp, lineFt: null, steerFt: steer,
@@ -1225,17 +1533,18 @@ function* layOptions(k) {
                                    band: kd.band.map(r1), bandFrom: kd.bandFrom, readings: kd.readings.length,
                                    at: s.lonLat(kd.lead.node), dates: [...new Set(kd.lead.fish.map((f) => f.m.date).filter(Boolean))].sort() })),
     dropped: dropped.map((d) => ({ ...d, top: Math.round(d.top * 100) / 100 })), openLimitM: Math.round(lim), fishedPoints: nFished,
+    longer,
     catches: { used: fishAll.length, offWater: (k.counts || {}).offWater || 0, outOfReach: ((k.counts || {}).outOfReach || 0) + fishLeft,
                reachM: Math.round(budgetM / 2) },
-    cove: null, coveM: 0, coveCrossesShore: false,
+    cove: cove1, coveM, coveCrossesShore: false,
     start: legs.length ? legs[0].coords[0] : ramp,
     legs,
     petals: [{ out: 0, back: 1, m: trolledM, sharedM: 0, lineFt: null, edgeFt: legs[0] ? legs[0].edgeFt : null, score,
                via: null, places: spots.filter((x) => x.kind === 0 && !x.noRun).length, fishFt: o1.band, kept: true }],
-    trolledM, sharedM: 0, runM: 0,
-    minutes: Math.round(minutesFor(trolledM, trollMph)),
+    trolledM, sharedM: 0, runM: 2 * coveM,
+    minutes,
     budgetMin: Math.round(budgetMin),
-    fillsDay: true, fillsTime: true, onceMinutes: Math.round(minutesFor(trolledM, trollMph)), fillingDay: null,
+    fillsDay: true, fillsTime: true, onceMinutes: minutes, fillingDay: null,
     score, tried: [],
     grid: { w: G.w, h: G.h, cellM: G.cellM, regrid },
   };

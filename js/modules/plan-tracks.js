@@ -883,20 +883,24 @@ export function optionTracks(options, runId = null) {
     }));
 }
 
-/** A flag where each of those starts: `Option 2`, its band in the comment. */
+/**
+ * A flag on each option's own water -- its lap, or the head of the depth it turns at: `Option 2`, its
+ * band in the comment. Not where it starts: every option is laid from the ramp and starts where the lines
+ * go in, the same place for all of them (Ryan, 10/6: "i troll all the way there").
+ */
 export function optionWaypoints(options, runId = null) {
   return (options || []).filter((op) => op && op.n > 1 && Array.isArray(op.coords) && op.coords.length > 1)
     .map((op) => {
       const b = optionBand(op);
-      const at = op.coords[0];
+      const at = Array.isArray(op.at) ? op.at : op.coords[0];
       return {
         name: fitUnit([`Option ${op.n}`], UNIT_CHARS.name),
         cmt: fitUnit(b ? [`${b}ft ${op.own ? 'your fish' : 'like your fish'}`, `${b}ft ${op.own ? 'yours' : 'like yours'}`, `${b}ft`]
                        : ['deepest water'], UNIT_CHARS.comment),
         lat: at[1], lon: at[0], sym: OPTION_SYMBOL,
-        optionStart: true, scoutWaypoint: true, planRunId: runId,
+        scoutWaypoint: true, planRunId: runId,
         legId: `Option ${op.n}`, option: op.n,
-        tacticalNote: `start of option ${op.n}: ${op.own ? 'water your fish came from' : 'water like the water your fish came from'}`
+        tacticalNote: `option ${op.n}: ${op.own ? 'water your fish came from' : 'water like the water your fish came from'}`
           + (b ? `, holding ${b} ft` : ', in the deepest water'),
       };
     });

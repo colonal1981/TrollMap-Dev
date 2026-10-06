@@ -254,7 +254,8 @@ function drawLoop(loop, fit) {
     pts.push(...c);
   }
   // THE OTHER OPTIONS, each in its kind's colour, dotted where it is water like his fish's, and every
-  // option's number on it -- Option 1's on its lap, where the day is fished.
+  // option's number on its own water -- the lap, or the head of the depth it turns at. Each is laid from
+  // the ramp, so its line starts where Option 1's lines go in.
   for (const op of loop.options || []) {
     const color = optionColor(op);
     if (op.n > 1 && (op.coords || []).length > 1) {
@@ -263,9 +264,8 @@ function drawLoop(loop, fit) {
       L.polyline(c, { color, weight: 2.5, opacity: 0.95, interactive: false, ...(op.own ? {} : { dashArray: '3,6' }) }).addTo(g);
       pts.push(...c);
     }
-    const at = op.n > 1 && (op.coords || []).length > 1 ? op.coords[Math.floor(op.coords.length / 4)] : op.at;
-    if (Array.isArray(at)) {
-      L.marker(ll(at), { interactive: false, keyboard: false,
+    if (Array.isArray(op.at)) {
+      L.marker(ll(op.at), { interactive: false, keyboard: false,
         icon: L.divIcon({ className: '', iconSize: [22, 22], iconAnchor: [11, 11], html: optionBadge(op.n, color) }) }).addTo(g);
     }
   }
@@ -436,7 +436,6 @@ function setBar(o) {
 function optionsBar(loop, snap) {
   const k0 = (loop.kinds || [])[0] || {};
   const ft = (b) => `${Math.round(b[0])}–${Math.round(b[1])} ft`;
-  const km = (m) => `${((Number(m) || 0) / 1000).toFixed(1)} km`;
   const rows = (loop.options || []).map((op) => {
     const dot = `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${optionColor(op)};`
       + 'margin-right:6px;vertical-align:-1px"></span>';
@@ -445,17 +444,20 @@ function optionsBar(loop, snap) {
         + ` · ${mi(loop.trolledM)}, about ${hours(loop.minutes)} of your ${hours(loop.budgetMin)}`
         + ` · past ${plural(loop.score.fish || 0, 'catch', 'catches')} of your ${esc(snap.species || '')}`
         + (op.runs ? `, ${plural(op.runs, 'run')} off it` : '') + (op.pins ? `, ${op.pins} too far (pins)` : '')
-      : op.own
-        ? `the other water your fish came from, ${ft(op.band)} · ${plural(op.fish || 0, 'fish', 'fish')} · ${km(op.fromRampM)} from the ramp · ${mi(op.lengthM)} a lap`
-        : `water like your fish's (closest ${op.top}% of this lake), ${ft(op.band)} · ${km(op.fromRampM)} from the ramp · ${mi(op.lengthM)} a lap`;
+      : `${op.own ? `the other water your fish came from, ${ft(op.band)} · ${plural(op.fish || 0, 'fish', 'fish')}`
+        : `water like your fish's (closest ${op.top}% of this lake), ${ft(op.band)}`}`
+        + ` · ${op.shape === 'turn' ? 'out one side, turned at the end of your depth, back the other' : 'out one side, a lap, back the other'}`
+        + ` · ${mi(op.lengthM)}, about ${hours(op.minutes)} from the ramp and back`;
     return `<div style="margin-top:4px">${dot}<b>Option ${op.n}</b>${op.n === 1 ? ' <i>(the day)</i>' : ''}: ${what}</div>`;
   }).join('');
-  const dropped = (loop.dropped || []).length;
+  const dropped = (loop.dropped || []).length, longer = (loop.longer || []).length;
   return `<div style="margin-top:6px">${plural((loop.options || []).length, 'option')} from your fish, numbered on the map. `
       + 'Every one goes in the GPX; the plan is built from Option 1.</div>'
     + rows
     + (dropped ? `<div style="margin-top:4px;color:#9fb3c3">${plural(dropped, 'more place')} like it left out: more open than any `
       + 'water you have fished here.</div>' : '')
+    + (longer ? `<div style="margin-top:4px;color:#9fb3c3">${plural(longer, 'other place')} your fish came from left out: a longer `
+      + 'troll from this ramp than Option 1.</div>' : '')
     + `<details style="margin-top:6px"><summary style="cursor:pointer;color:#9fb3c3">Why these options</summary>`
     + `<div style="margin-top:4px;color:#c9d6df;max-height:9em;overflow:auto">${esc(snap.status)}</div></details>`
     + '<div style="margin-top:8px"><button data-lom="build" class="primary" style="width:100%;height:34px;font-weight:700">'

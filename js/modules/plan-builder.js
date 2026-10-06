@@ -221,7 +221,11 @@ export function collectPlan(){
   const v2raw = planV2();
   const v2 = (() => {
     if (!v2raw || !Array.isArray(v2raw.legs)) return null;
-    const onScreen = new Set((state.DATA.tracks || [])
+    // An option's own track (`Option 2 · 31-46 ft`) is not a leg of the plan: a day laid as options
+    // carries one per option beside the plan's legs, and counting them left every such day's file
+    // without its plan block (his plans of 10/6, Murray from Hilton). Drawn again from a saved plan, the
+    // track has only its name to say so.
+    const onScreen = new Set((state.DATA.tracks || []).filter((t) => !t.option && !optionOfTrack(t.name, v2raw.options))
       .map((t) => String(t.name || '').split('·')[0].trim()).filter(Boolean));
     if (!onScreen.size) return v2raw;           // nothing drawn to check against
     const planned = new Set(v2raw.legs.map((l) => l.id));

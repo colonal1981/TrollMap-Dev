@@ -782,7 +782,7 @@ export function* trollLoopSteps(o) {
   // contour loops below are only for water where none of his catches of the fish are within reach.
   if (catches.length && !o.contourOnly) {
     return yield* lakeOptions({
-      o, G, ramp, catches, off, steer, budgetM, budgetMin, trollMph,
+      o, G, ramp, catches, off, steer, budgetM, budgetMin, trollMph, transitMph,
       marks: (o.marks || []).filter((m) => m && Array.isArray(m.at)),
       counts: { offWater, outOfReach },
     });

@@ -21,12 +21,22 @@
 //   5. water like his is offered only where it is no more open than water he has fished there;
 //   6. with none of his catches within reach, the day is the contour loop as before;
 //   7. every option but the first goes on the unit as its own track and flag, named to fit;
-//   8. the map draws and numbers them, a click is not a turn, and the plan is built from Option 1.
+//   8. the map draws and numbers them, a click is not a turn, and the plan is built from Option 1;
+//   9. lines up out of the cove, in where the water first reaches his depth, and the day comes back there;
+//  10. nothing crosses itself, and every other option is laid from the ramp and is no longer a troll than
+//      Option 1;
+//  11. a line that goes over itself is run the other way between the two passings: the same water, met
+//      there instead of crossed.
+//
+// 9 and 10, Ryan 2026-10-06, on his two Murray plans from Hilton: "i troll all the way there... i would be
+// putting lines in as soon as the water is deep enough in that channel on the way there"; "the rest are no
+// where near and i would not run that far"; "option looks to have a lot of switchbacks and isn't really a
+// loop"; "why does this way out from the ramp and the same one for option 1 cross itself".
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { trollLoop } from '../js/modules/plan-troll-loop.js';
-import { readingsFor } from '../js/modules/plan-options.js';
+import { readingsFor, uncross } from '../js/modules/plan-options.js';
 import { materialisePlan, optionTrackName, optionTracks, optionWaypoints, optionOfTrack, optionColor, UNIT_CHARS,
          OPTION_SYMBOL } from '../js/modules/plan-tracks.js';
 import { state } from '../js/core/state.js';
@@ -87,11 +97,13 @@ test('1. fish round an island: Option 1 goes all the way round it, from the ramp
     const ft = ISLAND_FT(xOf(p), yOf(p));
     assert.ok(ft == null || ft >= 15, `${ft} ft at ${xOf(p).toFixed(0)}, ${yOf(p).toFixed(0)}`);
   }
-  // from the ramp, and back to it: the day is two legs of one loop, the way out and the way home
+  // from the ramp, and back to it: the day is two legs of one loop, the way out and the way home, from where
+  // the lines go in and back there, and the cove from the ramp to it
   assert.deepEqual(r.legs.map((l) => [l.petal, l.half]), [[0, 'out'], [0, 'back']]);
-  assert.ok(metresBetween(r.legs[0].coords[0], ramp) < 60);
+  assert.deepEqual(r.cove[0], ramp);
+  assert.deepEqual(r.legs[0].coords[0], r.cove[r.cove.length - 1]);
   const home = r.legs[1].coords;
-  assert.ok(metresBetween(home[home.length - 1], ramp) < 60);
+  assert.deepEqual(home[home.length - 1], r.legs[0].coords[0]);
 });
 
 // A RIVER: 4000 m long and 100 m wide, 6 ft for 25 m at each bank and 14 ft between, with a shoal of 8 ft
@@ -159,7 +171,8 @@ const ARMS = [...arm(0, 3000, 0), ...arm(-6000, 6000, 1400), area(25, ring(2800,
 const HEAD = [[1000, 200], [1080, 220], [1150, 190]].map(([x, y]) => ({ at: at(x, y), chartFt: 25, date: '2026-05-16' }));
 
 test('5. water like his is offered only where it is no more open than water he has fished there', () => {
-  const r = trollLoop({ ...DAY, windowMin: 360, ramp: at(-10, 200), daFeatures: ARMS, catches: HEAD, allCatches: HEAD });
+  // from the ramp at the joined end, so the long arm is no longer a troll than his own water
+  const r = trollLoop({ ...DAY, windowMin: 360, ramp: at(3010, 200), daFeatures: ARMS, catches: HEAD, allCatches: HEAD });
   assert.ok(!r.error, r.error);
   assert.equal(r.fishedPoints, 3);
   for (const o of r.options.filter((x) => !x.own)) assert.ok(o.openM <= r.openLimitM, `option ${o.n} open ${o.openM}`);
@@ -167,7 +180,7 @@ test('5. water like his is offered only where it is no more open than water he h
   for (const d of r.dropped) assert.ok(d.openM >= r.openLimitM);   // both rounded to the metre
   // the long arm is like his and more open, so none of it is an option
   assert.ok(r.dropped.some((d) => yOf(d.at) > 1400));
-  assert.ok(r.options.every((o) => o.ring.every((c) => yOf(c) < 1400)));
+  assert.ok(r.options.every((o) => o.coords.every((c) => yOf(c) < 1400)));
 });
 
 test('6. with none of his catches within reach, the day is the contour loop as before', () => {
@@ -180,7 +193,8 @@ test('6. with none of his catches within reach, the day is the contour loop as b
 
 const OPTS = [
   { n: 1, kind: 0, own: true, shape: 'around', band: [22, 25], bandFrom: 'chart', coords: [at(0, 0), at(100, 0)] },
-  { n: 2, kind: 0, own: false, top: 0.42, band: [17.5, 27.5], bandFrom: 'like', coords: [at(500, 0), at(600, 0), at(500, 0)], lengthM: 200 },
+  { n: 2, kind: 0, own: false, top: 0.42, band: [17.5, 27.5], bandFrom: 'like', coords: [at(500, 0), at(600, 0), at(500, 0)], lengthM: 200,
+    at: at(600, 0) },
   { n: 3, kind: 1, own: true, band: [9.6, 14.6], bandFrom: 'sounder', coords: [at(900, 0), at(1000, 50), at(900, 0)], lengthM: 230 },
   { n: 12, kind: 0, own: false, band: [100.4, 110], bandFrom: 'like', coords: [at(0, 900), at(50, 900)], lengthM: 50 },
   { n: 4, kind: 0, own: true, band: [3, 9], bandFrom: 'deepest', coords: [at(0, 1900), at(50, 1900)], lengthM: 50 },
@@ -198,6 +212,8 @@ test('7. every option but the first goes on the unit as its own track and flag, 
   assert.deepEqual(tracks[0].pts[0], [OPTS[1].coords[0][1], OPTS[1].coords[0][0]]);
   const flags = optionWaypoints(OPTS, 'r1');
   assert.deepEqual(flags.map((w) => w.name), ['Option 2', 'Option 3', 'Option 12', 'Option 4']);
+  // on the option's own water, not where it starts -- every option starts where the lines go in
+  assert.deepEqual([flags[0].lon, flags[0].lat], OPTS[1].at);
   for (const w of flags) {
     assert.ok(w.name.length <= UNIT_CHARS.name && w.cmt.length <= UNIT_CHARS.comment, `${w.name} / ${w.cmt}`);
     assert.equal(w.sym, OPTION_SYMBOL);
@@ -239,4 +255,111 @@ test('8. the map draws and numbers them, a click is not a turn, and the plan is 
   // the plan's map, and a saved plan drawn again
   assert.ok(init.includes('} else if (t.option) {'));
   assert.ok(builder.includes('optionOfTrack(t.name, p.plan.options)'));
+  // and a saved plan keeps its plan block with the option tracks beside its legs (his plans of 10/6)
+  assert.ok(builder.includes('const onScreen = new Set((state.DATA.tracks || []).filter((t) => !t.option && !optionOfTrack(t.name, v2raw.options))'));
+  // each option's number on its own water, and its time from the ramp
+  assert.ok(lom.includes('if (Array.isArray(op.at)) {'));
+  assert.ok(lom.includes('about ${hours(op.minutes)} from the ramp and back'));
+});
+
+// Where a closed line goes over itself: two of its legs across each other, or water it passes twice
+// gone into on one side and out of on the other.
+const crossings = (coords) => {
+  const P = coords.map((c) => [xOf(c), yOf(c)]).filter((p, k, a) => k === 0 || Math.hypot(p[0] - a[k - 1][0], p[1] - a[k - 1][1]) > 0.5);
+  const n = P.length, o = (p, q, r) => (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]);
+  const same = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]) < 0.5;
+  let x = 0;
+  for (let i = 0; i + 1 < n; i++) for (let j = i + 2; j + 1 < n; j++) {
+    if (i === 0 && j === n - 2) continue;
+    if (o(P[i], P[i + 1], P[j]) * o(P[i], P[i + 1], P[j + 1]) < 0 && o(P[j], P[j + 1], P[i]) * o(P[j], P[j + 1], P[i + 1]) < 0) x++;
+  }
+  for (let i = 1; i < n - 1; i++) for (let j = i + 2; j < n - 1; j++) {
+    if (!same(P[i], P[j]) || same(P[i - 1], P[j - 1])) continue;
+    let t = 0;
+    while (i + t + 1 < j - t - 1 && same(P[i + t + 1], P[j - t - 1])) t++;
+    const a1 = P[i - 1], b1 = P[j + 1], a2 = P[i + t + 1], b2 = P[j - t - 1];
+    if (same(a1, b1) || same(a2, b2)) continue;
+    const e1 = P[i], e2 = P[i + t];
+    if (t) {
+      // a shared stretch is one place, the ways off it in order round it: off e2 on its left, off e1, off e2 on its right
+      const dd = Math.atan2(e2[1] - e1[1], e2[0] - e1[0]);
+      const rel = (e, p) => { let v = Math.atan2(p[1] - e[1], p[0] - e[0]) - dd; while (v <= -Math.PI) v += 2 * Math.PI; while (v > Math.PI) v -= 2 * Math.PI; return v; };
+      const off1 = (p) => { const v = rel(e1, p); return Math.PI + (v > 0 ? v : v + 2 * Math.PI); };
+      const off2 = (p) => { const v = rel(e2, p); return v >= 0 ? v : 4 * Math.PI + v; };
+      const lo = Math.min(off1(a1), off2(a2)), hi = Math.max(off1(a1), off2(a2)), inn = (v) => lo < v && v < hi;
+      if (inn(off1(b1)) !== inn(off2(b2))) x++;
+    } else {
+      const ang = (p) => Math.atan2(p[1] - e1[1], p[0] - e1[0]);
+      const lo = Math.min(ang(a1), ang(a2)), hi = Math.max(ang(a1), ang(a2)), inn = (p) => lo < ang(p) && ang(p) < hi;
+      if (inn(b1) !== inn(b2)) x++;
+    }
+  }
+  return x;
+};
+
+test('9. lines up out of the cove, in where the water first reaches his depth, and the day comes back there', () => {
+  // the island lake's bank is 10 ft for 100 m, his fish at 20: the cove is the run across it
+  const ramp = at(-10, 1000);
+  const r = trollLoop({ ...DAY, ramp, daFeatures: ISLAND, catches: ROUND, allCatches: ROUND });
+  assert.ok(!r.error, r.error);
+  const lo = r.options[0].band[0], S = r.legs[0].coords[0];
+  assert.ok(r.coveM > 50 && r.coveM < 250, `${r.coveM} m of cove`);
+  assert.equal(r.runM, 2 * r.coveM);
+  assert.ok(ISLAND_FT(xOf(S), yOf(S)) >= lo, 'the lines go in on his depth');
+  for (const c of r.cove.slice(1, -1)) assert.ok(!(ISLAND_FT(xOf(c), yOf(c)) >= lo), 'and not before it');
+  // the cove is run, the rest trolled: both in the day's minutes
+  const mins = (m, mph) => m / ((mph * 1609.344) / 60);
+  assert.ok(Math.abs(r.minutes - (mins(r.trolledM, 2) + 2 * mins(r.coveM, 3.5))) <= 1, `${r.minutes} min`);
+  // the whole day as the plan writes it: T1 from the ramp, the two legs, home
+  assert.ok(r.start === S);
+});
+
+const FAR = PAIR.map((f) => ({ ...f, at: at(xOf(f.at) + 800, yOf(f.at)) }));
+
+test('10. nothing crosses itself, and every other option is laid from the ramp and is no longer a troll than Option 1', () => {
+  const days = [
+    trollLoop({ ...DAY, ramp: at(-10, 1000), daFeatures: ISLAND, catches: ROUND, allCatches: ROUND }),
+    trollLoop({ ...DAY, ramp: at(-10, 1500), daFeatures: FLAT, catches: PAIR, allCatches: PAIR }),
+    trollLoop({ ...DAY, windowMin: 360, ramp: at(3010, 200), daFeatures: ARMS, catches: HEAD, allCatches: HEAD }),
+    trollLoop({ ...DAY, ramp: at(0, 50), daFeatures: RIVER, catches: UPRIVER, allCatches: UPRIVER }),
+    // his pair on the far side of the flat, so water as like it lies nearer the ramp than they do
+    trollLoop({ ...DAY, ramp: at(-10, 1500), daFeatures: FLAT, catches: FAR, allCatches: FAR }),
+  ];
+  let others = 0;
+  for (const r of days) {
+    assert.ok(!r.error, r.error);
+    const o1 = r.options[0];
+    assert.equal(crossings([...r.legs[0].coords, ...r.legs[1].coords.slice(1)]), 0, `Option 1 (${o1.shape}) crosses itself`);
+    for (const op of r.options.slice(1)) {
+      others++;
+      assert.equal(crossings(op.coords), 0, `option ${op.n} crosses itself`);
+      // from where its lines go in, on the way from the ramp as near it as his depth comes, and back there;
+      // a lap only where one fits, else a turn
+      assert.deepEqual(op.coords[op.coords.length - 1], op.coords[0]);
+      assert.ok(metresBetween(op.coords[0], o1.coords[0]) <= 200, `${metresBetween(op.coords[0], o1.coords[0]).toFixed(0)} m from Option 1's`);
+      assert.ok(op.shape === 'turn' ? op.ring === null : op.ring.length > 3, `${op.shape}`);
+      assert.ok(op.minutes <= r.minutes, `option ${op.n}: ${op.minutes} min against Option 1's ${r.minutes}`);
+      assert.ok(Array.isArray(op.at));
+    }
+  }
+  assert.ok(others > 0, 'at least one other option to hold to it');
+});
+
+test('11. a line that goes over itself is run the other way between the two passings: the same water, met there instead of crossed', () => {
+  // cells are their own place in metres, 100 m apart
+  const XY = { S: [-100, -100], a: [-100, 0], M: [0, 0], b: [100, 0], e: [100, 100], c: [0, 100], d: [0, -100],
+               A: [0, 300], B: [200, 500], C: [200, 300], D: [0, 500] };
+  const net = { xy: (k) => XY[k] };
+  const ll = (cells) => cells.map((k) => at(...XY[k]));
+  // through M twice: in from the west and out east, then in from the north and out south
+  const eight = ['S', 'a', 'M', 'b', 'e', 'c', 'M', 'd', 'S'];
+  assert.equal(crossings(ll(eight)), 1);
+  const met = uncross(net, eight);
+  assert.equal(crossings(ll(met)), 0);
+  assert.deepEqual([...met].sort(), [...eight].sort(), 'the same water');
+  assert.deepEqual([met[0], met[met.length - 1]], ['S', 'S'], 'from where the lines go in and back there');
+  // two legs across each other
+  const x = ['S', 'A', 'B', 'C', 'D', 'A', 'S'];
+  assert.equal(crossings(ll(x)), 1);
+  assert.equal(crossings(ll(uncross(net, x))), 0);
 });
