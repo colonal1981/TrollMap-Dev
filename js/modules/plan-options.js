@@ -45,6 +45,12 @@
  *   - Nothing crosses itself: *"why does this way out from the ramp and the same one for option 1 cross
  *     itself... and then it looks like option 1 crosses itself again in front of counts island"*, and
  *     *"sure... and then if you think this is ready to built into the app go ahead"*.
+ *   - A lap round an island goes round the shallows and the small islands off it at his depth, not over
+ *     them: *"your 4ft... is actually right over an island"* (with the lake about 6 ft down).
+ *   - Onto the lap on one side and off it on the other, not into one point: *"your start and end of the
+ *     loop at the island doesn't make sense... something more like what i have drawn in purple and
+ *     yellow"*, and of the redrawn one, *"that looks better"*. The way home holds his depth first and keeps
+ *     its gap from the way out second, as sideWay() does.
  *
  * ─────────────────────────────────────────────────────────────────────────────────────────────
  * EVERY NUMBER, AND WHERE IT CAME FROM (his tracks unless marked MINE)
@@ -313,12 +319,28 @@ function sidesOf(net, line, reach) {
 /**
  * beside(), on the one side of the way out the way home keeps to, so the two never cross. Ryan, 10/6: "why
  * does this way out from the ramp and the same one for option 1 cross itself... and then it looks like
- * option 1 crosses itself again in front of counts island".
+ * option 1 crosses itself again in front of counts island". And his rules in their order, as sideWay() has
+ * them: his depth first, then the gap from the way out -- nearer the way out than his gap (BESIDE) only where
+ * the water at his depth is too narrow for both, and shallower than his alarm only where it must. beside()
+ * alone has those the other way round, and on the narrow stretch past the Hilton cove put the way home in
+ * 8 ft on the chart to keep its gap.
  */
-function besideOn(net, out, cost, ends, side, sg) {
-  const c2 = beside(net, out, cost, ends);
-  for (let k = 0; k < c2.length; k++) if (side[k] !== sg && k !== ends[0] && k !== ends[1]) c2[k] = Infinity;
-  return c2;
+function besideOn(net, out, lo, hi, steer, ends, side, sg) {
+  const base = bandCost(net, lo, hi, steer), n = base.length;
+  const near = nearMask(net, out, BESIDE), e = nearMask(net, ends, TURN_W / 2), corridor = nearMask(net, out, TURN_W);
+  const c = new Float64Array(n).fill(Infinity), tier = new Uint8Array(n);
+  let sum = 0, n1 = 0;
+  for (let k = 0; k < n; k++) {
+    if (!net.open[k] || !corridor[k]) continue;
+    if (side[k] !== sg && k !== ends[0] && k !== ends[1]) continue;
+    if (!(base[k] < Infinity)) { tier[k] = 2; continue; }
+    if (near[k] && !e[k]) { tier[k] = 1; n1++; continue; }
+    c[k] = base[k]; sum += base[k];
+  }
+  // dearer than any way round, then dearer than any number of those
+  const t1 = sum + 1, t2 = t1 * (n1 + 2);
+  for (let k = 0; k < n; k++) if (tier[k] === 1) c[k] = t1 + base[k]; else if (tier[k] === 2) c[k] = t2;
+  return c;
 }
 
 /**
@@ -968,24 +990,41 @@ function aroundIsland(net, isl, lo, hi, steer) {
   const isLand = new Uint8Array(w * h);
   for (const c of isl.cells) isLand[c] = 1;
   const distIsl = edt(w, h, (c) => isLand[c] === 1);
-  const pts = [];
-  for (let k = 0; k < 16; k++) {
-    const a = (2 * Math.PI * k) / 16, dx = Math.cos(a), dy = Math.sin(a);
+  const pts = [], at = [], BEARINGS = 16;
+  for (let k = 0; k < BEARINGS; k++) {
+    const a = (2 * Math.PI * k) / BEARINGS, dx = Math.cos(a), dy = Math.sin(a);
     let left = false;
     for (let t = 0; t < isl.length + LAP_REACH; t += cell / 2) {
       const c = net.cellAt(isl.cx + dx * t, isl.cy + dy * t);
       if (c < 0) break;
       if (!open[c]) { if (left) break; continue; }        // land again: another shore
       left = true;
-      if (D[c] >= lo && D[c] <= hi) { if (distIsl[c] * cell <= LAP_REACH) pts.push(c); break; }
+      if (D[c] >= lo && D[c] <= hi) { if (distIsl[c] * cell <= LAP_REACH) { pts.push(c); at.push(a); } break; }
     }
   }
   if (pts.length < 3) return null;
   const cc = noInf(net, bandCost(net, lo, hi, steer));
-  for (let c = 0; c < cc.length; c++) if (distIsl[c] * cell > LAP_REACH) cc[c] = Infinity;
+  // within a lap's reach of the island AND OF THE SHALLOWS ROUND IT -- water under his alarm (his band
+  // less his 5 ft), or other land, within a lap's reach of it -- so the lap goes round a shoal or a small
+  // island off it at his depth instead of over it (Ryan, 10/6: "your 4ft... is actually right over an
+  // island")
+  const off = (c) => isLand[c] === 1 || (distIsl[c] * cell <= LAP_REACH && (!open[c] || D[c] < lo - steer));
+  const distOff = edt(w, h, off);
+  for (let c = 0; c < cc.length; c++) if (distOff[c] * cell > LAP_REACH) cc[c] = Infinity;
+  // each piece between its two bearings, and one bearing either side, so it goes round what is in its way
+  // and never back round the island the other way
+  const sector = (2 * Math.PI) / BEARINGS, bear = new Float64Array(w * h);
+  for (let c = 0; c < w * h; c++) { const [x, y] = net.xy(c); bear[c] = Math.atan2(y - isl.cy, x - isl.cx); }
   const pieces = [];
   for (let k = 0; k < pts.length; k++) {
-    const p = wayOf(net, pts[k], pts[(k + 1) % pts.length], cc);
+    const a0 = at[k] - sector, span = ((at[(k + 1) % pts.length] - at[k] + 2 * Math.PI) % (2 * Math.PI)) + 2 * sector;
+    const c2 = Float64Array.from(cc);
+    for (let c = 0; c < c2.length; c++) {
+      if (!(c2[c] < Infinity)) continue;
+      const rel = ((bear[c] - a0) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI);
+      if (rel > span) c2[c] = Infinity;
+    }
+    const p = wayOf(net, pts[k], pts[(k + 1) % pts.length], c2) || wayOf(net, pts[k], pts[(k + 1) % pts.length], cc);
     if (p && p.length) pieces.push(p);
   }
   return pieces.length ? pieces : null;
@@ -1275,30 +1314,56 @@ function* layOptions(k) {
     // THE WAY OUT FROM THE RAMP, holding the band, on the chart alone (as the app gets out of a cove), and
     // through water shallower than the band only where it must; the lines go in where it first reaches it.
     const c = noInf(so, bandCost(so, lo0, hi0, steer));
-    const way = wayOf(so, rso, start, c);
-    if (way) {
+    let toLap = wayOf(so, rso, start, c), toward = toLap;
+    if (toLap) {
+      // WHERE THE WAY OUT COMES ONTO THE LAP'S WATER: the first place on it within his gap (BESIDE) of the
+      // lap. From there on it runs beside the lap, on the lap's own line, so the lap starts there and which
+      // way it leaves is judged from the way as it comes onto it -- not from the cell of the lap nearest the
+      // ramp, which the way can reach after running along the lap the wrong way (Murray from Hilton on the
+      // chart's depth, 10/6: the way out ran east along Counts Island's north side and the lap ran back
+      // west over it).
+      const onLap = nearMask(so, lap, BESIDE), kM = toLap.findIndex((q) => onLap[q]);
+      if (kM >= 0) {
+        const M = so.xy(toLap[kM]);
+        let iM = 0, dM = Infinity;
+        for (let i = 0; i < lap.length - 1; i++) { const p = so.xy(lap[i]), d = Math.hypot(p[0] - M[0], p[1] - M[1]); if (d < dM) { dM = d; iM = i; } }
+        const way = iM ? wayOf(so, rso, lap[iM], c) : toLap;
+        if (way) {
+          if (iM) { lap = [...lap.slice(iM, -1), ...lap.slice(0, iM), lap[iM]]; start = lap[0]; toLap = way; }
+          toward = toLap.slice(0, toLap.findIndex((q) => onLap[q]) + 1);
+        }
+      }
+      // ONTO THE LAP ON ONE SIDE AND OFF IT ON THE OTHER, NOT INTO ONE POINT. The way out meets the lap one
+      // gap along it (BESIDE, the gap he leaves between a way out and the way back) from where the way to it
+      // reaches it, on the right going out, as a boat keeps to the right of a channel; the way home leaves it
+      // one gap the other way; the lap is run between the two the long way round, so the stretch between
+      // them by the way in is not trolled as a neck. Ryan, 10/6, drawn on the picture: "your start and end of
+      // the loop at the island doesn't make sense... something more like what i have drawn".
+      const side0 = sidesOf(so, toward, TURN_W);
+      const m = Math.max(1, Math.min(Math.round(SPOT_TURN / 2 / so.cell), Math.floor(lap.length / 4)));
+      if (Math.sign(lap.slice(1, 1 + m).reduce((t, q) => t + side0[q], 0)) > 0) lap = [lap[0], ...lap.slice(1, -1).reverse(), lap[0]];
+      const along = [0];
+      for (let k = 1; k < lap.length; k++) along.push(along[k - 1] + lengthOf(so, [lap[k - 1], lap[k]]));
+      const round = along[along.length - 1];
+      const iE = along.findIndex((d) => d >= BESIDE);
+      let iX = lap.length - 1;
+      while (iX > 0 && round - along[iX] < BESIDE) iX--;
+      const apart = iE > 0 && iE < iX;
+      const E = apart ? lap[iE] : start, X = apart ? lap[iX] : start;
+      const way = (apart && wayOf(so, rso, E, c)) || toLap;
       const iS = linesIn(way, lo0);
       cove = way.slice(0, iS + 1);
       out = way.slice(iS);
       const S = out[0];
-      // THE WAY HOME KEEPS TO ONE SIDE OF THE WAY OUT, the side the lap comes back on, and never crosses
-      // it; where that side has no way back, the lap the other way round and the other side.
-      if (out.length > 1 && start !== S) {
+      if (apart && way !== toLap) lap = lap.slice(iE, iX + 1);
+      const from = lap[lap.length - 1];
+      // THE WAY HOME KEEPS TO ONE SIDE OF THE WAY OUT, the side it leaves the lap on, and never crosses it
+      if (out.length > 1 && from !== S) {
         const side = sidesOf(so, out, TURN_W);
-        const toward = (cells) => Math.sign(cells.reduce((a, q) => a + side[q], 0));
-        // which way it goes over the first half of one of his turns at a spot
-        const m = Math.max(1, Math.min(Math.round(SPOT_TURN / 2 / so.cell), Math.floor(lap.length / 4)));
-        const leaves = toward(lap.slice(1, 1 + m)), returns = toward(lap.slice(-1 - m, -1));
-        const sg = returns && returns !== leaves ? returns : -leaves;
-        if (sg) {
-          home = wayOf(so, start, S, besideOn(so, out, c, [S, start], side, sg));
-          if (!home) {
-            const back = wayOf(so, start, S, besideOn(so, out, c, [S, start], side, -sg));
-            if (back) { home = back; lap = [lap[0], ...lap.slice(1, -1).reverse(), lap[0]]; }
-          }
-        }
+        const sg = side[from] || 1;
+        home = wayOf(so, from, S, besideOn(so, out, lo0, hi0, steer, [S, from], side, sg));
       }
-      if (!home) home = start === S ? [S] : wayOf(so, start, S, beside(so, out, c, [S, start])) || out.slice().reverse();
+      if (!home) home = from === S ? [S] : wayOf(so, from, S, beside(so, out, c, [S, from])) || out.slice().reverse();
     }
   }
   yield 'opt';
@@ -1352,7 +1417,7 @@ function* layOptions(k) {
   };
   const ways = [];
   for (let m = 0; m < 2 ** (runs.length + (river ? 0 : 1)); m++) {
-    const lapGo = river || !(m & 1) ? lap : flip(lap), bit = river ? 0 : 1;
+    const lapGo = river || !(m & 1) || lap[0] !== lap[lap.length - 1] ? lap : flip(lap), bit = river ? 0 : 1;
     ways.push(() => dayOf(lapGo, runCells.map((rc, q) => ((m >> (q + bit)) & 1 ? flip(rc) : rc))));
   }
   let day = null, over = Infinity;

@@ -26,12 +26,16 @@
 //  10. nothing crosses itself, and every other option is laid from the ramp and is no longer a troll than
 //      Option 1;
 //  11. a line that goes over itself is run the other way between the two passings: the same water, met
-//      there instead of crossed.
+//      there instead of crossed;
+//  12. a lap round an island goes round a shoal off it at his depth, not over it, and the way out comes
+//      onto the lap at one place and the way home leaves it at another.
 //
 // 9 and 10, Ryan 2026-10-06, on his two Murray plans from Hilton: "i troll all the way there... i would be
 // putting lines in as soon as the water is deep enough in that channel on the way there"; "the rest are no
 // where near and i would not run that far"; "option looks to have a lot of switchbacks and isn't really a
 // loop"; "why does this way out from the ramp and the same one for option 1 cross itself".
+// 12, the same day: "your 4ft... is actually right over an island"; "your start and end of the loop at the
+// island doesn't make sense... something more like what i have drawn in purple and yellow"; "that looks better".
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -362,4 +366,29 @@ test('11. a line that goes over itself is run the other way between the two pass
   const x = ['S', 'A', 'B', 'C', 'D', 'A', 'S'];
   assert.equal(crossings(ll(x)), 1);
   assert.equal(crossings(ll(uncross(net, x))), 0);
+});
+
+// THE ISLAND LAKE WITH A SHOAL OFF THE ISLAND'S EAST END: 4 ft from the end of the island out 350 m, and
+// across all of its 20 ft ring and 150 m past it either side -- the small island west of Counts, in a box.
+// Round it is farther from the island than a lap reaches; round it is still where he would go.
+const SHOAL = [...ISLAND, area(4, ring(1900, 650, 2250, 1350))];
+const SHOAL_FT = (x, y) => (x >= 1900 && x <= 2250 && y >= 650 && y <= 1350 ? 4 : ISLAND_FT(x, y));
+const OFF_SHOAL = ROUND.slice(0, 3);
+
+test('12. a lap round an island goes round a shoal off it at his depth, not over it, and the way out comes onto the lap at one place and the way home leaves it at another', () => {
+  const r = trollLoop({ ...DAY, ramp: at(-10, 1000), daFeatures: SHOAL, catches: OFF_SHOAL, allCatches: OFF_SHOAL });
+  assert.ok(!r.error, r.error);
+  const o1 = r.options[0];
+  assert.equal(o1.shape, 'around');
+  assert.ok(windings(o1.ring, [1500, 1000]) > 0.9, `round the island ${windings(o1.ring, [1500, 1000]).toFixed(2)} times`);
+  // nothing trolled is under his alarm: his water less his 5 ft
+  const lo = o1.band[0];
+  for (const l of r.legs) for (const c of l.coords) {
+    const ft = SHOAL_FT(xOf(c), yOf(c));
+    assert.ok(ft == null || ft >= lo - 5, `${ft} ft at ${xOf(c).toFixed(0)}, ${yOf(c).toFixed(0)}`);
+  }
+  // onto the lap and off it a gap apart (his 55 m between a way out and the way back), not at one point
+  const ring = o1.ring, gap = metresBetween(ring[0], ring[ring.length - 1]);
+  assert.ok(gap >= 55, `${gap.toFixed(0)} m between where the way out meets the lap and the way home leaves it`);
+  assert.equal(crossings([...r.legs[0].coords, ...r.legs[1].coords.slice(1)]), 0);
 });
