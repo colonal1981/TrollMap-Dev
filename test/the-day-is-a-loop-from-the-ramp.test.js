@@ -121,16 +121,19 @@ test('3. the line rides the 25 ft contour and comes home on the other edge', () 
   }
 });
 
-test('4. his catches decide which way the loop goes when the water does not', () => {
-  // The same water both ways from the ramp; his fish one way or the other.
+test('4. his catches decide which way the day goes when the water does not', () => {
+  // The same water both ways from the ramp; his fish one way or the other. Since 10/6 the day with his
+  // fish is options (the-day-is-options.test.js), and Option 1 is laid on the water they came from.
   const east = [at(11000, yOf(25)), at(11800, W - yOf(25)), at(12200, yOf(25))].map((a) => ({ at: a }));
   const west = [at(4000, yOf(25))].map((a) => ({ at: a }));
   const rE = trollLoop({ ...BASE, catches: east });
   const rW = trollLoop({ ...BASE, catches: west });
-  const turnX = (r) => xOf(r.petals[0].out[r.petals[0].out.length - 1]);
-  assert.ok(rE.score.fish >= 2, `east passes ${rE.score.fish}`);
-  assert.ok(turnX(rE) > 8000, 'east catches send it east');
-  assert.ok(rW.score.fish >= 1 && turnX(rW) < 8000, 'a west catch sends it west');
+  const lapX = (r) => r.options[0].ring.reduce((a, c) => a + xOf(c), 0) / r.options[0].ring.length;
+  assert.ok(rE.score.fish >= 1, `east passes ${rE.score.fish}`);
+  assert.ok(lapX(rE) > 8000, 'east catches send it east');
+  // three hours do not reach all three from a lap at the nearest: the others are pins, and said
+  assert.equal(rE.options[0].fish + rE.options[0].pins, 3);
+  assert.ok(rW.score.fish >= 1 && lapX(rW) < 8000, 'a west catch sends it west');
 });
 
 test('5. a place he ticked is where the loop turns', () => {
@@ -174,25 +177,25 @@ test('7. Troll it for me lays the loop without freezing the page; Plan it as one
   assert.doesNotMatch(ui, /day = trollDay\(/);
 });
 
-test('8. his fish up a creek with room for one line: the day goes up it to them and says what it trolls twice', () => {
+test('8. his fish up a creek with room for one line: the day goes up it to them, the way he trolls a river', () => {
   // West of the ramp, a creek 100 m wide and all 25 ft: one line fits. His fish are all up the creek.
-  // Until 10/5 the loop went east instead, a loop home on its own water counting for nothing; with lines
-  // between his fish the day goes where he caught them -- up the creek and back the only way there is,
-  // the way he trolls Bates Old River -- and the water trolled twice is measured and said.
+  // Until 10/5 the loop went east instead, a loop home on its own water counting for nothing; with the
+  // day as options (10/6) Option 1 goes where he caught them -- up the creek in its deepest water and
+  // back, the way he trolls Bates Old River -- and runs on to the ones past it the time holds.
   const DA2 = DA.map((f) => ({ ...f, geometry: { ...f.geometry,
     coordinates: [f.geometry.coordinates[0].map(([x, y]) => [Math.max(x, -80 + 8000 / KX), y])] } }));
   DA2.push(rect(0, W / 2 - 50, 8000, W / 2 + 50, 25));
   const creek = [2000, 3500, 5000, 6500].map((x) => ({ at: at(x, W / 2) }));
   const r = trollLoop({ ...BASE, daFeatures: DA2, catches: creek });
   assert.ok(!r.error, r.error);
-  const p = r.petals[0];
-  assert.ok(xOf(p.out[p.out.length - 1]) < 8000, `turned at x ${xOf(p.out[p.out.length - 1]).toFixed(0)} -- not up the creek`);
+  assert.equal(r.options[0].shape, 'river');
+  const out = r.legs[0].coords;
+  assert.ok(xOf(out[out.length - 1]) < 8000, `turned at x ${xOf(out[out.length - 1]).toFixed(0)} -- not up the creek`);
   // three hours reach the three nearest of his four (the fourth is past half the day by water, and does
-  // not count), and the day goes to all three
-  assert.equal(r.score.fish, 3);
+  // not count); the day goes up to two of them, and the third, past what the time holds, is a pin
   assert.equal(r.catches.outOfReach, 1);
-  // up the creek to x 3500 and back the same way: 4.5 km both ways, less the ends a way home may share
-  assert.ok(r.sharedM > 4500 - 4 * SAME_WATER_M, `${r.sharedM} m of ${r.trolledM} m trolled twice -- the creek both ways`);
+  assert.equal(r.score.fish, 2);
+  assert.equal(r.options[0].pins, 1);
   // What it measures: a way home laid on the way out is all shared but its two ends.
   const line = [at(8000, 300), at(4000, 300)];
   const m = sharedWaterM(line, [...line].reverse());
@@ -244,7 +247,7 @@ test('10. the line is the depth with the most of his catches inside his band, th
   // band's line for when none within reach says one; the loop decides from the ones within reach.
   const ui = read('js/modules/plan-water-ui.js');
   assert.match(ui, /const fallback = loopLine\(\{ waterFt: guide, band, holding: T\.holding, steerFt: steer \}\);/);
-  assert.match(ui, /return \{ at, date: c\.date \|\| null, chartFt:/);
+  assert.match(ui, /return \{ at, date: c\.date \|\| null, time: c\.time \|\| null,/);
   assert.doesNotMatch(ui, /const \{ lineFt, floorFt \} = line;/);
   assert.doesNotMatch(ui, /never over water under/);
 });

@@ -25,15 +25,15 @@
  * the track would go".
  *
  * ─────────────────────────────────────────────────────────────────────────────────────────────
- * SINCE 2026-10-05: WITH HIS FISH, THE DAY IS LINES BETWEEN THEM, NOT A DEPTH LINE
+ * SINCE 2026-10-06: WITH HIS FISH, THE DAY IS OPTIONS FROM THEM, NOT A DEPTH LINE
  *
  * Ryan: *"we already know that the one depth line is wrong... It should never have been built around 1
- * depth... that is implying that fish are only at 1 singular depth"* -- after, on 10/4, *"i didn't mean
- * the depth... i meant the locations and drawing lines between them"*. Where his catches of the day's
- * species are within reach of the ramp, fishLines() lays the day: from the ramp through the places he
- * caught them, the shortest way round by water, and home, each loop above the shallowest water its fish
- * came out of less his 5 ft. Everything below about lines and contours is the day on a water where none
- * of his catches of the fish are within reach.
+ * depth... that is implying that fish are only at 1 singular depth"*. Where his catches of the day's
+ * species are within reach of the ramp, lakeOptions() (plan-options.js) lays the day as options: Option
+ * 1 from the ramp, trolled the whole way at his depth, along the edge his fish are on and back on the
+ * other side; the rest water like theirs and no more open than water he has fished there. His three
+ * rules for it are in SETTLED_DO_NOT_REOPEN.md. Everything below about lines and contours is the day on
+ * a water where none of his catches of the fish are within reach.
  *
  * ─────────────────────────────────────────────────────────────────────────────────────────────
  * THE RULE, AND WHERE EVERY PART OF IT COMES FROM
@@ -77,6 +77,7 @@
 import { metresBetween, minutesFor } from './plan-candidates.js';
 import { TROLL_MPH, TRANSIT_MPH, reasons, shallowSide, shoreAspect, todayFt } from './plan-water.js';
 import { HAND_STEER_BAND_FT } from './plan-tracks.js';
+import { lakeOptions } from './plan-options.js';
 
 const M_PER_DEG_LAT = 110540.0;
 const mPerDegLon = (lat) => 111320.0 * Math.cos((lat * Math.PI) / 180);
@@ -777,14 +778,12 @@ export function* trollLoopSteps(o) {
   // ── HIS FISH ARE WHERE THE DAY GOES, NOT A DEPTH ───────────────────────────────────────────────
   // Ryan, 2026-10-05: "we already know that the one depth line is wrong... It should never have been
   // built around 1 depth... that is implying that fish are only at 1 singular depth". With his catches
-  // of the species within reach, the day is lines between the places he caught them (fishLines()); the
+  // of the species within reach, the day is options from them (lakeOptions(), plan-options.js); the
   // contour loops below are only for water where none of his catches of the fish are within reach.
   if (catches.length && !o.contourOnly) {
-    return yield* fishLines({
-      o, G, n, ramp, rc, cove, coveCrossesShore, catches, chartOf, off, steer, sameM, corridorM, flat,
-      budgetM, budgetMin, reachM, trollMph, transitMph, maxPetals,
+    return yield* lakeOptions({
+      o, G, ramp, catches, off, steer, budgetM, budgetMin, trollMph,
       marks: (o.marks || []).filter((m) => m && Array.isArray(m.at)),
-      vias: (o.via || []).filter((v) => Array.isArray(v)),
       counts: { offWater, outOfReach },
     });
   }
@@ -1510,8 +1509,7 @@ export function turnsReached(turns, loop, withinM) {
   // Potato Creek's mouth was 400 m off and still the loop he asked for.
   const told = petals.some((p) => p && p.via != null);
   return (turns || []).map((at, i) => {
-    // A loop between his fish can go to more than one of his turns (fishLines(): `vias`).
-    const pi = told ? petals.findIndex((p) => p && (p.via === i || (Array.isArray(p.vias) && p.vias.includes(i)))) : -1;
+    const pi = told ? petals.findIndex((p) => p && p.via === i) : -1;
     const mine = pi >= 0 ? legs.filter((l) => l.petal === pi) : legs;
     let best = Infinity;
     for (const l of mine) for (const c of densify(l.coords || [], 20)) {
@@ -1565,419 +1563,6 @@ export function pairAtCrossings(out, back, xs) {
   return { out: o2, back: h2.reverse() };
 }
 
-// ── LINES BETWEEN HIS FISH ──────────────────────────────────────────────────────────────────────
-//
-// Ryan, 2026-10-04, on Moultrie: *"if you draw a line from the dam where those 4 fish are clustered and
-// go straight north to where the other 4 fish are clustered that is where i troll... i have never one
-// hit those shallow flats wayyyyyyyyyyyy over there"*, *"i didn't mean the depth... i meant the
-// locations and drawing lines between them"*, and *"there is no 1 depth that gets all of them...
-// because they are all in different sections"*. Then 2026-10-05: *"we already know that the one depth
-// line is wrong... It should never have been built around 1 depth... that is implying that fish are
-// only at 1 singular depth"*.
-//
-// So the day is this, and no depth line is in it:
-//
-//   THE PLACES. His catches of the species on this water and within reach of the ramp, each once (the
-//   caller's oneFishEach), gathered into places: a catch within the app's "same water" (100 m) of a
-//   place's first catch is that place. A turn he clicks is a place the day must go to.
-//
-//   THE LINES. Between two places the line is the shortest way by water -- depth is not weighted (his
-//   10/1 rule: "depth itself shouldn't be weighted"), so over open water it is the straight line he
-//   draws between them. It never goes shallower than the shallower of the two places' water less the
-//   5 ft he steers within (HAND_STEER_BAND_FT): the shallow edge of the Contour alarm each loop has
-//   kept since 10/4 (*"the route that is supposed to be over 28 ft of water now runs through 14ft"*),
-//   now taken from the water his fish came out of at each end of the line, not from one line for the
-//   loop. A place's water is the shallowest chart under its fish, today.
-//
-//   THE DAY. From the ramp through as many of his fish as the time holds, in the order that is
-//   shortest by water (exact over every order, for up to MAX_PLACES places), and home. Where the way
-//   between two places runs past the ramp anyway, the day is two loops there. Each loop is two legs,
-//   out to the place farthest from the ramp and home, and the way home keeps 100 m off the way out
-//   where the water has room, as it always has. Time over is his: no line is added for filling it.
-//
-// Pure, like the rest of this file.
-export const MAX_PLACES = 16;
-
-/** Metres by water from `src` to each of `targets` over `cost` (1 a metre where open), stopping once all are reached. */
-function metresTo(G, cost, src, targets) {
-  const { w, h, cellM } = G, n = w * h;
-  const dist = new Float64Array(n).fill(Infinity);
-  const want = new Map(targets.map((t) => [t, true]));
-  let left = want.size;
-  const out = new Map();
-  const heap = new Heap();
-  dist[src] = 0; heap.push(0, src);
-  if (want.has(src)) { out.set(src, 0); left--; }
-  while (heap.n && left > 0) {
-    const c = heap.pop();
-    if (heap.lastKey > dist[c] + 1e-6) continue;
-    if (want.has(c) && !out.has(c)) { out.set(c, dist[c]); left--; }
-    const i = c % w, j = (c - i) / w;
-    for (const [di, dj] of NB) {
-      const i2 = i + di, j2 = j + dj;
-      if (i2 < 0 || j2 < 0 || i2 >= w || j2 >= h) continue;
-      const c2 = j2 * w + i2;
-      if (!(cost[c2] < Infinity)) continue;
-      if (di && dj && !(cost[j * w + i2] < Infinity && cost[j2 * w + i] < Infinity)) continue;
-      const nd = dist[c] + (di && dj ? cellM * Math.SQRT2 : cellM) * (cost[c] + cost[c2]) / 2;
-      if (nd < dist[c2]) { dist[c2] = nd; heap.push(nd, c2); }
-    }
-  }
-  return out;
-}
-
-/**
- * THE PLACES HE CAUGHT FISH, from his catches: a catch within `sameM` of a place's first catch is that
- * place. Each place stands at the catch nearest the middle of its catches, and its water is the
- * shallowest of its catches' water.
- *
- * @param {object[]} catches  [{at:[lon,lat]}]
- * @param {function} ftOf     catch -> today's water under it, ft
- * @returns {{at:number[], fish:object[], ft:number}[]}
- */
-export function placesOf(catches, ftOf, sameM = SAME_WATER_M) {
-  const places = [];
-  for (const m of catches || []) {
-    const p = places.find((q) => metresBetween(q.seed, m.at) <= sameM);
-    if (p) p.fish.push(m); else places.push({ seed: m.at, fish: [m] });
-  }
-  return places.map((p) => {
-    const mx = p.fish.reduce((a, m) => a + m.at[0], 0) / p.fish.length, my = p.fish.reduce((a, m) => a + m.at[1], 0) / p.fish.length;
-    let at = p.fish[0].at, bd = Infinity;
-    for (const m of p.fish) { const d = metresBetween(m.at, [mx, my]); if (d < bd) { bd = d; at = m.at; } }
-    const fts = p.fish.map(ftOf).filter((v) => v != null && Number.isFinite(Number(v))).map(Number);
-    return { at, fish: p.fish, ft: fts.length ? Math.min(...fts) : null };
-  });
-}
-
-/**
- * THE ORDER, AND WHICH PLACES: the most of his fish the time holds, then the shortest way round them.
- * Exact over every order (a bitmask DP over the places, the ramp end at index 0). `D` is metres by
- * water between stops, Infinity where there is no way at their water.
- *
- * @param {number[][]} D        (k x k), stop 0 the ramp end
- * @param {number[]}   value    fish at each stop (0 for the ramp end)
- * @param {number}     budgetM  the most the lines may run
- * @param {number[]}   required stops the day must go to (his turns)
- * @returns {{order:number[], m:number, fish:number}|null}  order starts and ends at 0
- */
-export function bestOrder(D, value, budgetM, required = []) {
-  const k = D.length, m = k - 1;
-  if (m <= 0) return null;
-  const full = 1 << m;
-  const dp = new Float64Array(full * m).fill(Infinity), par = new Int8Array(full * m).fill(-1);
-  for (let j = 0; j < m; j++) dp[(1 << j) * m + j] = D[0][j + 1];
-  for (let mask = 1; mask < full; mask++) {
-    for (let j = 0; j < m; j++) {
-      if (!(mask & (1 << j))) continue;
-      const v = dp[mask * m + j];
-      if (!(v < Infinity) || v > budgetM) continue;
-      for (let t = 0; t < m; t++) {
-        if (mask & (1 << t)) continue;
-        const nd = v + D[j + 1][t + 1];
-        const nm = (mask | (1 << t)) * m + t;
-        if (nd < dp[nm]) { dp[nm] = nd; par[nm] = j; }
-      }
-    }
-  }
-  let req = 0;
-  for (const r of required) if (r > 0) req |= 1 << (r - 1);
-  let best = null;
-  for (let mask = 1; mask < full; mask++) {
-    if ((mask & req) !== req) continue;
-    let fish = 0;
-    for (let j = 0; j < m; j++) if (mask & (1 << j)) fish += value[j + 1] || 0;
-    if (best && fish < best.fish) continue;
-    for (let j = 0; j < m; j++) {
-      if (!(mask & (1 << j))) continue;
-      const tot = dp[mask * m + j] + D[j + 1][0];
-      if (!(tot <= budgetM)) continue;
-      if (!best || fish > best.fish || (fish === best.fish && tot < best.m)) best = { mask, j, m: tot, fish };
-    }
-  }
-  if (!best) return null;
-  const order = [];
-  let mask = best.mask, j = best.j;
-  while (j >= 0) { order.push(j + 1); const pj = par[mask * m + j]; mask &= ~(1 << j); j = pj; }
-  return { order: [0, ...order.reverse(), 0], m: best.m, fish: best.fish };
-}
-
-/**
- * WHERE THE DAY PASSES THE RAMP ANYWAY, it is two loops: between two places whose way goes by the ramp
- * end -- the way through it no longer than the way between them and the same water twice (100 m out,
- * 100 m back) -- the day goes home and out again. At most `maxLoops` loops.
- */
-export function loopsOf(order, D, sameM = SAME_WATER_M, maxLoops = 4) {
-  const cuts = [];
-  for (let i = 1; i + 2 < order.length; i++) {
-    const a = order[i], b = order[i + 1];
-    const via = D[a][0] + D[0][b] - D[a][b];
-    if (via <= 2 * sameM) cuts.push({ i, via });
-  }
-  cuts.sort((x, y) => x.via - y.via);
-  const at = new Set(cuts.slice(0, maxLoops - 1).map((c) => c.i));
-  const loops = [];
-  let cur = [];
-  for (let i = 1; i < order.length - 1; i++) {
-    cur.push(order[i]);
-    if (at.has(i)) { loops.push(cur); cur = []; }
-  }
-  if (cur.length) loops.push(cur);
-  return loops;
-}
-
-function* fishLines(k) {
-  const { o, G, n, ramp, rc, cove, coveCrossesShore, catches, chartOf, off, steer, sameM, corridorM, flat,
-          budgetM, budgetMin, reachM, trollMph, transitMph, maxPetals, marks, vias, counts } = k;
-  const todayOf = (m) => { const ch = chartOf(m); return ch == null ? null : todayFt(ch, off); };
-  const rWin = Math.ceil((3 * sameM) / G.cellM);
-  // The water nearest a point that a line at `edge` may use and the ramp can reach: within three
-  // times the same water, the reach a clicked turn has always had.
-  const waterNear = (at, edge) => {
-    const vc = G.cellOf(at);
-    if (vc < 0) return -1;
-    const vi = vc % G.w, vj = (vc - vi) / G.w;
-    let best = -1, bd = Infinity;
-    for (let dj = -rWin; dj <= rWin; dj++) for (let di = -rWin; di <= rWin; di++) {
-      const i2 = vi + di, j2 = vj + dj;
-      if (i2 < 0 || j2 < 0 || i2 >= G.w || j2 >= G.h) continue;
-      const c = j2 * G.w + i2, dd = Math.hypot(di, dj);
-      if (dd > rWin || dd >= bd) continue;
-      if (!(flat[c] < Infinity) || !(cove.len[c] < Infinity) || !(G.d[c] >= edge)) continue;
-      bd = dd; best = c;
-    }
-    return best;
-  };
-
-  // ── THE PLACES ─────────────────────────────────────────────────────────────────────────────────
-  let places = placesOf(catches, todayOf, sameM)
-    .filter((p) => p.ft != null)
-    .map((p) => ({ ...p, cell: waterNear(p.at, p.ft - steer) }))
-    .filter((p) => p.cell >= 0);
-  const turns = vias.map((at, vi) => {
-    const c0 = waterNear(at, -Infinity);
-    return c0 < 0 ? null : { at, vi, cell: c0, ft: G.d[c0], fish: [] };
-  });
-  if (!places.length && !turns.some(Boolean)) return { error: 'none of your catches of this fish here is on water the ramp can reach' };
-  // MAX_PLACES at most, his turns first, then the places with the most of his fish, nearest first.
-  const turnStops = turns.filter(Boolean);
-  if (places.length + turnStops.length > MAX_PLACES) {
-    places = places.slice().sort((a, b) => b.fish.length - a.fish.length || cove.len[a.cell] - cove.len[b.cell])
-      .slice(0, Math.max(0, MAX_PLACES - turnStops.length));
-  }
-
-  // ── WHERE THE LINES START: the nearest water by water from the ramp as deep as the shallowest place ─
-  const shallowest = Math.min(...[...places, ...turnStops].map((p) => p.ft));
-  let S = -1, sl = Infinity;
-  for (let c = 0; c < n; c++) {
-    if (!(flat[c] < Infinity) || !(G.d[c] >= shallowest) || !(cove.len[c] < sl)) continue;
-    sl = cove.len[c]; S = c;
-  }
-  if (S < 0) return { error: `no water ${Math.round(shallowest)} ft deep can be reached from the ramp` };
-  const outOfCove = (pathTo(cove.prev, rc, S) || [rc, S]).map(G.lonLat);
-  outOfCove[0] = ramp;
-  const coveM = lineM(outOfCove);
-  const loopBudgetM = budgetM - 2 * coveM * (trollMph / transitMph);
-
-  // ── WHAT A METRE COSTS: one, on water at least as deep as a line's edge; nothing else is weighed ─
-  const costs = new Map();
-  const costAt = (edge) => {
-    const key = Math.round(edge * 10);
-    let c = costs.get(key);
-    if (c) return c;
-    if (costs.size >= 4) costs.delete(costs.keys().next().value);
-    c = new Float64Array(n);
-    for (let q = 0; q < n; q++) c[q] = flat[q] < Infinity && G.d[q] >= edge ? 1 : Infinity;
-    costs.set(key, c);
-    return c;
-  };
-
-  // ── EVERY WAY BETWEEN TWO STOPS, at the shallower one's water less his band ───────────────────────
-  const solve = function* (pl) {
-    const stops = [{ cell: S, ft: G.d[S], fish: [], at: G.lonLat(S) }, ...pl, ...turnStops];
-    const kk = stops.length;
-    const D = Array.from({ length: kk }, () => new Array(kk).fill(Infinity));
-    for (let i = 0; i < kk; i++) {
-      D[i][i] = 0;
-      const tg = [];
-      for (let j = 0; j < kk; j++) if (j !== i && stops[j].ft >= stops[i].ft) tg.push(stops[j].cell);
-      if (!tg.length) continue;
-      yield 'turn';
-      const got = metresTo(G, costAt(stops[i].ft - steer), stops[i].cell, tg);
-      for (let j = 0; j < kk; j++) {
-        if (j === i || !(stops[j].ft >= stops[i].ft)) continue;
-        const v = got.get(stops[j].cell);
-        if (v != null && v < D[i][j]) { D[i][j] = v; D[j][i] = v; }
-      }
-    }
-    const value = stops.map((s) => s.fish.length);
-    const req = stops.map((s, i) => (s.vi != null ? i : -1)).filter((i) => i > 0);
-    return { stops, D, best: bestOrder(D, value, loopBudgetM, req) };
-  };
-
-  // ── LAY THE LINES, and if the lines laid run past the day, leave out the place worth least ────────
-  const crossM = 2 * n * Math.SQRT2;
-  const near = (a, b, m) => {
-    const ai = a % G.w, aj = (a - ai) / G.w, bi = b % G.w, bj = (b - bi) / G.w;
-    return Math.hypot(ai - bi, aj - bj) * G.cellM < m;
-  };
-  const segment = (a, b, edge, keep) => {
-    const cost = costAt(edge);
-    if (keep) {
-      const blocked = new Uint8Array(n);
-      for (const c of keep.cells) if (!keep.free.some((f) => near(c, f, 2 * sameM))) blocked[c] = 1;
-      const t = shortestFrom(G, cost, a, { blocked, dst: b });
-      const p = pathTo(t.prev, a, b);
-      if (p) return { cells: p, coords: straighten(G, cost, p, blocked).map(G.lonLat), kept: true };
-      // No room for two lines: across the way out only where the water leaves no other way.
-      const c2 = Float64Array.from(cost);
-      for (let c = 0; c < n; c++) if (blocked[c] && c2[c] < Infinity) c2[c] += crossM;
-      const t2 = shortestFrom(G, c2, a, { dst: b });
-      const p2 = pathTo(t2.prev, a, b);
-      return p2 ? { cells: p2, coords: straighten(G, c2, p2).map(G.lonLat), kept: false } : null;
-    }
-    const t = shortestFrom(G, cost, a, { dst: b });
-    const p = pathTo(t.prev, a, b);
-    return p ? { cells: p, coords: straighten(G, cost, p).map(G.lonLat), kept: true } : null;
-  };
-  const corridorOf = (cellsList) => {
-    const r = Math.ceil(sameM / G.cellM), seen = new Uint8Array(n), out = [];
-    for (const c of cellsList) {
-      const i = c % G.w, j = (c - i) / G.w;
-      for (let dj = -r; dj <= r; dj++) for (let di = -r; di <= r; di++) {
-        if (di * di + dj * dj > r * r) continue;
-        const i2 = i + di, j2 = j + dj;
-        if (i2 < 0 || j2 < 0 || i2 >= G.w || j2 >= G.h) continue;
-        const c2 = j2 * G.w + i2;
-        if (!seen[c2]) { seen[c2] = 1; out.push(c2); }
-      }
-    }
-    return out;
-  };
-
-  let pl = places.slice(), laid = null;
-  for (let tries = 0; tries <= places.length; tries++) {
-    const sol = yield* solve(pl);
-    if (!sol.best) {
-      if (!pl.length) break;
-      // Nothing fits: drop the place worth least -- fewest fish, then farthest -- and try again.
-      pl = pl.slice().sort((a, b) => b.fish.length - a.fish.length || cove.len[a.cell] - cove.len[b.cell]).slice(0, -1);
-      continue;
-    }
-    const { stops, D, best } = sol;
-    const loops = loopsOf(best.order, D, sameM, maxPetals);
-    const petals = [];
-    for (const lp of loops) {
-      yield 'turn';
-      // the turn: the place in the loop farthest from the ramp end by water
-      let ti = 0;
-      lp.forEach((s, i) => { if (D[0][s] > D[0][lp[ti]]) ti = i; });
-      const seqOut = [0, ...lp.slice(0, ti + 1)], seqBack = [...lp.slice(ti), 0];
-      // EACH LINE KEEPS ABOVE THE WATER HIS FISH AT ITS TWO ENDS CAME OUT OF, less his band: a line between
-      // two places he caught them over 25 ft does not cut across a 10 ft flat because a third fish of the
-      // loop was caught over 8 ft at the bank (Wateree, 10/5: one over 8 ft made a whole loop's edge 3 ft).
-      // Ryan, 10/4: "the route that is supposed to be over 28 ft of water now runs through 14ft".
-      const edgeOf = (a, b) => Math.min(stops[a].ft, stops[b].ft) - steer;
-      const outSegs = [], backSegs = [];
-      let ok = true;
-      for (let i = 1; i < seqOut.length && ok; i++) {
-        const sg = segment(stops[seqOut[i - 1]].cell, stops[seqOut[i]].cell, edgeOf(seqOut[i - 1], seqOut[i]), null);
-        if (!sg) ok = false; else outSegs.push({ ...sg, edge: edgeOf(seqOut[i - 1], seqOut[i]) });
-      }
-      const outCells = outSegs.flatMap((s) => s.cells);
-      const keep = { cells: corridorOf(outCells), free: [S, stops[lp[ti]].cell] };
-      for (let i = 1; i < seqBack.length && ok; i++) {
-        const a = stops[seqBack[i - 1]].cell, b = stops[seqBack[i]].cell;
-        const sg = segment(a, b, edgeOf(seqBack[i - 1], seqBack[i]), { cells: keep.cells, free: [...keep.free, a, b] });
-        if (!sg) ok = false; else backSegs.push({ ...sg, edge: edgeOf(seqBack[i - 1], seqBack[i]) });
-      }
-      if (!ok) { petals.length = 0; break; }
-      const join = (segs) => segs.reduce((acc, s) => (acc.length ? acc.concat(s.coords.slice(1)) : s.coords.slice()), []);
-      const outC = join(outSegs), backC = join(backSegs);
-      petals.push({ stops: lp.map((s) => stops[s]), turn: stops[lp[ti]], out: outC, back: backC, coords: outC.concat(backC.slice(1)),
-                    m: lineM(outC) + lineM(backC), outEdge: Math.min(...outSegs.map((s) => s.edge)),
-                    backEdge: Math.min(...backSegs.map((s) => s.edge)), kept: backSegs.every((s) => s.kept),
-                    vis: lp.map((s) => stops[s].vi).filter((v) => v != null) });
-    }
-    const total = petals.reduce((a, p) => a + p.m, 0);
-    if (petals.length && total <= loopBudgetM * 1.02) { laid = { petals, best, stops }; break; }
-    if (!pl.length) { if (petals.length) laid = { petals, best, stops }; break; }
-    // Laid, the lines run longer than the order said (the way home keeping off the way out): leave out
-    // the place worth least and lay the day again.
-    pl = pl.slice().sort((a, b) => b.fish.length - a.fish.length || cove.len[a.cell] - cove.len[b.cell]).slice(0, -1);
-  }
-  if (!laid) return { error: 'no line from the ramp to the places you caught this fish fits the day' };
-
-  // ── WHAT EACH LOOP PASSES, in the order they are fished: his catches within 100 m, marks within 50 m ─
-  const taken = new Set();
-  const petals = laid.petals.map((p, i) => {
-    let fish = 0, passes = 0, structure = 0;
-    for (const a of marksAlong(p.coords, catches, sameM)) { passes++; if (!taken.has(a.mark)) fish++; }
-    for (const a of marksAlong(p.coords, marks, corridorM)) if (!taken.has(a.mark)) structure++;
-    for (const a of marksAlong(p.coords, catches, sameM)) taken.add(a.mark);
-    for (const a of marksAlong(p.coords, marks, corridorM)) taken.add(a.mark);
-    const earlier = laid.petals.slice(0, i).map((q) => ({ coords: q.coords, withinM: sameM }));
-    const sharedM = sharedWaterM(p.out, p.back, sameM, earlier);
-    const fts = p.stops.flatMap((s) => s.fish.map(todayOf)).filter((v) => v != null);
-    return { ...p, score: { fish, passes, structure }, sharedM, newM: p.m - sharedM, lineFt: null,
-             edgeFt: Math.min(p.outEdge, p.backEdge), places: p.stops.filter((s) => s.fish.length).length,
-             fishFt: fts.length ? [Math.round(Math.min(...fts)), Math.round(Math.max(...fts))] : null };
-  });
-  const loopM = petals.reduce((a, p) => a + p.m, 0);
-  const newM = petals.reduce((a, p) => a + p.newM, 0);
-  const legs = [];
-  petals.forEach((pt, pi) => {
-    for (const half of ['out', 'back']) {
-      const c = pt[half];
-      let deep = -Infinity;
-      const r = Math.ceil(250 / G.cellM);
-      for (let q = 0; q < c.length; q += 3) {
-        const cc = G.cellOf(c[q]); if (cc < 0) continue;
-        const ci = cc % G.w, cj = (cc - ci) / G.w;
-        for (let dj = -r; dj <= r; dj += 2) for (let di = -r; di <= r; di += 2) {
-          if (di * di + dj * dj > r * r) continue;
-          const i2 = ci + di, j2 = cj + dj;
-          if (i2 < 0 || j2 < 0 || i2 >= G.w || j2 >= G.h) continue;
-          const v = G.d[j2 * G.w + i2]; if (v > deep) deep = v;
-        }
-      }
-      legs.push({ coords: c, lengthM: Math.round(lineM(c)), petal: pi, half, lineFt: null,
-                  edgeFt: half === 'out' ? pt.outEdge : pt.backEdge,
-                  deepestNearbyFt: Number.isFinite(deep) ? Math.round((deep + off) * 10) / 10 : null });
-    }
-  });
-  const score = petals.reduce((a, p) => ({ fish: a.fish + p.score.fish, passes: a.passes + p.score.passes,
-                                           structure: a.structure + p.score.structure }), { fish: 0, passes: 0, structure: 0 });
-  const allFt = catches.map(todayOf).filter((v) => v != null);
-  const placesUsed = laid.stops.filter((s) => s.fish.length);
-  return {
-    mode: 'fish',
-    ramp, lineFt: null, steerFt: steer,
-    line: { from: 'places', n: catches.length, places: places.length,
-            rangeFt: allFt.length ? [Math.min(...allFt), Math.max(...allFt)] : null },
-    places: placesUsed.map((s) => ({ at: s.at, fish: s.fish.length, ft: Math.round(s.ft) })),
-    placesLeftOut: places.length - placesUsed.length,
-    catches: { used: catches.length, offWater: counts.offWater, outOfReach: counts.outOfReach, reachM: Math.round(reachM) },
-    cove: outOfCove, coveM: Math.round(coveM), coveCrossesShore,
-    start: G.lonLat(S),
-    legs,
-    petals: petals.map((p) => ({ out: p.out, back: p.back, m: Math.round(p.m), sharedM: Math.round(p.sharedM),
-                                 lineFt: null, edgeFt: p.edgeFt, score: p.score, via: p.vis.length ? p.vis[0] : null, vias: p.vis,
-                                 places: p.places, fishFt: p.fishFt, kept: p.kept })),
-    trolledM: Math.round(loopM), sharedM: Math.round(petals.reduce((a, p) => a + p.sharedM, 0)),
-    runM: Math.round(2 * coveM),
-    minutes: Math.round(minutesFor(loopM, trollMph) + 2 * minutesFor(coveM, transitMph)),
-    budgetMin: Math.round(budgetMin),
-    fillsDay: newM >= loopBudgetM * 0.85,
-    fillsTime: loopM >= loopBudgetM * 0.85,
-    onceMinutes: Math.round(minutesFor(newM, trollMph) + 2 * minutesFor(coveM, transitMph)),
-    fillingDay: null,
-    score,
-    tried: [],
-    grid: { w: G.w, h: G.h, cellM: G.cellM },
-  };
-}
-
 /** trollLoopSteps() run straight through. */
 export function trollLoop(o) {
   const g = trollLoopSteps(o);
@@ -1998,7 +1583,7 @@ export async function trollLoopAsync(o, onStep) {
     if (r.done) return r.value;
     if (r.value === 'turn') n++;
     if (now() - t > 40) {
-      if (onStep) onStep(n);
+      if (onStep) onStep(n, r.value);
       await new Promise((res) => setTimeout(res, 0));
       t = now();
     }

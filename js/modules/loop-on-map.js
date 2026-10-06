@@ -21,16 +21,19 @@
  *   4. "Build this loop" asks the model for baits, stops and times (buildFromPicked) and the plan
  *      replaces the loop on the map.
  *
- * THE LOOP IS HIS FISH. Where his catches of this species are within reach, the day is lines between
- * the places he caught them (fishLines() in plan-troll-loop.js; Ryan, 10/5: "It should never have been
- * built around 1 depth"), and a turn he clicks is one more place the day goes to. Where none are, it is
- * the contour loop, and a click is where a loop turns. The bar says what each loop passes.
+ * THE DAY IS OPTIONS FROM HIS FISH. Where his catches of this species are within reach, the day is laid
+ * as options (plan-options.js; Ryan, 10/5: "It should never have been built around 1 depth"): Option 1
+ * from the ramp over his fish and back, the rest water like theirs, every one numbered on the map and in
+ * the GPX. A click on the water is not a turn then -- the options are laid from his fish. Where none of
+ * his fish are within reach it is the contour loop, and a click is where a loop turns. The bar says what
+ * each option or loop is.
  */
 
 import { state } from '../core/state.js';
 import { LOOP_COLORS, TRANSIT_COLOR } from './plan-to-timeline.js';
 import { turnsReached } from './plan-troll-loop.js';
-import { findWater, trollForMe, buildFromPicked, loopForMap, riverHere } from './plan-water-ui.js';
+import { findWater, trollForMe, buildFromPicked, loopForMap, riverHere, optionShapeSaid, bandFromSaid } from './plan-water-ui.js';
+import { optionColor, optionBadge } from './plan-tracks.js';
 
 const MAX_TURNS = 4;           // a day is at most four loops (trollLoop's maxPetals)
 const S = {
@@ -42,6 +45,7 @@ const S = {
   hidOld: false,
   lines: null, marks: null, bar: null, barEl: null, watch: 0, clickTimer: 0, wired: false,
   lineFt: null,
+  options: false,              // the day on the map is laid as options: a click is not a turn
 };
 
 const $ = (id) => document.getElementById(id);
@@ -125,6 +129,8 @@ async function relay({ fit = false } = {}) {
         continue;
       }
       S.lineFt = loop.lineFt;
+      S.options = loop.mode === 'options';
+      if (S.options) S.turns = [];   // the options are laid from his fish; no turn goes into them
       const r = turnsReached(S.turns.map((t) => t.at), loop);
       S.turns.forEach((t, i) => { t.reached = r[i].reached; t.offM = r[i].offM; t.passedBy = r[i].passedBy; });
       drawLoop(loop, fit);
@@ -184,6 +190,11 @@ function wire() {
 
 function addTurn(at) {
   if (!S.on || S.building) return;
+  if (S.options) {
+    setBar({ note: 'These options are laid from your fish, so a click is not a turn. Every option is numbered on the '
+      + 'map and goes in the GPX; the plan is built from Option 1.' });
+    return;
+  }
   if (S.turns.length >= MAX_TURNS) {
     setBar({ note: `A day is at most ${MAX_TURNS} loops, so at most ${MAX_TURNS} turns. Click a number to take one off first.` });
     return;
@@ -241,6 +252,22 @@ function drawLoop(loop, fit) {
     L.polyline(c, { color: home ? pair[1] : pair[0], weight: 3, opacity: 1, interactive: false,
                     ...(home ? { dashArray: '12,6' } : {}) }).addTo(g);
     pts.push(...c);
+  }
+  // THE OTHER OPTIONS, each in its kind's colour, dotted where it is water like his fish's, and every
+  // option's number on it -- Option 1's on its lap, where the day is fished.
+  for (const op of loop.options || []) {
+    const color = optionColor(op);
+    if (op.n > 1 && (op.coords || []).length > 1) {
+      const c = op.coords.map(ll);
+      L.polyline(c, { color: '#000', weight: 5, opacity: 0.45, interactive: false }).addTo(g);
+      L.polyline(c, { color, weight: 2.5, opacity: 0.95, interactive: false, ...(op.own ? {} : { dashArray: '3,6' }) }).addTo(g);
+      pts.push(...c);
+    }
+    const at = op.n > 1 && (op.coords || []).length > 1 ? op.coords[Math.floor(op.coords.length / 4)] : op.at;
+    if (Array.isArray(at)) {
+      L.marker(ll(at), { interactive: false, keyboard: false,
+        icon: L.divIcon({ className: '', iconSize: [22, 22], iconAnchor: [11, 11], html: optionBadge(op.n, color) }) }).addTo(g);
+    }
   }
   if (Array.isArray(loop.ramp)) {
     L.circleMarker(ll(loop.ramp), { radius: 7, color: '#000', weight: 2.5, fillColor: '#ff1744', fillOpacity: 1, interactive: false }).addTo(g);
@@ -368,6 +395,8 @@ function setBar(o) {
     }
     n.textContent = o.note;
     return;
+  } else if (o.loop && o.loop.mode === 'options') {
+    body = optionsBar(o.loop, snap);
   } else if (o.loop) {
     const loop = o.loop;
     const byPetal = (loop.petals || []).map((p, i) => {
@@ -380,16 +409,15 @@ function setBar(o) {
         + `background:${col};margin-right:6px;vertical-align:-1px"></span><b>Loop ${i + 1}</b>`
         // and the shallow edge of its own Contour alarm, which it never goes under
         + `${p.lineFt != null ? ` on ${Math.round(p.lineFt)} ft` : ''}`
-        + `${p.lineFt == null && p.places ? ' through the places you caught them' : ''}`
-        + `${p.edgeFt != null && (p.lineFt != null || p.edgeFt > 0) ? `, never under ${Math.round(p.edgeFt)} ft` : ''}: ${mi(out)} out, ${mi(back)} home`
+        + `${p.edgeFt != null ? `, never under ${Math.round(p.edgeFt)} ft` : ''}: ${mi(out)} out, ${mi(back)} home`
         // Every catch it goes past, the ones an earlier loop passed too -- going round again is the point.
         + ` · past ${s.passes != null ? s.passes : (s.fish || 0)} of your ${esc(snap.species || '')} catches and ${plural(s.structure || 0, 'charted mark')}</div>`;
     }).join('');
     const missed = S.turns.filter((t) => t.reached === false && t.passedBy == null).length;
     // WHICH LINE EACH LOOP RIDES -- his fish's line first, then round the same water a band over.
     const lines = [...new Set((loop.petals || []).map((p) => Math.round(p.lineFt != null ? p.lineFt : loop.lineFt)))];
-    body = `<div style="margin-top:6px">${mi(loop.trolledM)} trolled ${loop.mode === 'fish' ? 'on lines between the places you caught them'
-        : `on ${lines.length === 1 ? `the ${lines[0]} ft line` : `the ${lines.slice(0, -1).join(', ')} and ${lines[lines.length - 1]} ft lines`}`}: `
+    body = `<div style="margin-top:6px">${mi(loop.trolledM)} trolled `
+      + `on ${lines.length === 1 ? `the ${lines[0]} ft line` : `the ${lines.slice(0, -1).join(', ')} and ${lines[lines.length - 1]} ft lines`}: `
       + `about ${hours(loop.minutes)} of your ${hours(loop.budgetMin)}.</div>`
       + byPetal
       + (missed ? `<div style="margin-top:6px;color:#ff8a80">${missed === 1 ? 'The turn' : `${missed} turns`} in red can't be reached, `
@@ -402,4 +430,35 @@ function setBar(o) {
       + '<div style="margin-top:4px;color:#9fb3c3;font-size:11px">Baits, stops and times: about two minutes on Claude.</div>';
   }
   S.barEl.innerHTML = head + body;
+}
+
+/** The bar for a day laid as options: what each one is, in number order, and Build for Option 1. */
+function optionsBar(loop, snap) {
+  const k0 = (loop.kinds || [])[0] || {};
+  const ft = (b) => `${Math.round(b[0])}–${Math.round(b[1])} ft`;
+  const km = (m) => `${((Number(m) || 0) / 1000).toFixed(1)} km`;
+  const rows = (loop.options || []).map((op) => {
+    const dot = `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${optionColor(op)};`
+      + 'margin-right:6px;vertical-align:-1px"></span>';
+    const what = op.n === 1
+      ? `${esc(optionShapeSaid(op))}${op.bandFrom === 'deepest' ? '' : `, ${ft(op.band)}`} (${esc(bandFromSaid(op, k0.readings || 0))})`
+        + ` · ${mi(loop.trolledM)}, about ${hours(loop.minutes)} of your ${hours(loop.budgetMin)}`
+        + ` · past ${plural(loop.score.fish || 0, 'catch', 'catches')} of your ${esc(snap.species || '')}`
+        + (op.runs ? `, ${plural(op.runs, 'run')} off it` : '') + (op.pins ? `, ${op.pins} too far (pins)` : '')
+      : op.own
+        ? `the other water your fish came from, ${ft(op.band)} · ${plural(op.fish || 0, 'fish', 'fish')} · ${km(op.fromRampM)} from the ramp · ${mi(op.lengthM)} a lap`
+        : `water like your fish's (closest ${op.top}% of this lake), ${ft(op.band)} · ${km(op.fromRampM)} from the ramp · ${mi(op.lengthM)} a lap`;
+    return `<div style="margin-top:4px">${dot}<b>Option ${op.n}</b>${op.n === 1 ? ' <i>(the day)</i>' : ''}: ${what}</div>`;
+  }).join('');
+  const dropped = (loop.dropped || []).length;
+  return `<div style="margin-top:6px">${plural((loop.options || []).length, 'option')} from your fish, numbered on the map. `
+      + 'Every one goes in the GPX; the plan is built from Option 1.</div>'
+    + rows
+    + (dropped ? `<div style="margin-top:4px;color:#9fb3c3">${plural(dropped, 'more place')} like it left out: more open than any `
+      + 'water you have fished here.</div>' : '')
+    + `<details style="margin-top:6px"><summary style="cursor:pointer;color:#9fb3c3">Why these options</summary>`
+    + `<div style="margin-top:4px;color:#c9d6df;max-height:9em;overflow:auto">${esc(snap.status)}</div></details>`
+    + '<div style="margin-top:8px"><button data-lom="build" class="primary" style="width:100%;height:34px;font-weight:700">'
+    + 'Build Option 1</button></div>'
+    + '<div style="margin-top:4px;color:#9fb3c3;font-size:11px">Baits, stops and times: about two minutes on Claude.</div>';
 }

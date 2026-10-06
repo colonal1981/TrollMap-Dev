@@ -39,7 +39,7 @@
  */
 
 import { state } from '../core/state.js';
-import { LEG_COLORS, TRANSIT_COLOR, RETURN_COLOR, loopColor, loopOf } from './plan-to-timeline.js';
+import { LEG_COLORS, LOOP_COLORS, TRANSIT_COLOR, RETURN_COLOR, loopColor, loopOf } from './plan-to-timeline.js';
 import { metresBetween, markLabel } from './plan-candidates.js';
 import { todayDepthFt } from '../utils/water-conditions.js';
 
@@ -827,6 +827,81 @@ export function planWaypoints(plan, launch = null, runId = null, opts = {}) {
   return out;
 }
 
+// ── THE DAY'S OTHER OPTIONS, ON THE UNIT ──────────────────────────────────────────────────────
+//
+// Ryan, 2026-10-05, on the day laid as options (plan-options.js): Option 1 is the day, the rest are
+// water like his fish's, numbered -- *"i do need it in the app once we actually build this out"*.
+// The plan is built from Option 1, so its legs are the L tracks above; every other option goes on
+// the unit as a track of its own named for its number and the depth it holds, with a flag where it
+// starts for Go To. On the water he can take another without the phone.
+//
+// `Flag, Yellow`: a flag is a place a line starts (green a leg's, red its end, blue a charted mark
+// with no depth), and yellow is the one flag in his picker's grid nothing else here uses.
+export const OPTION_SYMBOL = 'Flag, Yellow';
+
+/** An option's colour: its kind's, so water like the water of one of his places reads as that place's. */
+export function optionColor(op) {
+  return LOOP_COLORS[(Math.max(0, Number(op && op.kind) || 0)) % LOOP_COLORS.length][0];
+}
+
+/** The round number an option is drawn under, on the loop's map and the plan's. */
+export function optionBadge(n, color) {
+  return `<div style="width:22px;height:22px;border-radius:50%;background:${color};color:#0b1622;border:2px solid #0b1622;`
+    + `box-shadow:0 0 0 2px rgba(255,255,255,.75);font:800 12px/18px system-ui,sans-serif;text-align:center">${Number(n) || ''}</div>`;
+}
+
+/** `22-32`: the depth an option holds, whole feet (the unit eats the period); null on a river's deepest water. */
+function optionBand(op) {
+  const b = op && Array.isArray(op.band) ? op.band.map((v) => Math.round(Number(v))) : null;
+  return op && op.bandFrom !== 'deepest' && b && b.every(Number.isFinite) ? `${b[0]}-${b[1]}` : null;
+}
+
+/** `Option 2 · 22-32 ft`, within the twenty characters his unit keeps of a track's name. */
+export function optionTrackName(op) {
+  const b = optionBand(op);
+  return b ? fitUnit([`Option ${op.n} · ${b} ft`, `Option ${op.n} ${b}ft`, `Option ${op.n}`], UNIT_CHARS.track)
+    : fitUnit([`Option ${op.n} · deepest`, `Option ${op.n}`], UNIT_CHARS.track);
+}
+
+/** The option with its number from a track's name -- `Option 2 · 22-32 ft` -- in `options`; null if none. */
+export function optionOfTrack(name, options) {
+  const m = /^Option (\d+)\b/.exec(String(name || ''));
+  return m ? (options || []).find((op) => op && op.n === Number(m[1])) || null : null;
+}
+
+/** Every option but the first (the day the plan is built from) as a track, in number order. */
+export function optionTracks(options, runId = null) {
+  return (options || []).filter((op) => op && op.n > 1 && Array.isArray(op.coords) && op.coords.length > 1)
+    .map((op) => ({
+      name: optionTrackName(op),
+      pts: toLatLon(op.coords),
+      scoutRoute: true, smartPlan: true, planRunId: runId,
+      planStep: 'option', legRole: null, legId: `Option ${op.n}`,
+      option: op.n, like: !op.own,
+      color: optionColor(op),
+      lengthM: op.lengthM,
+    }));
+}
+
+/** A flag where each of those starts: `Option 2`, its band in the comment. */
+export function optionWaypoints(options, runId = null) {
+  return (options || []).filter((op) => op && op.n > 1 && Array.isArray(op.coords) && op.coords.length > 1)
+    .map((op) => {
+      const b = optionBand(op);
+      const at = op.coords[0];
+      return {
+        name: fitUnit([`Option ${op.n}`], UNIT_CHARS.name),
+        cmt: fitUnit(b ? [`${b}ft ${op.own ? 'your fish' : 'like your fish'}`, `${b}ft ${op.own ? 'yours' : 'like yours'}`, `${b}ft`]
+                       : ['deepest water'], UNIT_CHARS.comment),
+        lat: at[1], lon: at[0], sym: OPTION_SYMBOL,
+        optionStart: true, scoutWaypoint: true, planRunId: runId,
+        legId: `Option ${op.n}`, option: op.n,
+        tacticalNote: `start of option ${op.n}: ${op.own ? 'water your fish came from' : 'water like the water your fish came from'}`
+          + (b ? `, holding ${b} ft` : ', in the deepest water'),
+      };
+    });
+}
+
 /**
  * Replace this run's tracks and waypoints in `state.DATA`, leaving the user's own loaded GPX
  * alone. Returns what it wrote, so the caller can report it and a test can assert on it.
@@ -835,6 +910,7 @@ export function planWaypoints(plan, launch = null, runId = null, opts = {}) {
  * @param {object} [o]
  * @param {number[]} [o.launch] [lon, lat] of the ramp
  * @param {object} [o.win]    where to publish the run id (the browser passes `window`)
+ * @param {object[]} [o.options] a day laid as options: plan-options.js's `options`, the first the day
  */
 export function materialisePlan(plan, o = {}) {
   const runId = o.runId || `sp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -846,9 +922,11 @@ export function materialisePlan(plan, o = {}) {
   if (!Array.isArray(state.DATA.waypoints)) state.DATA.waypoints = [];
   if (!Array.isArray(state.DATA.routes)) state.DATA.routes = [];
 
-  const tracks = planTracks(plan, runId);
-  const waypoints = planWaypoints(plan, o.launch, runId, { marks: o.marks });
-  const cueLines = planCueLines(plan, waypoints, runId);
+  const planWps = planWaypoints(plan, o.launch, runId, { marks: o.marks });
+  // A day laid as options carries the others beside its own legs (see optionTracks()).
+  const tracks = [...planTracks(plan, runId), ...optionTracks(o.options, runId)];
+  const waypoints = [...planWps, ...optionWaypoints(o.options, runId)];
+  const cueLines = planCueLines(plan, planWps, runId);
 
   // Everything this app generated goes; everything the user loaded stays.
   state.DATA.tracks = [...state.DATA.tracks.filter((t) => !t.scoutRoute && !t.smartPlan), ...tracks];

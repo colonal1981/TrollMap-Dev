@@ -60,6 +60,7 @@ import { offerWaterAsync, dayCost, dayOrder, priceSpots, waterRange, reasons, TR
 import { joinedPiece } from './plan-pieces.js';
 import { planFromWater } from './plan-from-water.js';
 import { trollShape, asTrolled } from './plan-troll-day.js';
+import { marksForPlan } from './garmin-marks.js';
 import { trollLoopAsync, loopPieces, loopSteps, loopLine, linesSaid } from './plan-troll-loop.js';
 import { hasPosition, oneFishEach } from '../utils/catch-pins.js';
 import { DEFAULT_STOP_MIN } from './plan-assemble.js';
@@ -914,7 +915,7 @@ export async function findWater() {
   // I offered twice before checking the bucket. 385 packs carry a shoreline against 543 carrying
   // runs, so the shoreline is genuinely absent a lot and its absence must stay silent rather than
   // become a claim of open water.
-  const [fcAll, daFc, slFc, wfAll, stAll, poAll, dkAll, poolsFile, koFc] = await Promise.all([
+  const [fcAll, daFc, slFc, wfAll, stAll, poAll, dkAll, poolsFile, koFc, channelsFile] = await Promise.all([
     get(`/${r2Key}/trolling_runs.geojson`),
     get(`/${r2Key}/depth_areas.geojson`).catch(() => null),
     get(`/${r2Key}/garmin_shoreline.geojson`).catch(() => null),
@@ -933,6 +934,9 @@ export async function findWater() {
     // THE WATER BEHIND A DAM'S BUOYS -- Scripts/build_keep_out_zones.py. Most packs have none, and
     // "none" is the answer then, not a failure: trollForMe() just has no zone to keep out of.
     get(`/${r2Key}/keep_out.geojson`).catch(() => null),
+    // WHERE EACH LANE RUNS IN A CHANNEL (Scripts/stamp_channels.mjs), the same file Smart Plan reads:
+    // one of the things trollForMe()'s options measure water by. A pack without it measures without it.
+    get(`/${r2Key}/channels.json`).catch(() => null),
   ]);
   // ── THE WATER THIS RAMP LAUNCHES ONTO, AND NOTHING BEHIND A DIKE ──────────────────────────────
   //
@@ -1135,6 +1139,14 @@ export async function findWater() {
     // research says the fish are over. A new Find starts the troll over.
     depthAt,
     koFeatures: (koFc && koFc.features) || [],
+    // WHAT THE OPTIONS MEASURE WATER BY (plan-options.js): the layers above as this ramp's pool has
+    // them, whole -- the lanes with their channel stretches, the structure, the water features, the
+    // POIs and the docks.
+    packLayers: {
+      runs: lanes, channels: (channelsFile && channelsFile.runs) || null,
+      structure: (stFc && stFc.features) || [], waterFeatures: (wfFc && wfFc.features) || [],
+      pois: (poFc && poFc.features) || [], docks: (dkFc && dkFc.features) || [],
+    },
     chordRuns: new Set(lanes.filter((f) => f && f.properties && f.properties.seed_kind)
                             .map((f) => f.properties.id)),
     stepM: (lanes.find((f) => f && f.properties && f.properties.envelope_step_m) || {})
@@ -1411,8 +1423,20 @@ export async function trollForMe(opts = {}) {
     .map((c) => {
       const at = [parseFloat(c.lon), parseFloat(c.lat)];
       const ft = T.depthAt(at);
-      return { at, date: c.date || null, chartFt: ft != null && Number.isFinite(Number(ft)) ? Number(ft) : null };
+      // HIS SOUNDER UNDER THE FISH, where the journal has it from the waypoint he marked it at: the
+      // depth an option holds is read from these first (plan-options.js, rule 1).
+      const sd = c.depthSource === 'sounder_at_waypoint' ? Number(c.depth) : NaN;
+      return { at, date: c.date || null, time: c.time || null,
+               chartFt: ft != null && Number.isFinite(Number(ft)) ? Number(ft) : null,
+               sounderFt: Number.isFinite(sd) && sd > 0 ? sd : null };
     });
+  // EVERY PLACE HE HAS FISHED HERE, any fish: no option goes on water more open than these (rule 3).
+  // And his labelled sounder marks, which say the depth under a fish caught beside one that day.
+  const allCatches = (state.CATCHES || []).filter((c) => c && hasPosition(c))
+    .map((c) => ({ at: [parseFloat(c.lon), parseFloat(c.lat)] }));
+  const sounderMarks = marksForPlan(state.GARMIN_MARKS)
+    .map((m) => ({ at: [Number(m.lon), Number(m.lat)], date: m.date || null, datetime: m.datetime || null,
+                   depthFt: m.depthFt == null ? null : Number(m.depthFt) }));
 
   // WHAT DEPTH OF WATER THE FIRST LOOP RIDES when none of his catches within reach says: the research's
   // water, then the band. With his catches the loop decides, from the ones within reach. See loopLine().
@@ -1434,7 +1458,10 @@ export async function trollForMe(opts = {}) {
       lineRangeFt: fallback ? fallback.rangeFt : undefined,
       windowMin: T.windowMin, stopMin: stopsWanted() * DEFAULT_STOP_MIN, minM: T.minM,
       marks: T.spots, catches, via,
-    }, (n) => say(`Laying the loop from ${T.rampName || 'the ramp'}… ${n} turn-arounds tried`));
+      ...(T.packLayers || {}), allCatches, sounderMarks,
+    }, (n, step) => say(step === 'opt'
+      ? `Laying the options from ${T.rampName || 'the ramp'}… measuring the water like your fish's`
+      : `Laying the loop from ${T.rampName || 'the ramp'}… ${n} turn-arounds tried`));
   } catch (e) { return fail(e.message); }
   if (!loop || loop.error) {
     // With turns asked for, the turns may be why; without, no click can make one.
@@ -1480,31 +1507,12 @@ export async function trollForMe(opts = {}) {
     ? `. ${cu.outOfReach} more of your ${sp} catches on this chart ${cu.outOfReach === 1 ? 'is' : 'are'} farther by water than half `
       + `the day reaches (${fmtMi(cu.reachM)}), so ${cu.outOfReach === 1 ? 'it does' : 'they do'} not count`
     : '';
-  // LINES BETWEEN HIS FISH (plan-troll-loop.js fishLines()): no line depth to name, so it says the places.
-  if (loop.mode === 'fish') {
-    const edges = [...new Set(loop.petals.map((p) => Math.round(p.edgeFt)))];
-    const range = ln.rangeFt ? ` over ${Math.round(ln.rangeFt[0])}–${Math.round(ln.rangeFt[1])} ft of water` : '';
-    say(`${n} loop${n === 1 ? '' : 's'} from ${T.rampName || 'the ramp'} and back: ${fmtMi(loop.trolledM)} trolled, `
-      + `${fmtMi(loop.runM)} with the lines up (out of the cove and back in)`
-      + (loop.sharedM > 0 ? `; ${fmtMi(loop.sharedM)} of it is back over water the day already trolled` : '')
-      + `. Lines between the places you caught ${sp}${range}, the shortest way round them by water, `
-      + 'not one depth line'
-      + (loop.placesLeftOut ? `; ${loop.placesLeftOut} more place${loop.placesLeftOut === 1 ? '' : 's'} of yours did not fit in the day` : '')
-      // Each line between two places keeps above the water his fish at its two ends came out of, less his band.
-      + `. No line between two places goes shallower than the water the fish at either end came out of, less the ${steer} ft `
-      + 'you steer within'
-      + (edges.some((e) => e > 0) ? ` (never under ${Math.min(...edges.filter((e) => e > 0))} ft anywhere)` : '')
-      + (zones ? `; out of ${zones} keep-out zone${zones === 1 ? '' : 's'}` : '')
-      + `. It passes ${loop.score.fish} of your ${cu.used} ${sp} catch${cu.used === 1 ? '' : 'es'} within reach`
-      + ` and ${loop.score.structure} charted mark${loop.score.structure === 1 ? '' : 's'}`
-      + (via.length ? `, and goes to the ${via.length === 1 ? 'water' : `${via.length} places`} you ${fromMap ? 'clicked' : 'ticked'}` : '')
-      + leftOut
-      + (guide ? `. ${onGuide} of its ${pieces.length} legs cross the ${guide[0]}–${guide[1]} ft of water the research says the fish are over` : '')
-      + (loop.fillsTime ? '' : `. That is about ${fmtHours(loop.minutes)} of the ${fmtHours(loop.budgetMin)} you have: the rest of the day is yours, to go back over what produces`)
-      + (loop.coveCrossesShore ? `. The way out of the cove runs past charted docks and shore lines that close it on the app's ${loop.grid && loop.grid.cellM ? `${loop.grid.cellM} m` : ''} grid, so it is drawn on the depth chart alone — steer it by eye` : '')
-      + (fromMap ? '.' : '. Tick a spot or a piece and press it again to make the day go there.'));
+  // THE DAY AS OPTIONS (plan-options.js): Option 1 is the loop the plan is built from, and the rest are
+  // water like his fish's, numbered on the map for him to choose from on the water.
+  if (loop.mode === 'options') {
+    say(optionsSaid(loop, { rampName: T.rampName, species: sp, steer, zones, leftOut }));
     T.lastLoop = loop;
-    T.lastVia = via;
+    T.lastVia = [];
     return loop;
   }
   say(`${n} loop${n === 1 ? '' : 's'} from ${T.rampName || 'the ramp'} and back: ${fmtMi(loop.trolledM)} trolled, `
@@ -1541,6 +1549,60 @@ export async function trollForMe(opts = {}) {
   T.lastLoop = loop;
   T.lastVia = via;
   return loop;
+}
+
+/** What Option 1 is, in his words for it. */
+export function optionShapeSaid(op) {
+  const info = op.info || {};
+  if (op.shape === 'river') {
+    return `down the river in the deepest water, turning where it shallows to ${info.turnFt} ft, and back up the other side`;
+  }
+  if (op.shape === 'around') return `all the way around the ${info.islandAcres}-acre island your fish are round`;
+  if (op.shape === 'along') return `along the ${info.islandAcres}-acre island your fish are by, out one side and back the other`;
+  return 'a lap along the water your fish came from, out one side and back the other';
+}
+
+/** Where an option's depth came from. */
+export function bandFromSaid(op, readings) {
+  if (op.bandFrom === 'deepest') return 'the deepest water';
+  if (op.bandFrom === 'sounder') return `your sounder at ${readings} of your fish, ±the band you steer`;
+  if (op.bandFrom === 'chart') return 'the chart under your fish, none of them with a sounder reading';
+  return 'the same depth against the bottom there as your fish';
+}
+
+/** The status line for a day laid as options. */
+export function optionsSaid(loop, { rampName, species, steer, zones = 0, leftOut = '' }) {
+  const ops = loop.options || [];
+  const o1 = ops[0];
+  const k0 = (loop.kinds || [])[0] || {};
+  const cu = loop.catches || { used: 0 };
+  const sp = species || '';
+  const band = o1 && o1.bandFrom !== 'deepest' ? `, holding ${Math.round(o1.band[0])}–${Math.round(o1.band[1])} ft` : '';
+  // The options after the first: his own other water first, then water like it (as lakeOptions() numbers them).
+  const nums = (list) => {
+    const n = list.map((o) => o.n);
+    if (!n.length) return '';
+    const said = n.length === 1 ? `${n[0]} is` : n[n.length - 1] - n[0] === n.length - 1 ? `${n[0]}–${n[n.length - 1]} are`
+      : `${n.slice(0, -1).join(', ')} and ${n[n.length - 1]} are`;
+    return `Option${n.length === 1 ? '' : 's'} ${said}`;
+  };
+  const own = ops.filter((o) => o.n > 1 && o.own), like = ops.filter((o) => o.n > 1 && !o.own);
+  const dropped = (loop.dropped || []).length;
+  return `${ops.length} option${ops.length === 1 ? '' : 's'} from ${rampName || 'the ramp'}, numbered on the map. `
+    + `Option 1 is the day: ${optionShapeSaid(o1)}, from the ramp and back with the lines in the whole way, `
+    + `${fmtMi(loop.trolledM)} in about ${fmtHours(loop.minutes)} of the ${fmtHours(loop.budgetMin)} you have${band}`
+    + ` (from ${bandFromSaid(o1, k0.readings || 0)})`
+    + `. It passes ${loop.score.fish} of your ${cu.used} ${sp} catch${cu.used === 1 ? '' : 'es'} within reach`
+    + ` and ${loop.score.structure} charted mark${loop.score.structure === 1 ? '' : 's'}`
+    + (o1.runs ? `, with ${o1.runs} run${o1.runs === 1 ? '' : 's'} off it to fish it does not pass` : '')
+    + (o1.pins ? `; ${o1.pins} of your fish ${o1.pins === 1 ? 'is' : 'are'} too far for the day and stay${o1.pins === 1 ? 's' : ''} pins` : '')
+    + (own.length ? `. ${nums(own)} the other water your fish came from, laid the same way` : '')
+    + (like.length ? `. ${nums(like)} water like the water your fish came from, no more open than water you have fished here` : '')
+    + (dropped ? `; ${dropped} more place${dropped === 1 ? ' was' : 's were'} like it but more open than any water you have fished here, and left out` : '')
+    + (zones ? `. Out of ${zones} keep-out zone${zones === 1 ? '' : 's'}` : '')
+    + leftOut
+    + (o1.bandFrom === 'deepest' ? '.'
+      : `. No option goes shallower than its depth less the ${steer} ft you steer within, except to get out of a cove.`);
 }
 
 /**
@@ -1924,9 +1986,14 @@ export async function buildFromPicked() {
   //
   // materialisePlan() is already being handed r.plan on the next line, so the plan was here the
   // whole time — it simply was not the one anything downstream could see.
+  // A DAY LAID AS OPTIONS AND BUILT AS IT WAS LAID: Option 1 is these legs, and the others go on the
+  // unit beside them (optionTracks() in plan-tracks.js). The plan keeps what each one is, not its line
+  // -- the line is the track -- so a saved plan draws them again in their colours.
+  const laid = T.lastLoop && T.lastLoop.mode === 'options' && trollOrderOf(picked) ? T.lastLoop.options || [] : [];
+  if (laid.length && r.plan) r.plan.options = laid.map(({ coords, ring, ...what }) => what);
   window._planV2 = r.plan;
   window._planV2Result = r;
-  const gpx = materialisePlan(r.plan, { launch: T.ramp, win: window, marks: true });
+  const gpx = materialisePlan(r.plan, { launch: T.ramp, win: window, marks: true, options: laid });
   window._planV2Gpx = gpx;
   renderAll();
 

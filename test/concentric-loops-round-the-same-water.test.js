@@ -37,8 +37,8 @@ const RAMP = at(8000, W - 10);
 const FISH = [8600, 9000, 9400].flatMap((x) => [at(x, yOf(25)), at(x, W - yOf(25))]).map((a) => ({ at: a, chartFt: 25 }));
 const turnOf = (p) => p.out[p.out.length - 1];
 
-// WITH HIS FISH WITHIN REACH THE DAY IS LINES BETWEEN THEM (2026-10-05, the-day-is-lines-between-his-
-// fish.test.js). The concentric loops are the day on a water where none are: the line the research gives.
+// WITH HIS FISH WITHIN REACH THE DAY IS OPTIONS FROM THEM (2026-10-06, the-day-is-options.test.js). The
+// concentric loops are the day on a water where none are: the line the research gives.
 test('the first loop rides the line it is given; a loop after it is mostly new water', () => {
   // Going round the same water a band over was chosen for passing his fish again; with his fish within
   // reach the day is lines between them now, so on this water the second loop is whichever is the most
@@ -74,9 +74,10 @@ test('his catches count only on this water and within reach of the ramp by water
   assert.equal(r.catches.reachM, 4828);
   assert.deepEqual({ used: r.catches.used, offWater: r.catches.offWater, outOfReach: r.catches.outOfReach },
                    { used: 6, offWater: 2, outOfReach: 2 });
-  // and the day is lines between the six, which are all it goes to
-  assert.equal(r.mode, 'fish');
-  assert.equal((r.places || []).reduce((a, p) => a + p.fish, 0), 6);
+  // and the day is options from the six, and Option 1 goes past all of them
+  assert.equal(r.mode, 'options');
+  assert.equal(r.options[0].fish, 6);
+  assert.equal(r.score.fish, 6);
 });
 
 test('of two days past as many of his fish, the one past them more often wins; then the one that fills', () => {
@@ -106,7 +107,7 @@ test('the status line and the bar say each loop\'s line and its alarm edge, not 
   assert.doesNotMatch(ui, /never over water under/);
   assert.doesNotMatch(lom, /never over water `/);
   assert.ok(ui.includes('the depth with the most of your ${ln.n} ${sp} catch'));
-  assert.ok(lom.includes("`${p.edgeFt != null && (p.lineFt != null || p.edgeFt > 0) ? `, never under ${Math.round(p.edgeFt)} ft` : ''}: ${mi(out)} out, ${mi(back)} home`"));
+  assert.ok(lom.includes("`${p.edgeFt != null ? `, never under ${Math.round(p.edgeFt)} ft` : ''}: ${mi(out)} out, ${mi(back)} home`"));
   assert.ok(ui.includes('no loop goes shallower than the shallow edge of its own Contour alarm'));
   // the planned lake's chart goes under its loop, so the catch markers are judged against it
   assert.ok(lom.includes('if (now.lake) window.loadSupplementalForLake?.(now.lake);'));
@@ -131,11 +132,10 @@ test('a loop does not cut across water shallower than its alarm edge to reach a 
   DA2.push(rect(J, W - yOf(MAXFT - 0.01), L, W2 + yOf(MAXFT - 0.01), MAXFT)); // the deep join
   const ramp = at(8000, 10);
   const via = [at(8000, W2 + yOf(25))];
-  const catches = [{ at: at(8500, yOf(25)), chartFt: 25 }];
-  const r = trollLoop({ ramp, daFeatures: DA2, windowMin: 720, stopMin: 0, catches, via, maxPetals: 1 });
+  const r = trollLoop({ ramp, daFeatures: DA2, windowMin: 720, stopMin: 0, lineFt: 25, lineFrom: 'research', via, maxPetals: 1 });
   assert.ok(!r.error, r.error);
   const p = r.petals[0];
-  // his fish over 25 ft: the loop's edge is 20, so the 10 ft flat is closed to it
+  // the 25 ft line: the loop's edge is 20, so the 10 ft flat is closed to it
   assert.equal(p.edgeFt, 20);
   // nothing of the loop is over the flat west of the join
   const yOfPt = (pt) => (pt[1] - LAT0) * KY, xOfPt = (pt) => (pt[0] + 80) * KX;
@@ -170,17 +170,18 @@ test('the loop on the day\'s line past the most of his fish is fished first; a l
   assert.ok(src.includes('q.sharedM = sharedWaterM(q.out, q.back, sameM, earlierOf(seq.slice(0, i), q.lineFt));'));
 });
 
-test('his fish by the ramp and his fish far out are both on the day: the lines go to every place the time holds', () => {
+test('his fish by the ramp and his fish far out are both on the day: Option 1 runs out to the ones the time holds', () => {
   // Ryan, 10/4: "the problem is that the entire loop goes to a section of water where i have caught exactly
-  // 0 fish". With lines between his fish (10/5) a loop goes nowhere else: one fish 300 m west of the ramp,
-  // two far out to the east, and the day is lines through all three.
+  // 0 fish". With the day as options (10/6) Option 1 goes nowhere else: one fish 300 m west of the ramp,
+  // two far out to the east, and the day is a lap past the one and a run out to the two.
   const near = { at: at(7700, W - yOf(25)), chartFt: 25 };
   const far = [11500, 11900].map((x) => ({ at: at(x, W - yOf(25)), chartFt: 25 }));
   const r = trollLoop({ ramp: RAMP, daFeatures: DA, windowMin: 300, stopMin: 0, catches: [near, ...far], minM: 3000 });
   assert.ok(!r.error, r.error);
-  assert.equal(r.mode, 'fish');
+  assert.equal(r.mode, 'options');
   assert.equal(r.score.fish, 3);
+  assert.equal(r.options[0].runs, 1);
   const xOf = (pt) => (pt[0] + 80) * KX;
   // and nothing of it is out past the far fish
-  for (const p of r.petals) for (const pt of p.out.concat(p.back)) assert.ok(xOf(pt) < 12100, `out to x ${xOf(pt).toFixed(0)}`);
+  for (const l of r.legs) for (const pt of l.coords) assert.ok(xOf(pt) < 12100, `out to x ${xOf(pt).toFixed(0)}`);
 });

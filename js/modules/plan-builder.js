@@ -27,7 +27,7 @@ import { launchReach, listingAt, shallowAt, reachLabel, samePlace, offMainAt }
          from "../data/launch-reach.js";
 import { advisoryRows } from "../data/fish-advisories.js";
 // The band is defined once, where the cue line that carries it is built.
-import { HAND_STEER_BAND_FT } from "./plan-tracks.js";
+import { HAND_STEER_BAND_FT, optionOfTrack, optionColor } from "./plan-tracks.js";
 import { loopColor, loopOf } from "./plan-to-timeline.js";
 import { ampsAtMph, AMPS_REF_A, AMPS_EXP, TOP_SPEED_MPH, MEASURED_DRAW } from "./plan-candidates.js";
 import { TROLL_MPH, TRANSIT_MPH } from "./plan-water.js";
@@ -792,6 +792,12 @@ function restorePlanView(p) {
     .map((t) => {
       const legId = String(t.name || '').split('·')[0].trim();
       const c = cardFor.get(legId);
+      // ANOTHER OPTION OF A DAY LAID AS OPTIONS: no card, so its colour and number from the plan's list.
+      const op = !c && p.plan ? optionOfTrack(t.name, p.plan.options) : null;
+      if (op) {
+        return { name: t.name, pts: t.pts, scoutRoute: true, smartPlan: true, legId,
+                 option: op.n, like: !op.own, color: optionColor(op) };
+      }
       return { name: t.name, pts: t.pts, scoutRoute: true, smartPlan: true, legId,
                color: c ? c.color : undefined, dashed: !!c && c.legType === 'transit',
                loopHome: (loopOf(legOf.get(legId)) || {}).half === 'back' };

@@ -21,6 +21,7 @@ import { state } from './state.js';
 import { esc } from '../utils/escape.js';
 import { get as dbGet, put as dbPut, isReady as dbIsReady } from '../utils/db.js';
 import { callGlobal } from '../utils/call-global.js';
+import { optionBadge } from '../modules/plan-tracks.js';
 
 // Tile-layer presets. Esri World Imagery for satellite, OSM for street.
 // Both with attribution per the providers' terms.
@@ -255,6 +256,14 @@ export function renderMap() {
       if (isConnector) {
         // Connectors: thin dashed line, dimmed
         L.polyline(t.pts, { color, weight: 1.5, opacity: 0.4, dashArray: '6,8' }).addTo(state.LAYER);
+      } else if (t.option) {
+        // ANOTHER OPTION OF THE DAY (plan-tracks.js optionTracks()): its kind's colour, dotted where it
+        // is water like his fish's rather than water they came from, and its number on it.
+        L.polyline(t.pts, { color: '#000', weight: 5, opacity: 0.45 }).addTo(state.LAYER);
+        L.polyline(t.pts, { color, weight: 2.5, opacity: 0.95, ...(t.like ? { dashArray: '3,6' } : {}) }).addTo(state.LAYER);
+        L.marker(t.pts[Math.floor(t.pts.length / 4)], { interactive: false, keyboard: false,
+          icon: L.divIcon({ className: '', iconSize: [22, 22], iconAnchor: [11, 11],
+            html: optionBadge(t.option, color) }) }).addTo(state.LAYER);
       } else if (t.loopHome) {
         // A loop's way home. It is fishing, so it keeps the fishing halo and weight; dashed so the
         // way out and the way home of one loop -- the same colour, home a shade darker -- read apart.
