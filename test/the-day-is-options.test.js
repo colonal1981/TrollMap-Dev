@@ -28,7 +28,9 @@
 //  11. a line that goes over itself is run the other way between the two passings: the same water, met
 //      there instead of crossed;
 //  12. a lap round an island goes round a shoal off it at his depth, not over it, and the way out comes
-//      onto the lap at one place and the way home leaves it at another.
+//      onto the lap at one place and the way home leaves it at another;
+//  13. a lap on a flat lies across the middle of the water at his depth, his fish between its passes, even
+//      where his fish are on the edge of it.
 //
 // 9 and 10, Ryan 2026-10-06, on his two Murray plans from Hilton: "i troll all the way there... i would be
 // putting lines in as soon as the water is deep enough in that channel on the way there"; "the rest are no
@@ -36,6 +38,7 @@
 // loop"; "why does this way out from the ramp and the same one for option 1 cross itself".
 // 12, the same day: "your 4ft... is actually right over an island"; "your start and end of the loop at the
 // island doesn't make sense... something more like what i have drawn in purple and yellow"; "that looks better".
+// 13, on Moultrie by the ramp, where both ends of the lap doubled back: "yeah moultrie looks ok i think" (10/7).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -391,4 +394,25 @@ test('12. a lap round an island goes round a shoal off it at his depth, not over
   const ring = o1.ring, gap = metresBetween(ring[0], ring[ring.length - 1]);
   assert.ok(gap >= 55, `${gap.toFixed(0)} m between where the way out meets the lap and the way home leaves it`);
   assert.equal(crossings([...r.legs[0].coords, ...r.legs[1].coords.slice(1)]), 0);
+});
+
+// A SLOPE: 10 ft west of x = 1000 m, a strip of 25 ft from there to 1300 m, 45 ft east of it. His fish 20 m
+// in from the shallow edge of the strip -- Moultrie by the ramp, his fish on the shallow side of the slope.
+const SLOPE = [area(45, ring(0, 0, 3000, 3000)), area(25, ring(1000, 150, 1300, 2850)), area(10, ring(0, 0, 1000, 3000))];
+const SLOPE_FT = (x) => (x < 1000 ? 10 : x <= 1300 ? 25 : 45);
+const ON_EDGE = [[1020, 1300], [1020, 1500], [1020, 1700]].map(([x, y]) => ({ at: at(x, y), chartFt: 25, date: '2026-05-16' }));
+
+test('13. a lap on a flat lies across the middle of the water at his depth, his fish between its passes, even where his fish are on the edge of it', () => {
+  const r = trollLoop({ ...DAY, ramp: at(1150, 3010), daFeatures: SLOPE, catches: ON_EDGE, allCatches: ON_EDGE });
+  assert.ok(!r.error, r.error);
+  const o1 = r.options[0];
+  assert.equal(o1.shape, 'flat');
+  // the lap holds his water less his 5 ft the whole way round: no pass off it in the 10 ft
+  for (const p of o1.ring) assert.ok(SLOPE_FT(xOf(p)) >= o1.band[0] - 5, `${SLOPE_FT(xOf(p))} ft at ${xOf(p).toFixed(0)}`);
+  // across the lap at his fish: his fish between the two passes, and the passes one of his turns at a spot
+  // apart (153 m), less one cell of the 25 m grid -- not squeezed against the edge
+  const across = o1.ring.filter((p) => Math.abs(yOf(p) - 1500) <= 50).map(xOf);
+  const lo = Math.min(...across), hi = Math.max(...across);
+  assert.ok(lo <= 1020 && hi >= 1020, `passes at ${lo.toFixed(0)} and ${hi.toFixed(0)} m, his fish at 1020`);
+  assert.ok(hi - lo >= 153 - 25, `${(hi - lo).toFixed(0)} m between the passes`);
 });

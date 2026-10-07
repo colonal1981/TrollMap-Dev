@@ -51,6 +51,9 @@
  *     loop at the island doesn't make sense... something more like what i have drawn in purple and
  *     yellow"*, and of the redrawn one, *"that looks better"*. The way home holds his depth first and keeps
  *     its gap from the way out second, as sideWay() does.
+ *   - A lap on a flat lies across the middle of the water at his depth, as far as his fish stay between its two
+ *     passes, so neither pass falls off it and the ends do not double back: Moultrie by the ramp, his fish on
+ *     the shallow edge of the slope. Of the redrawn lap: *"yeah moultrie looks ok i think"* (10/7).
  *
  * ─────────────────────────────────────────────────────────────────────────────────────────────
  * EVERY NUMBER, AND WHERE IT CAME FROM (his tracks unless marked MINE)
@@ -593,7 +596,7 @@ function flatAxis(net, sp) {
   // the line and across it, as lapAxis() lays its two passes that far apart. Narrower, the lap is
   // squeezed to one turn and its corners drop on whatever water the band allows, and it folds over itself
   // (Ryan, 10/6: "a lot of switchbacks and isn't really a loop").
-  return { x, y, ux, uy, emax, emin, fits: emax - emin >= SPOT_TURN && wmax - wmin >= SPOT_TURN };
+  return { x, y, ux, uy, emax, emin, across: (wmax + wmin) / 2, fits: emax - emin >= SPOT_TURN && wmax - wmin >= SPOT_TURN };
 }
 
 /**
@@ -606,7 +609,11 @@ function lapAxis(net, a, lo, hi, steer, w = SPOT_TURN) {
   let { x, y, ux, uy, emax, emin } = a;
   const vx = -uy, vy = ux, h = w / 2, c = bandCost(net, lo, hi, steer);
   if (emax - emin < w) { const mid = (emax + emin) / 2; emax = mid + h; emin = mid - h; }
-  const N = (t, o) => nearest(net, x + ux * t + vx * o, y + uy * t + vy * o, (k) => c[k] < Infinity);
+  // ACROSS THE FLAT, ITS MIDDLE, as far as the spot stays between the two passes: a spot on the edge of
+  // its flat (Moultrie by the ramp, his fish on the shallow side of the slope) put one pass off the water
+  // at his depth, and both ends of the lap doubled back to it.
+  const oc = Math.max(-h, Math.min(h, a.across || 0));
+  const N = (t, o) => nearest(net, x + ux * t + vx * (oc + o), y + uy * t + vy * (oc + o), (k) => c[k] < Infinity);
   const A1 = N(emin + h, h), B1 = N(emax - h, h), TB = N(emax, 0), B2 = N(emax - h, -h), A2 = N(emin + h, -h), TA = N(emin, 0);
   const p1 = wayOf(net, A1, B1, c);
   if (!p1) return { pieces: null, start: -1 };
