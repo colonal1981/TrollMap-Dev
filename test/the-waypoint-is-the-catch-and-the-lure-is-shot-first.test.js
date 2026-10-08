@@ -29,7 +29,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import {
-  groupPhotosByWaypoint, markedWaypoints, waypointReadings, localIso, fmtGap
+  groupPhotosByWaypoint, fishAtMark, markedWaypoints, waypointReadings, localIso, fmtGap
 } from '../js/utils/catch-waypoints.js';
 import { describeCatchDepth } from '../js/utils/catch-depth.js';
 
@@ -102,12 +102,13 @@ describe('a waypoint is a mark on the water, not anything with a time', () => {
 });
 
 describe('a photo that is not this catch\'s is handed back with the reason, never dropped', () => {
-  it('a third photo after a mark is not guessed into its catch', () => {
+  it('a third photo after a mark stays on the mark, as several fish -- never orphaned', () => {
     const extra = photo('third.jpg', '2026-09-27T18:58:00Z');
     const g = groupPhotosByWaypoint([LURE1, BOARD1, extra], WAYPOINTS);
     expect(g.catches.length).toBe(1);
-    expect(g.unanchored.map(u => [u.photo.file.name, u.reason, u.waypoint.name]))
-      .toEqual([['third.jpg', 'after_waypoint_pair', '0002']]);
+    expect(g.catches[0].several).toBe(true);
+    expect(g.catches[0].photos.map(p => p.file.name)).toEqual([LURE1.file.name, BOARD1.file.name, 'third.jpg']);
+    expect(g.unanchored.length).toBe(0);
   });
 
   it('a photo before any mark says so', () => {
@@ -134,6 +135,76 @@ describe('a photo that is not this catch\'s is handed back with the reason, neve
     expect(g.catches[0].board.file.name).toBe(BOARD1.file.name);
     expect(g.catches[0].lure).toBe(null);
     expect(g.catches[0].onePhoto).toBe(true);
+  });
+});
+
+// SEVERAL FISH AT ONE MARK -- his 10/08 drop, as it is on the drive (08Oct26_Trip):
+//   "The first 3 fish were all caught at the same time at waypoint 0007... all 3 fish were caught
+//   on A-rig 2 of them on the same A-rig and the third was on its own. 4th fish was also on a A-rig"
+// 0007 19:00:01Z 6.49 m 24.53 C; 0008 20:23:14Z 5.89 m 8.08 C (the temperature sensor was failing
+// by then -- THE_TEMP_SENSOR_FAILED_AT_350_AND_THE_DEPTH_NEVER_DID_2026-10-08.md).
+// Photos (Pixel names are UTC): 190150 fish on a rig, 190157 the rig with fish on the deck,
+// 190337 / 190353 / 190415 three board shots; 202447 fish on a rig, 202736 board.
+const W7 = { name: '0007', time: '2026-10-08T19:00:01Z', lat: 33.5197084676, lon: -80.2143453062, depthM: 6.49, tempC: 24.53 };
+const W8 = { name: '0008', time: '2026-10-08T20:23:14Z', lat: 33.5446078330, lon: -80.2197326068, depthM: 5.89, tempC: 8.08 };
+const OCT = [
+  photo('PXL_20261008_190150441.jpg', '2026-10-08T19:01:50Z'),
+  photo('PXL_20261008_190157081.jpg', '2026-10-08T19:01:57Z'),
+  photo('PXL_20261008_190337648.MP.jpg', '2026-10-08T19:03:37Z'),
+  photo('PXL_20261008_190353906.jpg', '2026-10-08T19:03:53Z'),
+  photo('PXL_20261008_190415632.jpg', '2026-10-08T19:04:15Z'),
+  photo('PXL_20261008_202447438.MP.jpg', '2026-10-08T20:24:47Z'),
+  photo('PXL_20261008_202736659.jpg', '2026-10-08T20:27:36Z'),
+];
+const ON_BOARD = new Set(['PXL_20261008_190337648.MP.jpg', 'PXL_20261008_190353906.jpg',
+                          'PXL_20261008_190415632.jpg', 'PXL_20261008_202736659.jpg']);
+const onBoard = (p) => ON_BOARD.has(p.file.name);
+
+describe('his 10/08 triple on A-rigs is three fish at 0007, and the fourth is on 0008', () => {
+  const g = groupPhotosByWaypoint([...OCT].reverse(), [...LOADED, W7, W8]);
+
+  it('0007 carries all five photos as several fish; 0008 is the usual pair', () => {
+    expect(g.catches.map(c => [c.waypoint.name, c.several, c.photos.length]))
+      .toEqual([['0007', true, 5], ['0008', false, 2]]);
+    expect(g.unanchored.length).toBe(0);
+  });
+
+  it('one fish per board shot, every one of them at 0007', () => {
+    const fish = fishAtMark(g.catches[0].photos, onBoard);
+    expect(fish.map(f => f.board.file.name)).toEqual([
+      'PXL_20261008_190337648.MP.jpg', 'PXL_20261008_190353906.jpg', 'PXL_20261008_190415632.jpg']);
+  });
+
+  it('two rig shots for three fish: the third fish shares the last one', () => {
+    const fish = fishAtMark(g.catches[0].photos, onBoard);
+    expect(fish.map(f => f.lure.file.name)).toEqual([
+      'PXL_20261008_190150441.jpg', 'PXL_20261008_190157081.jpg', 'PXL_20261008_190157081.jpg']);
+  });
+
+  it('0008 is lure then board, as on 9/27', () => {
+    expect(g.catches[1].lure.file.name).toBe('PXL_20261008_202447438.MP.jpg');
+    expect(g.catches[1].board.file.name).toBe('PXL_20261008_202736659.jpg');
+  });
+
+  it('the readings are the sounder\'s at the mark -- 0007 is good', () => {
+    expect(waypointReadings(W7)).toEqual({ depthFt: 21.3, waterTempF: 76.2 });
+  });
+});
+
+describe('fishAtMark', () => {
+  const at = (n, s) => photo(n, `2026-10-08T19:0${s}Z`);
+  it('alternating lure and board pairs each board with its own lure', () => {
+    const ps = [at('l1', '1:00'), at('b1', '2:00'), at('l2', '3:00'), at('b2', '4:00')];
+    const fish = fishAtMark(ps, p => p.file.name.startsWith('b'));
+    expect(fish.map(f => [f.board.file.name, f.lure.file.name])).toEqual([['b1', 'l1'], ['b2', 'l2']]);
+  });
+  it('a lure shot is never one taken after its board shot', () => {
+    const ps = [at('b1', '1:00'), at('l1', '2:00'), at('b2', '3:00')];
+    const fish = fishAtMark(ps, p => p.file.name.startsWith('b'));
+    expect(fish.map(f => [f.board.file.name, f.lure && f.lure.file.name])).toEqual([['b1', null], ['b2', 'l1']]);
+  });
+  it('no board shot at all is null, so the drop keeps every photo instead', () => {
+    expect(fishAtMark([at('a', '1:00'), at('b', '2:00'), at('c', '3:00')], () => false)).toBe(null);
   });
 });
 
@@ -175,13 +246,27 @@ describe('the drop is wired to it', () => {
 
   it('the date is declared before the AI call that sends it', () => {
     const iDt = drop.indexOf('const dt =');
-    const iAi = drop.indexOf('identifyFishWithGemini(');
+    // the per-catch call; a several-fish mark asks earlier, with the mark's own date
+    const iAi = drop.indexOf('identifyFishWithGemini(board.file');
     expect(iDt > 0 && iAi > iDt).toBe(true);
   });
 
   it('groups by waypoint, and the board photo is what goes to the ID', () => {
     expect(drop.includes('groupPhotosByWaypoint(withExif, waypoints)')).toBe(true);
     expect(drop.includes('identifyFishWithGemini(board.file')).toBe(true);
+  });
+
+  it('a several-fish mark asks Claude which photos are on the board, never the Gemini ID', () => {
+    // 10/08: Gemini called both rig shots and the deck shot "on the board" -- the board was in the
+    // frame -- and the nightly call tells the Worker to assume one, which writes it into the prompt
+    expect(drop.includes('claudeBoards(c.photos')).toBe(true);
+    expect(drop.includes('fishAtMark(c.photos, (p) => onBoard.has(p))')).toBe(true);
+    expect(drop.includes('assume_board')).toBe(false);
+    expect(src('Worker/trollmap-worker.js').includes('on_bump_board = true.` : `TASK 1')).toBe(true);
+  });
+
+  it('the status line counts fish on a waypoint, not waypoints', () => {
+    expect(drop.includes('plans.filter(p => p.waypoint).length')).toBe(true);
   });
 
   it('without a waypoint, a time pair is still lure first', () => {

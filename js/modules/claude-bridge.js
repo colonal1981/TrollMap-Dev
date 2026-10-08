@@ -116,6 +116,30 @@ export function claudeFirstAsker(fallback, o = {}) {
   };
 }
 
+/**
+ * PHOTOS TO CLAUDE ON THIS PC: the bridge's POST /look. The catch upload's fish ID (2026-10-08, his
+ * "All fish to claude"); the questions are js/utils/claude-fish-id.js.
+ *
+ * @param {string} prompt
+ * @param {{label?: string, data: string}[]} images  base64 JPEGs, each sent after its label
+ * @returns {{text: string, model: string|null, seconds: number|null}}
+ * @throws  an Error whose `usageLimit` is true when that is why Claude did not answer
+ *
+ * A simple request, as /ask is (no Content-Type header, so no preflight): see claudeFirstAsker().
+ */
+export async function claudeLook(prompt, images, { url = CLAUDE_BRIDGE_URL, fetchImpl = fetch } = {}) {
+  const r = await fetchImpl(`${url}/look`, { method: 'POST', body: JSON.stringify({ prompt, images }) });
+  const text = await r.text();
+  let data = null;
+  try { data = JSON.parse(text); } catch { data = null; }
+  if (r.ok && data && typeof data.text === 'string') {
+    return { text: data.text, model: data._trollmap?.model || null, seconds: data._trollmap?.seconds ?? null };
+  }
+  const e = new Error((data && data.error) || `HTTP ${r.status}`);
+  e.usageLimit = !!(data && data.usageLimit);
+  throw e;
+}
+
 /** The bridge's body, in modelAsker()'s {content, meta} -- the same fields, read the same way. */
 function readAnswer(data, text) {
   const content = data.choices?.[0]?.message?.content || '';

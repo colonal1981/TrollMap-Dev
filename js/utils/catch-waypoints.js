@@ -36,9 +36,19 @@
  *     their own. A loaded waypoint is never a catch.
  *
  *   - The FIRST photo after a waypoint is the lure shot and the SECOND is the board shot. The
- *     board shot is the one that goes to the fish ID. A third photo is not guessed into this
- *     catch: it is handed back unanchored, with the reason, so a fish marked without a waypoint
- *     shows up as its own row in review instead of disappearing into the one before it.
+ *     board shot is the one that goes to the fish ID.
+ *
+ *   - MORE THAN TWO PHOTOS AFTER ONE MARK IS SEVERAL FISH AT THAT MARK. Ryan, 2026-10-08, three
+ *     fish at once on A-rigs at 0007 ("2 of them on the same A-rig and the third was on its own"):
+ *     *"will trollmap be able to assign waypoint 0007 to the 3 fish since i caught them all at
+ *     once"*. His five photos were rig, rig, board, board, board -- so ORDER cannot say which is
+ *     which, and the third photo is not a lure shot. Such a mark comes back with `several: true`
+ *     and all its `photos`; the drop asks the fish ID which of them are on the board, and
+ *     `fishAtMark()` makes one fish per board shot. Until 2026-10-08 the third photo was handed
+ *     back unanchored as `after_waypoint_pair`, which turned his triple into one catch whose
+ *     "board shot" was three fish on the deck, plus two rows with no position.
+ *     A forgotten mark now lands its fish on the mark before it, with that mark's position; the
+ *     row says how many fish shared the mark, so it is checked rather than hidden.
  *
  *   - Depth and water temperature are the SOUNDER'S AT THE MARK. Garmin writes them into the
  *     waypoint's <extensions> in metres and degrees C (`parseGPX()` reads them).
@@ -88,10 +98,12 @@ export function markedWaypoints(waypoints) {
  * waypoints: [{ time (ISO), name, lat, lon, depthM, tempC, ... }]  -- parseGPX()'s waypoints
  *
  * Returns
- *   catches:    [{ waypoint, lure, board, onePhoto }]  in waypoint order. `lure` is null when only
- *               one photo followed the mark; that photo is then the one sent to the ID.
+ *   catches:    [{ waypoint, lure, board, onePhoto, several, photos }]  in waypoint order. `lure`
+ *               is null when only one photo followed the mark; that photo is then the one sent to
+ *               the ID. With more than two photos, `several` is true, `lure` and `board` are null,
+ *               and `photos` holds them all in time order -- see fishAtMark().
  *   unanchored: [{ photo, reason, waypoint? }]  every photo not in a catch, with why:
- *               'no_photo_time', 'no_waypoint_before', 'waypoint_other_day', 'after_waypoint_pair'
+ *               'no_photo_time', 'no_waypoint_before', 'waypoint_other_day'
  *   marked, loaded, untimed: counts, for the status line.
  *
  * `dayOf` is the local-day function; a parameter only so a test can pin it.
@@ -120,13 +132,42 @@ export function groupPhotosByWaypoint(photos, waypoints, dayOf = localDay) {
 
   const catches = [];
   for (const [waypoint, ps] of byMark) {
-    const two = ps.length >= 2;
-    catches.push({ waypoint, lure: two ? ps[0] : null, board: two ? ps[1] : ps[0], onePhoto: !two });
-    for (const photo of ps.slice(2)) unanchored.push({ photo, reason: 'after_waypoint_pair', waypoint });
+    if (ps.length > 2) {
+      catches.push({ waypoint, lure: null, board: null, onePhoto: false, several: true, photos: ps });
+      continue;
+    }
+    const two = ps.length === 2;
+    catches.push({ waypoint, lure: two ? ps[0] : null, board: two ? ps[1] : ps[0], onePhoto: !two,
+                   several: false, photos: ps });
   }
   catches.sort((a, b) => a.waypoint.epochS - b.waypoint.epochS);
   unanchored.sort((a, b) => (a.photo.timestamp ?? 0) - (b.photo.timestamp ?? 0));
   return { catches, unanchored, marked: marked.length, loaded: loaded.length, untimed: untimed.length };
+}
+
+/**
+ * Several fish at one mark: one fish per BOARD SHOT, each with a lure shot taken before it.
+ *
+ * photos:  the mark's photos (any order; sorted here by time)
+ * isBoard: photo -> true when the fish ID saw a fish on the bump board
+ *
+ * The k-th board shot gets the k-th lure shot taken before it, or the last one before it when
+ * there are more fish than lure shots -- his 10/08 triple was rig, rig, board, board, board, with
+ * two fish on one rig. Which lure shot goes with which fish is not knowable from the photos and
+ * does not need to be: he names the lure himself in review, looking at the shot.
+ *
+ * Returns [{ board, lure }] in time order, or null when no photo is a board shot -- the caller
+ * then keeps every photo as its own row at the mark, so nothing is dropped on a missed board.
+ */
+export function fishAtMark(photos, isBoard) {
+  const ps = [...(photos || [])].sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+  const boards = ps.filter(p => isBoard(p));
+  if (!boards.length) return null;
+  const lures = ps.filter(p => !boards.includes(p));
+  return boards.map((board, k) => {
+    const before = lures.filter(l => (l.timestamp ?? 0) <= (board.timestamp ?? 0));
+    return { board, lure: before.length ? before[Math.min(k, before.length - 1)] : null };
+  });
 }
 
 const round1 = (x) => Math.round(x * 10) / 10;

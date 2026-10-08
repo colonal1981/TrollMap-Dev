@@ -22,8 +22,10 @@ import { callGlobal } from '../utils/call-global.js';
 import { solunarFor } from '../utils/solunar.js';
 import { parseGPX } from '../utils/parsers.js';
 import { distMiFromCoords } from '../utils/geo.js';
-import { groupPhotosByWaypoint, waypointReadings, localIso, fmtGap } from '../utils/catch-waypoints.js';
+import { groupPhotosByWaypoint, fishAtMark, waypointReadings, localIso, fmtGap } from '../utils/catch-waypoints.js';
 import { marksToAsk, markRecord, saveMark, loadMarks, MARK_LABELS } from './garmin-marks.js';
+import { claudeBridgeStatus, claudeLook } from './claude-bridge.js';
+import { SORT_PX, MEASURE_PX, jsonOf, sortPrompt, photoLabel, boardsOf, measurePrompt, aiFromMeasure } from '../utils/claude-fish-id.js';
 import { flattenJournal } from '../utils/journal-merge.js';
 import { catchWaters, catchesGpx } from '../utils/catch-gpx.js';
 import { pinOffItsWater } from '../utils/catch-pins.js';
@@ -673,7 +675,7 @@ function renderImport(body) {
   body.innerHTML = `
     <div class="card" style="margin:0 0 12px 0;border-color:var(--accent)">
       <h3>🌙 Nightly Catch Upload — live AI ID, no offline script needed</h3>
-      <p class="muted">Drop the day's photos <b>and the Garmin's GPX export</b> together. Each waypoint you marked at a bite becomes one catch: the first photo after it is the <b>lure shot</b>, the second is the <b>fish-on-board shot</b>, and the position, depth and water temperature come from the waypoint. AI only sees the board shot (species + length); you pick the lure yourself while looking at the lure shot. Without a GPX, photos taken within 90 seconds of each other are paired the same way, lure first (🔄 swap in review if it guessed wrong).</p>
+      <p class="muted">Drop the day's photos <b>and the Garmin's GPX export</b> together. Each waypoint you marked at a bite becomes one catch: the first photo after it is the <b>lure shot</b>, the second is the <b>fish-on-board shot</b>, and the position, depth and water temperature come from the waypoint. Several fish at one waypoint (a double on an A-rig) is fine: with more than two photos after a mark, every board shot there is its own fish at that mark. Claude on this PC (the plan bridge window) reads the species and length off each board shot, and at a several-fish mark first says which photos are on the board; when it is not running, Gemini reads the board shot instead. You pick the lure yourself while looking at the lure shot. Without a GPX, photos taken within 90 seconds of each other are paired the same way, lure first (🔄 swap in review if it guessed wrong).</p>
       <div class="filebox" id="nightlyDropBox">Drop the photos and the .gpx here, or click to choose (select them all at once)</div>
       <input id="nightlyPhotoInput" type="file" accept="image/*,.gpx" multiple class="hidden">
       <div id="nightlyUploadStatus" class="muted" style="margin-top:8px">${esc(nightlyNote)}</div>
@@ -1422,7 +1424,6 @@ const UNANCHORED_NOTE = {
   no_photo_time: () => 'This photo has no time on it, so it could not be matched to a waypoint.',
   no_waypoint_before: () => 'No waypoint in the GPX was marked before this photo.',
   waypoint_other_day: (w) => `The last waypoint before this photo, ${w?.name || '(unnamed)'}, was marked on another day (${localIso(w.epochS).slice(0, 10)}).`,
-  after_waypoint_pair: (w) => `Taken after waypoint ${w?.name || '(unnamed)'}'s lure and board photos, so it is not guessed into that catch. A fish with no waypoint of its own?`,
 };
 
 async function handleNightlyPhotoUpload(files, body) {
@@ -1464,11 +1465,57 @@ async function handleNightlyPhotoUpload(files, body) {
   const withExif = await Promise.all(photoFiles.map(extractExif));
   const grouped = groupPhotosByWaypoint(withExif, waypoints);
 
+  // CLAUDE ON THIS PC IDENTIFIES EVERY FISH, AND GEMINI ONLY WHEN IT IS NOT THERE (2026-10-08, his
+  // "All fish to claude"): the plan bridge's /look, asked the sorter's questions
+  // (js/utils/claude-fish-id.js). A usage limit stops the asking for the rest of the drop.
+  if (status) status.textContent = 'Looking for Claude on this PC...';
+  let claude = (await claudeBridgeStatus()).up;
+  let claudeWhy = claude ? '' : 'Claude was not running on this PC';
+  const offClaude = (e) => { if (e && e.usageLimit) { claude = false; claudeWhy = "Claude's usage limit is reached"; } };
+
   // One plan per catch: which photo goes to the fish ID, which is the lure, and the waypoint.
-  const plans = grouped.catches.map(c => ({
-    board: c.board, lure: c.lure, waypoint: c.waypoint,
-    flags: c.onePhoto ? ['one_photo_at_waypoint'] : [], notes: [],
-  }));
+  // A mark with more than two photos is several fish (fishAtMark()): Claude is asked which of them
+  // are on the board -- order cannot say, and Gemini called his rig shots "on the board" because the
+  // board was in the frame -- and each board shot is one fish.
+  const plans = [];
+  for (const c of grouped.catches) {
+    if (!c.several) {
+      plans.push({ board: c.board, lure: c.lure, waypoint: c.waypoint, several: false,
+                   flags: c.onePhoto ? ['one_photo_at_waypoint'] : [], notes: [] });
+      continue;
+    }
+    const w = c.waypoint;
+    let onBoard = null;
+    if (claude) {
+      if (status) status.textContent = `Waypoint ${w.name || ''}: ${c.photos.length} photos, asking Claude on this PC which are on the board...`;
+      try {
+        onBoard = await claudeBoards(c.photos, localIso(w.epochS).slice(0, 10));
+      } catch (e) {
+        offClaude(e);
+        if (claude) claudeWhy = `Claude could not sort them (${e.message})`;
+        console.warn('[catch-journal] Claude sort failed:', e.message);
+      }
+    }
+    const fish = onBoard ? fishAtMark(c.photos, (p) => onBoard.has(p)) : null;
+    const shared = `${fish ? fish.length : c.photos.length} at waypoint ${w.name || '(unnamed)'}`;
+    if (fish) {
+      fish.forEach((f, k) => plans.push({
+        board: f.board, lure: f.lure, waypoint: w, several: true,
+        flags: ['several_fish_at_waypoint'],
+        notes: [`Fish ${k + 1} of ${shared}, from ${c.photos.length} photos. If one of them bit somewhere else, it was not marked: correct its position.`],
+      }));
+    } else {
+      // Not sorted, or no board shot among them. Nothing is dropped: every photo is a row at the
+      // mark, and the ones that are not a fish are rejected in review.
+      const why = onBoard ? 'Claude saw no fish on the bump board in any of them'
+        : `${claudeWhy}, so which of them are board shots was not decided`;
+      c.photos.forEach((p) => plans.push({
+        board: p, lure: null, waypoint: w, several: true,
+        flags: ['several_at_waypoint_no_board'],
+        notes: [`One of ${c.photos.length} photos at waypoint ${w.name || '(unnamed)'}; ${why}. Reject the ones that are not a fish.`],
+      }));
+    }
+  }
   // Everything not under a waypoint: paired by time as before, lure first. With a GPX in the
   // drop each one says why it had no waypoint; without one there is nothing to explain.
   const why = new Map(grouped.unanchored.map(u => [u.photo, u]));
@@ -1484,7 +1531,7 @@ async function handleNightlyPhotoUpload(files, body) {
     }
   }
 
-  let created = 0, aiCalled = 0, aiFailed = 0;
+  let created = 0, aiCalled = 0, aiFailed = 0, byClaude = 0;
   const queue = getQueue();
 
   for (let i = 0; i < plans.length; i++) {
@@ -1517,7 +1564,20 @@ async function handleNightlyPhotoUpload(files, body) {
     }
 
     let ai = null;
-    try {
+    if (claude) {
+      if (status) status.textContent = `Catch ${i + 1} of ${plans.length}: asking Claude on this PC for the species and length...`;
+      try {
+        // A several-fish mark's rig shot holds more than this fish, so only the board shot goes.
+        ai = await claudeMeasure(board, plans[i].several ? null : lure,
+                                 { day: date, time: dt.slice(11, 16), lat: w ? w.lat : board.lat, lon: w ? w.lon : board.lon });
+        byClaude++;
+      } catch (e) {
+        offClaude(e);
+        notes.push(`Claude on this PC did not answer (${e.message}), so Gemini read this one.`);
+        console.warn('[catch-journal] Claude ID failed:', e.message);
+      }
+    }
+    if (!ai) try {
       ai = await identifyFishWithGemini(board.file, {
         lake: document.getElementById('planLake')?.value || '',
         date,
@@ -1549,14 +1609,15 @@ async function handleNightlyPhotoUpload(files, body) {
       lurePhotoDataUrl: lureDataUrl,
       lureFilename: lure?.file?.name || '',
       lure: '', // filled in manually during review — never sent to AI
-      // /identify-catch-v2 (falling back to /identify-catch) answers with has_fish,
-      // on_bump_board, species, length and confidence. Its species list is the Worker's, which
-      // includes Bowfin -- with a freshwater eyespot rule so a bowfin is not called a red drum --
-      // plus gar, pickerel, bream, shad and the saltwater fish. Species is still human-reviewed.
+      // Claude (claudeMeasure(), in the same shape) or /identify-catch-v2 (falling back to
+      // /identify-catch) answers with has_fish, on_bump_board, species, length and confidence.
+      // Claude's species list is the app's (SPECIES); the Worker's includes Bowfin -- with a
+      // freshwater eyespot rule so a bowfin is not called a red drum -- plus gar, pickerel, bream,
+      // shad and the saltwater fish. Species is still human-reviewed.
       ai: ai ? {
         species: ai.species || '', length: ai.lengthInches ?? '', confidence: ai.confidence || '',
         notes: [ai.notes || '', ...notes].filter(Boolean).join(' | '),
-        model: 'Gemini 2.5-flash v13 (SC trolling taxonomy)',
+        model: ai.model || 'Gemini 2.5-flash v13 (SC trolling taxonomy)',
         inferredSpecies: ai.species || '',
         // v2 extended fields — stored on the item, displayed in review, ignored by old code safely
         has_fish: ai.has_fish ?? true,
@@ -1595,8 +1656,11 @@ async function handleNightlyPhotoUpload(files, body) {
   await saveQueue();
   const toLabel = gpxFiles.length ? await collectMarks(waypoints, grouped.catches.map(c => c.waypoint)) : 0;
   if (status) {
-    const onMarks = grouped.catches.length;
-    status.textContent = `✓ Added ${created} catch(es) to review queue. AI ID ran on ${aiCalled}${aiFailed ? ` (${aiFailed} failed — check flagged items)` : ''}.`
+    // Counted off the plans, not the marks: one mark can carry several fish.
+    const onMarks = plans.filter(p => p.waypoint).length;
+    status.textContent = `✓ Added ${created} catch(es) to review queue. AI ID ran on ${aiCalled}${aiFailed ? ` (${aiFailed} failed — check flagged items)` : ''}`
+      + (byClaude === aiCalled ? (aiCalled ? ', all by Claude on this PC.' : '.')
+        : `: ${byClaude} by Claude on this PC, ${aiCalled - byClaude} by Gemini (${claudeWhy || 'Claude did not answer for those'}).`)
       + (gpxFiles.length
         ? ` ${onMarks} on a Garmin waypoint${created > onMarks ? `, ${created - onMarks} without one (flagged)` : ''}.`
           + (grouped.loaded ? ` ${grouped.loaded} waypoints in the GPX share one timestamp, so they were loaded onto the unit, not marked, and were not used.` : '')
@@ -1660,6 +1724,30 @@ function wireMarks(host) {
     } else return;
     host.innerHTML = marksCardHtml();
   });
+}
+
+// ── Claude on this PC: which photos at a mark are on the board, and each fish (2026-10-08) ─────
+const FISH_SPECIES = () => SPECIES.filter(s => s && s !== 'Not Fish');
+const jpegFor = async (file, px) => blobToBase64(await resizeForGemini(file, px));
+
+/** The photos of a several-fish mark that Claude puts on the bump board, as a Set. Throws on failure. */
+async function claudeBoards(photos, day) {
+  const images = [];
+  for (let i = 0; i < photos.length; i++) {
+    images.push({ label: photoLabel(i + 1, localIso(photos[i].timestamp).slice(11, 19)),
+                  data: await jpegFor(photos[i].file, SORT_PX) });
+  }
+  const { text } = await claudeLook(sortPrompt(photos.length, day, FISH_SPECIES()), images);
+  const on = boardsOf(jsonOf(text), photos.length);
+  return new Set(photos.filter((_, i) => on.has(i + 1)));
+}
+
+/** One fish's species and length from Claude, in the review queue's `ai` shape. Throws on failure. */
+async function claudeMeasure(board, lure, { day, time, lat, lon }) {
+  const images = [{ label: 'Photo A (the board shot)', data: await jpegFor(board.file, MEASURE_PX) }];
+  if (lure) images.push({ label: 'Photo B (same fish)', data: await jpegFor(lure.file, SORT_PX) });
+  const { text, model } = await claudeLook(measurePrompt({ day, time, lat, lon, species: FISH_SPECIES() }), images);
+  return aiFromMeasure(jsonOf(text), model, FISH_SPECIES());
 }
 
 // ── Gemini fish identification (for single photo drop) ───────────────────────

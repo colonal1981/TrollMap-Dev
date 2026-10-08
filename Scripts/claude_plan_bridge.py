@@ -11,6 +11,12 @@ instead of to the Worker's free Gemini chain; when it is not running they ask Ge
 before. Nothing else changes: the app builds the same request, reads the answer with the same
 parser and runs the same checks on it.
 
+The catch upload sends its photos here too (POST /look): which photos at a mark are on the board,
+and each fish's species and length. Ryan, 2026-10-08, of the Gemini ID that called a fish on the
+rig "on the board": *"it should be using Claude Opus 5.5 same as what i am talking to you on and you
+can tell the difference lol"*, *"if its not then use the same route that smartplan now uses for the
+plans"*, and *"All fish to claude"*.
+
 WHY. Ryan, 2026-09-26: "i already pay for this so i might as well use it... my computer stays on
 and connected to claude... i normally don't run plans from my phone... i plan here on the
 computer". The research step made the same move on 2026-09-24 (claude_species.py) after the Murray
@@ -97,6 +103,61 @@ def command(exe, model, system_file, effort=None):
     if effort:
         cmd += ["--effort", effort]
     return cmd
+
+
+def look_message(prompt, images):
+    """The one user message for /look: the prompt, then each photo after its own label. The photos go
+    as image blocks on stdin (`--input-format stream-json`), the way claude_fish_sorter.py sends them
+    -- the CLI's own way in for an image, with no tool to open a file."""
+    content = [{"type": "text", "text": prompt}]
+    for im in images:
+        if im.get("label"):
+            content.append({"type": "text", "text": str(im["label"])})
+        content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
+                                                    "data": im["data"]}})
+    return {"type": "user", "message": {"role": "user", "content": content}}
+
+
+def look_command(exe, model):
+    return [exe, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+            "--model", model, "--tools", "", "--no-session-persistence", "--strict-mcp-config",
+            "--safe-mode"]
+
+
+def look(prompt, images, model=PLAN_MODEL, run=subprocess.run, timeout=PLAN_TIMEOUT):
+    """(status, body) for photos. body is {"text", "_trollmap"}, or {"error", "usageLimit"}.
+    The same CLI, flags and limits as ask(); `run` is injectable so the tests never start the CLI."""
+    exe = claude_exe()
+    if not exe:
+        return 503, {"error": "claude CLI not found on this PC -- set TROLLMAP_CLAUDE_EXE, or "
+                              "install Claude Code (it lands in ~/.local/bin)", "usageLimit": False}
+    t0 = time.perf_counter()
+    with tempfile.TemporaryDirectory() as cwd:        # no CLAUDE.md, no project settings
+        try:
+            p = run(look_command(exe, model), input=json.dumps(look_message(prompt, images)) + "\n",
+                    capture_output=True, text=True, encoding="utf-8", cwd=cwd, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            return 504, {"error": f"claude did not answer within {timeout} s", "usageLimit": False}
+    seconds = round(time.perf_counter() - t0, 1)
+    res = None
+    for line in (p.stdout or "").splitlines():
+        try:
+            o = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(o, dict) and o.get("type") == "result":
+            res = o
+    if res is None:
+        why = (p.stderr or p.stdout or "no output").strip()[:400]
+        return 502, {"error": f"claude exit {p.returncode}: {why}",
+                     "usageLimit": bool(_LIMIT_WORDS.search(why))}
+    if res.get("is_error") or res.get("subtype") != "success":
+        why = str(res.get("result") or res.get("subtype") or "error")[:400]
+        return 502, {"error": f"claude: {why}", "usageLimit": bool(_LIMIT_WORDS.search(why))}
+    model_used = next(iter(res.get("modelUsage") or {}), None) or model
+    return 200, {"text": str(res.get("result") or ""),
+                 "_trollmap": {"provider": "claude (this PC)", "model": model_used, "modelAsked": model,
+                               "seconds": seconds, "apiListPriceUsd": res.get("total_cost_usd")}}
 
 
 def ask(system, user, model=PLAN_MODEL, effort=None, run=subprocess.run, timeout=PLAN_TIMEOUT):
@@ -206,13 +267,16 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):                                              # noqa: N802
         if self._refused():
             return
-        if self.path.split("?")[0] != "/ask":
+        path = self.path.split("?")[0]
+        if path not in ("/ask", "/look"):
             return self._send(404, {"error": "not found"})
         try:
             n = int(self.headers.get("Content-Length") or 0)
             req = json.loads(self.rfile.read(n).decode("utf-8") or "{}")
         except (ValueError, UnicodeDecodeError):
             return self._send(400, {"error": "the body is not JSON"})
+        if path == "/look":
+            return self._look(req)
         system, user = req.get("system"), req.get("user")
         if not isinstance(user, str) or not user.strip():
             return self._send(400, {"error": "no user prompt"})
@@ -229,6 +293,25 @@ class Handler(BaseHTTPRequestHandler):
             print(f"{time.strftime('%H:%M:%S')}  answered by {t['model']} in {t['seconds']} s, "
                   f"{body['usage']['prompt_tokens']} in / {body['usage']['completion_tokens']} out",
                   flush=True)
+        else:
+            print(f"{time.strftime('%H:%M:%S')}  FAILED ({status}): {body['error']}", flush=True)
+        self._send(status, body)
+
+    def _look(self, req):
+        prompt, images = req.get("prompt"), req.get("images")
+        if not isinstance(prompt, str) or not prompt.strip():
+            return self._send(400, {"error": "no prompt"})
+        if (not isinstance(images, list) or not images
+                or not all(isinstance(i, dict) and isinstance(i.get("data"), str) and i["data"] for i in images)):
+            return self._send(400, {"error": "no photos, or a photo with no data"})
+        model = str(req.get("model") or self.model)
+        # The same one-at-a-time as a plan: one subscription, one CLI at once.
+        with _one_at_a_time:
+            print(f"{time.strftime('%H:%M:%S')}  looking with {model}: {len(images)} photo(s)", flush=True)
+            status, body = look(prompt, images, model, run=self.runner)
+        if status == 200:
+            print(f"{time.strftime('%H:%M:%S')}  answered by {body['_trollmap']['model']} in "
+                  f"{body['_trollmap']['seconds']} s", flush=True)
         else:
             print(f"{time.strftime('%H:%M:%S')}  FAILED ({status}): {body['error']}", flush=True)
         self._send(status, body)

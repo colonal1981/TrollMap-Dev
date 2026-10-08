@@ -101,6 +101,66 @@ class Ask(unittest.TestCase):
         self.assertEqual(st, 503)
 
 
+LOOK_RESULT = {"type": "result", "subtype": "success", "is_error": False,
+               "result": '{"species": "Striped Bass", "length_in": 21.0}', "total_cost_usd": 0.05,
+               "modelUsage": {"claude-opus-5-5": {}}}
+PHOTO = {"label": "Photo A (the board shot)", "data": "/9j/AAAA"}
+
+
+def look_runner(lines, stderr="", rc=0, seen=None):
+    """A CLI that prints stream-json lines, as `--output-format stream-json --verbose` does."""
+    def run(cmd, **kw):
+        if seen is not None:
+            seen.append({"cmd": cmd, **kw})
+        return Proc("\n".join(json.dumps(x) for x in lines), stderr, rc)
+    return run
+
+
+class Look(unittest.TestCase):
+    """2026-10-08: "All fish to claude". The catch upload's photos go to the same CLI as image blocks."""
+    def setUp(self):
+        self._exe = B.claude_exe
+        B.claude_exe = lambda: "claude.exe"
+
+    def tearDown(self):
+        B.claude_exe = self._exe
+
+    def test_the_photos_go_in_on_stdin_after_their_labels_and_no_tool_is_on(self):
+        seen = []
+        st, body = B.look("which are on the board?", [PHOTO, {"data": "/9j/BBBB"}],
+                          run=look_runner([{"type": "system"}, LOOK_RESULT], seen=seen))
+        self.assertEqual(st, 200)
+        cmd = seen[0]["cmd"]
+        self.assertEqual(cmd[cmd.index("--input-format") + 1], "stream-json")
+        self.assertEqual(cmd[cmd.index("--tools") + 1], "")
+        for flag in ("-p", "--no-session-persistence", "--strict-mcp-config", "--safe-mode"):
+            self.assertIn(flag, cmd)
+        self.assertEqual(cmd[cmd.index("--model") + 1], "opus")
+        msg = json.loads(seen[0]["input"])
+        content = msg["message"]["content"]
+        self.assertEqual([c["type"] for c in content], ["text", "text", "image", "image"])
+        self.assertEqual(content[0]["text"], "which are on the board?")
+        self.assertEqual(content[1]["text"], "Photo A (the board shot)")
+        self.assertEqual(content[2]["source"], {"type": "base64", "media_type": "image/jpeg", "data": "/9j/AAAA"})
+
+    def test_the_answer_is_the_text_and_who_wrote_it(self):
+        st, body = B.look("p", [PHOTO], run=look_runner([LOOK_RESULT]))
+        self.assertEqual(body["text"], '{"species": "Striped Bass", "length_in": 21.0}')
+        self.assertEqual(body["_trollmap"]["model"], "claude-opus-5-5")
+        self.assertEqual(body["_trollmap"]["provider"], "claude (this PC)")
+
+    def test_a_usage_limit_is_said_as_one(self):
+        out = dict(LOOK_RESULT, is_error=True, subtype="error", result="You've hit your weekly limit")
+        st, body = B.look("p", [PHOTO], run=look_runner([out]))
+        self.assertEqual(st, 502)
+        self.assertTrue(body["usageLimit"])
+
+    def test_no_result_line_is_an_error_not_an_answer(self):
+        st, body = B.look("p", [PHOTO], run=look_runner([], stderr="boom", rc=1))
+        self.assertEqual(st, 502)
+        self.assertIn("boom", body["error"])
+
+
 class Origins(unittest.TestCase):
     def test_the_apps_origins_and_nothing_else(self):
         for o in ("https://trollmap-dev.pages.dev", "https://trollmap.pages.dev",
@@ -176,6 +236,23 @@ class Server(unittest.TestCase):
             self.assertEqual(st, 200)
             self.assertNotIn("--effort", seen[-1]["cmd"])
             self.assertIsNone(json.loads(b)["_trollmap"]["effort"])
+        finally:
+            B.Handler.runner = staticmethod(runner(OK_OUT))
+
+    def test_photos_are_answered_on_look_and_refused_without_any(self):
+        B.Handler.runner = staticmethod(look_runner([LOOK_RESULT]))
+        try:
+            st, h, b = self.req("POST", "/look", "https://trollmap-dev.pages.dev",
+                                {"prompt": "measure it", "images": [PHOTO]})
+            self.assertEqual(st, 200)
+            self.assertEqual(json.loads(b)["text"], LOOK_RESULT["result"])
+            self.assertEqual(h["Access-Control-Allow-Origin"], "https://trollmap-dev.pages.dev")
+            st, _, _ = self.req("POST", "/look", None, {"prompt": "measure it", "images": []})
+            self.assertEqual(st, 400)
+            st, _, _ = self.req("POST", "/look", None, {"prompt": "", "images": [PHOTO]})
+            self.assertEqual(st, 400)
+            st, _, _ = self.req("POST", "/look", "https://evil.example", {"prompt": "p", "images": [PHOTO]})
+            self.assertEqual(st, 403)
         finally:
             B.Handler.runner = staticmethod(runner(OK_OUT))
 
