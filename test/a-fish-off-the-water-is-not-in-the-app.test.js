@@ -43,6 +43,17 @@ test('two photos of one fish are one fish: same species, date and minute, within
   assert.equal(oneFishEach([noPos, { ...noPos }]).length, 2);
 });
 
+test('several fish logged at one waypoint are several fish: his three stripers at 0007 on 10/8', () => {
+  // One row per board shot, all three with the waypoint's minute and position.
+  const w = { name: '0007', time: '2026-10-08T19:00:01Z', lat: 33.5197084676, lon: -80.2143453062 };
+  const fish = ['PXL_20261008_190337648.MP.jpg', 'PXL_20261008_190353906.jpg', 'PXL_20261008_190415632.jpg']
+    .map((f) => ({ species: 'Striped Bass', date: '2026-10-08', time: '3:00 PM', lat: w.lat, lon: w.lon, sourceFile: f, waypoint: w }));
+  assert.equal(oneFishEach(fish).length, 3);
+  // Without a waypoint, two rows on one minute and spot are still two photos of one fish.
+  const noMark = fish.map(({ waypoint, ...c }) => c);
+  assert.equal(oneFishEach(noMark).length, 1);
+});
+
 test('a pin is off its water when its lake is this water and it is on neither the chart nor inside the boundary', () => {
   const water = {
     key: 'lake_marion',

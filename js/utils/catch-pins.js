@@ -30,6 +30,11 @@
  *
  * A row the sorter marked as a second fish in one photo (`<photo>#2`, his "2 fish lol" of
  * 2024-04-22) is a fish of its own and is never folded.
+ *
+ * NOR IS A FISH LOGGED AT A GARMIN WAYPOINT. The nightly upload makes one row per board shot, so
+ * every row with a `waypoint` is one fish already, and several fish at one mark share its minute
+ * and its spot: his three stripers at 0007 on 2026-10-08 (*"The first 3 fish were all caught at the
+ * same time at waypoint 0007"*) were folded into one here, in the map and in the plans' depth.
  */
 export const SAME_SPOT_M = 25;
 
@@ -43,6 +48,7 @@ export function hasPosition(c) {
 }
 
 const secondFish = (c) => /#\d+$/.test(String((c && c.sourceFile) || ''));
+const markedFish = (c) => !!(c && c.waypoint && (c.waypoint.name || c.waypoint.time));
 const minuteOf = (c) => String((c && c.time) || '').trim().toUpperCase().replace(/\s+/g, ' ');
 const apartM = (a, b) => {
   const la = parseFloat(a.lat), lb = parseFloat(b.lat);
@@ -63,7 +69,7 @@ export function oneFishEach(catches) {
   for (const c of (catches || [])) {
     if (!c) continue;
     const minute = minuteOf(c);
-    if (!hasPosition(c) || !c.date || !minute || secondFish(c)) { out.push(c); continue; }
+    if (!hasPosition(c) || !c.date || !minute || secondFish(c) || markedFish(c)) { out.push(c); continue; }
     const k = `${String(c.species || '').trim().toLowerCase()}|${c.date}|${minute}`;
     const same = kept.get(k);
     if (same && same.some((o) => apartM(o, c) <= SAME_SPOT_M)) continue;
