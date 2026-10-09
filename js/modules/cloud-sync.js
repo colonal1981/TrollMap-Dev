@@ -24,7 +24,7 @@
 import { state, CF_WORKER_URL } from '../core/state.js';
 import { get as dbGet, put as dbPut, getAll as dbGetAll, isReady as dbIsReady, tryPut, tryDel } from '../utils/db.js';
 import { SYNC_TOKEN } from '../utils/worker-auth.js';
-import { mergePulledJournal, isCatch } from '../utils/journal-merge.js';
+import { mergeJournals, isCatch } from '../utils/journal-merge.js';
 
 // The token lives in utils/worker-auth.js. It was spelled out here AND, differently, in
 // plan-builder.js -- `trollmap-sync-9a8b7c6d5e`, which the worker rejected on every call.
@@ -341,15 +341,20 @@ export async function pullUpdatesOnLoad() {
             // THE JOURNAL IS ONE RECORD, and this used to push it into itself. catch-journal.js
             // sends the whole journal as `catch/catches`; this looked for a catch keyed 'catches',
             // found none, and appended the record as one more catch -- 504 blank rows in Ryan's
-            // journal by 2026-10-03. Now the pulled record's catches are merged in: what this device
-            // lacks is added, nothing here is overwritten. Any other journal record (the review
-            // queue) is not a catch and is left alone. See journal-merge.js.
+            // journal by 2026-10-03. Then it added only what this device lacked and overwrote
+            // nothing, so a fish renamed on one device stayed renamed only there (2026-10-09). Now
+            // the copy changed later wins, a fish deleted elsewhere goes, and a fish neither side
+            // changed stays as it is here. Any other journal record (the review queue) is not a catch
+            // and is left alone. See journal-merge.js.
             if (id === 'catches' || isCatch(local)) {
               const cur = await dbGet('journal', 'catches');
-              const m = mergePulledJournal(cur?.data || [], local);
-              await dbPut('journal', { name: 'catches', data: m.catches });
+              const m = mergeJournals(cur, local);
+              await dbPut('journal', { name: 'catches', data: m.catches, removed: m.removed });
               if (state.CATCHES) state.CATCHES = m.catches;
-              if (m.recovered) console.log(`[cloud-sync] ${m.recovered} catch(es) from the cloud journal added on this device.`);
+              if (m.added || m.replaced || m.gone) {
+                console.log(`[cloud-sync] journal from the cloud: ${m.added} fish added, ${m.replaced} changed `
+                  + `elsewhere taken, ${m.gone} deleted elsewhere removed.`);
+              }
             } else {
               console.log(`[cloud-sync] journal record "${id}" pulled and not merged: it is not a catch.`);
             }

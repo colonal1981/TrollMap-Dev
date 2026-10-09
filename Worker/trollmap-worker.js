@@ -19,6 +19,7 @@ import { handleAlerts, runAlertSweep } from './alerts.js';
 import { handleReports } from './reports.js';
 import { handlePlaces } from './places.js';
 import { handleGuideReports } from './guide-reports.js';
+import { mergeJournals } from '../js/utils/journal-merge.js';
 import { fetchStateRegulations, getLakeRegulations } from './research/clients.js';
 import { regulationsTable, lakeIndex, resolveRegistryRow } from './registry.js';
 import { handleResearchLimnologyData, refreshStaleLimnology, handleResearchDiscover, handleResearchProxyDownload, handleResearchProxyDownloadBatch, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, registrySpeciesFor, speciesFoodHabits, speciesMeasuredTraits, handleResearchAnalyzeFacts, handleResearchAgent, handleResearchList, handleResearchGet, handleResearchSave, handleResearchRegsDebug, handleResearchDelete, handleEnhancedLakeIntel, RESEARCH_AGENTS, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey } from './worker-research.js';
@@ -730,13 +731,28 @@ async function ensureSyncSchema(db) {
     if (!String(e).includes("already exists") && !String(e).includes("SQLITE_ERROR")) throw e;
   }
 }
-async function handleSyncPush(request, env, type, id) {
+// THE CATCH JOURNAL IS MERGED, NOT REPLACED. It is one row holding every fish, and each device used
+// to send its whole journal over it, so a phone that had not caught up put back the names Ryan had
+// changed in Chrome (2026-10-09, 25 fish renamed: "how to make this persist wherever i open it").
+// The row stored and the journal pushed are made one by journal-merge.js, the same rule the app's
+// pull uses: the later change wins, a deleted fish stays deleted, and with neither changed later
+// the row's copy stays.
+async function withStoredJournal(db, pushed) {
+  const row = await db.prepare(
+    `SELECT payload, deleted FROM sync_items WHERE type='catch' AND id='catches'`
+  ).first();
+  if (!row || row.deleted === 1) return pushed;
+  const m = mergeJournals(JSON.parse(row.payload), pushed);
+  return { ...pushed, data: m.catches, removed: m.removed };
+}
+export async function handleSyncPush(request, env, type, id) {
   if (!SYNC_STORES.includes(type)) {
     return new Response(JSON.stringify({ error: `unknown type: ${type}` }), { headers: JSON_HEADERS, status: 400 });
   }
   const body = await request.json();
-  const { lastModified = (new Date()).toISOString(), deleted = false, ...data } = body;
+  const { lastModified = (new Date()).toISOString(), deleted = false, ...pushed } = body;
   await ensureSyncSchema(env.DB);
+  const data = type === 'catch' && id === 'catches' && !deleted ? await withStoredJournal(env.DB, pushed) : pushed;
   const payload = JSON.stringify(data);
   try {
     await env.DB.prepare(

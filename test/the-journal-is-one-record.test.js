@@ -12,7 +12,8 @@
 //   2. a catch that exists only inside a copy (logged elsewhere, never merged) stays, once;
 //   3. copies nested in copies are walked, and a copy of the review queue adds nothing;
 //   4. a corrected catch is the same catch: an older copy of it with another species does not come back;
-//   5. a pull adds what the device lacks and overwrites nothing;
+//   5. a pull adds what the device lacks, and a fish neither side changed later stays as it is here
+//      (since 2026-10-09 the copy changed later wins: a-change-on-one-device-reaches-the-others);
 //   6. cloud-sync merges a pulled journal through it and no longer pushes the record into the array,
 //      and the journal is repaired when it loads;
 //   7. an import whose rows all went straight to the Journal opens the Journal, and an empty queue
@@ -22,7 +23,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { flattenJournal, mergePulledJournal, isJournalRecord, catchKey } from '../js/utils/journal-merge.js';
+import { flattenJournal, mergeJournals, isJournalRecord, catchKey } from '../js/utils/journal-merge.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const read = (f) => fs.readFileSync(path.join(HERE, '..', f), 'utf8');
@@ -67,19 +68,22 @@ test('4. a corrected catch is the same catch', () => {
   assert.equal(catchKey(fixed), catchKey(handLogged));
 });
 
-test('5. a pull adds what the device lacks and overwrites nothing', () => {
-  const mine = [{ ...bowfin, lure: 'Spook' }];
+test('5. a pull adds what the device lacks; a fish neither side changed later stays as it is here', () => {
+  const mine = { name: 'catches', data: [{ ...bowfin, lure: 'Spook' }] };
   const pulled = { name: 'catches', data: [{ ...bowfin, lure: '' }, striper] };
-  const r = mergePulledJournal(mine, pulled);
+  const r = mergeJournals(mine, pulled);
   assert.equal(r.catches.length, 2);
   assert.equal(r.catches[0].lure, 'Spook');
-  assert.equal(r.recovered, 1);
-  assert.equal(mergePulledJournal(mine, handLogged).catches.length, 2);
+  assert.equal(r.added, 1);
+  assert.equal(mergeJournals(mine, handLogged).catches.length, 2);
+  // and a pulled copy that holds copies of the journal adds the catch only a copy had, once
+  const nested = mergeJournals(mine, { name: 'catches', data: [{ name: 'catches', data: [handLogged] }, handLogged] });
+  assert.equal(nested.catches.length, 2);
 });
 
 test('6. cloud-sync merges a pulled journal, and the journal is repaired on load', () => {
   const sync = read('js/modules/cloud-sync.js');
-  assert.match(sync, /mergePulledJournal\(cur\?\.data \|\| \[\], local\)/);
+  assert.match(sync, /const m = mergeJournals\(cur, local\);/);
   assert.doesNotMatch(sync, /else merged2\.push\(local\)/);
   const cj = read('js/modules/catch-journal.js');
   assert.match(cj, /const fixed = flattenJournal\(r\.data \|\| \[\]\);/);

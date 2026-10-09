@@ -28,19 +28,22 @@ const live = (js) => js.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm
 
 describe('the journal syncs without its photographs', () => {
   it('the push sends the stripped projection, not the raw catches', () => {
-    expect(live(journal)).toMatch(/pushItemOnSave',\s*'catch',\s*CATCHES_DB_KEY,\s*\n?\s*\{\s*name:\s*CATCHES_DB_KEY,\s*data:\s*catchesForSync\(\)\s*\}/);
-    expect(live(journal).includes('data: getCatches() }')).toBe(true);   // the LOCAL save still keeps everything
+    // `removed`: the fish deleted since, so a delete reaches his other devices (journal-merge.js)
+    expect(live(journal)).toMatch(/pushItemOnSave',\s*'catch',\s*CATCHES_DB_KEY,\s*\n?\s*\{\s*name:\s*CATCHES_DB_KEY,\s*data:\s*catchesForSync\(\),\s*removed\s*\}/);
+    expect(live(journal).includes('data: getCatches(), removed }')).toBe(true);   // the LOCAL save still keeps everything
   });
 
   it('and the projection drops every data-url field', () => {
-    for (const f of ['photoDataUrl', 'lurePhotoDataUrl', 'thumbDataUrl']) {
-      expect(new RegExp(`\\b${f}\\b[^\\n]*\\.\\.\\.rest|${f},`).test(live(journal))).toBe(true);
-    }
+    // One list, journal-merge.js's, so a pull keeps on the device every field the push leaves out.
+    const merge = src('js/utils/journal-merge.js');
+    expect(merge.includes("export const PHOTO_FIELDS = ['photoDataUrl', 'lurePhotoDataUrl', 'thumbDataUrl'];")).toBe(true);
+    const fn = live(journal).slice(live(journal).indexOf('function catchesForSync()'));
+    expect(fn.includes('for (const f of PHOTO_FIELDS) { if (rest[f]) pictured = true; delete rest[f]; }')).toBe(true);
   });
 
   it('the local record is untouched — a catch is the costliest thing here to lose', () => {
     // saveCatches() writes getCatches() to IndexedDB. Only the wire copy is thinned.
-    expect(live(journal)).toMatch(/tryPut\('journal', \{ name: CATCHES_DB_KEY, data: getCatches\(\) \}/);
+    expect(live(journal)).toMatch(/tryPut\('journal', \{ name: CATCHES_DB_KEY, data: getCatches\(\), removed \}/);
   });
 
   it('says on the record that a photo exists on the device it was shot on', () => {

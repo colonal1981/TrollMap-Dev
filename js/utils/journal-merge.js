@@ -16,9 +16,27 @@
  *                       the real ones as they stand, plus any catch that exists ONLY inside a copy
  *                       (one logged on another device that never merged), each once. A copy of
  *                       any other journal record (the review queue) holds no catches and is dropped.
- *   mergePulledJournal() is what a pull does now: the journal on this device, plus the catches in
- *                       the pulled record that this device does not have. Nothing on this device is
- *                       overwritten by a pull.
+ *   mergeJournals()     is what a pull does with the cloud's journal, and what the Worker does with a
+ *                       journal pushed to it: two copies become one, fish by fish (below).
+ *
+ * A CHANGE ON ONE DEVICE REACHES THE OTHERS (2026-10-09). Ryan, after 25 fish were renamed in his
+ * Chrome journal: "and the next thing is how to make this persist wherever i open it... either storing
+ * in r2 or something else...". The journal was already in the cloud; what kept the names on one device
+ * was this file. A pull added the fish a device lacked and overwrote nothing, so a renamed fish stayed
+ * renamed only where it was renamed, and every save sent that device's whole journal over the cloud's,
+ * so a phone that had not caught up put the old names back. A deleted fish came back from any device
+ * that still had it. Asked whether this was it -- every fish carries when it was last changed, the
+ * later change wins, a deleted fish is remembered as deleted, and the Worker uses the same rule -- "yes".
+ *
+ *   stampJournal()      runs in saveCatches(): a fish that is not what it was at the last save, or is
+ *                       new, gets `editedAt`; a fish that was there and is gone goes into `removed`
+ *                       with the time. So every way of changing a fish stamps it, with nothing to add
+ *                       at each place that changes one.
+ *   mergeJournals()     for a fish both copies have, the one changed later wins; with the same time, or
+ *                       neither stamped, the copy already there stays (this device's on a pull, the
+ *                       cloud's at the Worker), so nothing changes that nobody changed. A fish in
+ *                       `removed` stays gone unless it was changed after it was deleted. A copy from
+ *                       the cloud never has the picture; the one here keeps its own.
  */
 
 const CATCH_FIELDS = ['species', 'date', 'time', 'length', 'lake', 'lat', 'lon', 'sourceFile', 'notes', 'lure'];
@@ -83,8 +101,90 @@ export function flattenJournal(arr) {
   return { catches: out, records, recovered, dropped };
 }
 
-/** A pulled journal record into the journal on this device: add what is missing, overwrite nothing. */
-export function mergePulledJournal(current, pulled) {
-  const incoming = Array.isArray(pulled && pulled.data) ? [pulled] : (isCatch(pulled) ? [pulled] : []);
-  return flattenJournal([...(Array.isArray(current) ? current : []), ...incoming]);
+/**
+ * The fields that hold a picture. They stay on the device that has them -- catchesForSync() in
+ * catch-journal.js leaves them out of the copy that goes to the cloud -- so a newer copy of a fish
+ * from the cloud keeps this device's picture, and a picture is not what makes a fish changed.
+ */
+export const PHOTO_FIELDS = ['photoDataUrl', 'lurePhotoDataUrl', 'thumbDataUrl'];
+// Not what a fish says: when it was changed, and the cloud copy's note that a picture is on a device.
+const NOT_THE_FISH = new Set([...PHOTO_FIELDS, 'editedAt', 'photoOnDevice']);
+
+/** What a fish says, in one string, the same whatever order its fields were written in. */
+function fishText(c) {
+  return JSON.stringify(Object.keys(c).filter((k) => !NOT_THE_FISH.has(k)).sort().map((k) => [k, c[k]]));
+}
+const stampOf = (c) => String((c && c.editedAt) || '');
+
+/**
+ * Stamp the fish that changed since the last save. Sets `editedAt = now` on each fish in `after` that
+ * is new or not what it was in `before`, in place. Unchanged fish keep the stamp they had, or none.
+ * @param {Array}  before   the journal as last saved on this device
+ * @param {Array}  after    the journal being saved
+ * @param {object} removed  catchKey -> when it was deleted, as last saved
+ * @param {string} now      an ISO time
+ * @returns {{removed: object, stamped: number}} `removed` with the fish gone since the last save
+ *          added and any fish that is back taken out
+ */
+export function stampJournal(before, after, removed, now) {
+  const was = new Map();
+  for (const c of (Array.isArray(before) ? before : [])) if (isCatch(c)) was.set(catchKey(c), c);
+  const out = { ...(removed && typeof removed === 'object' ? removed : {}) };
+  const here = new Set();
+  let stamped = 0;
+  for (const c of (Array.isArray(after) ? after : [])) {
+    if (!isCatch(c)) continue;
+    const k = catchKey(c);
+    here.add(k);
+    const old = was.get(k);
+    if (!old || fishText(old) !== fishText(c)) { c.editedAt = now; stamped++; }
+    delete out[k];
+  }
+  for (const k of was.keys()) if (!here.has(k)) out[k] = now;
+  return { removed: out, stamped };
+}
+
+/** The winning copy, with the picture the losing one had and it lacks. */
+function withPictureOf(winner, loser) {
+  const add = {};
+  for (const f of PHOTO_FIELDS) if (loser[f] && !winner[f]) add[f] = loser[f];
+  return Object.keys(add).length ? { ...winner, ...add } : winner;
+}
+
+/**
+ * Two copies of the journal into one.
+ * @param {object} here   the copy already there: `{ data, removed }` (this device's on a pull, the
+ *                        cloud's at the Worker); a missing one is an empty journal
+ * @param {object} there  the copy coming in: `{ data, removed }`, or one bare catch (an old sync row)
+ * @returns {{catches: object[], removed: object, added: number, replaced: number, gone: number}}
+ *          `added` fish only `there` had, `replaced` fish `there` changed later, `gone` fish `here`
+ *          had that were deleted after their last change
+ */
+export function mergeJournals(here, there) {
+  const mine = flattenJournal(here && here.data).catches;
+  const incoming = Array.isArray(there && there.data) ? flattenJournal(there.data).catches
+    : (isCatch(there) ? [there] : []);
+  const removed = { ...((here && here.removed) || {}) };
+  for (const [k, at] of Object.entries((there && there.removed) || {})) {
+    if (!removed[k] || String(at) > String(removed[k])) removed[k] = at;
+  }
+  const byKey = new Map(), order = [], from = new Map();
+  for (const c of mine) { const k = catchKey(c); if (!byKey.has(k)) { byKey.set(k, c); order.push(k); } }
+  for (const c of incoming) {
+    const k = catchKey(c), have = byKey.get(k);
+    if (!have) { byKey.set(k, c); order.push(k); from.set(k, 'added'); }
+    else if (stampOf(c) > stampOf(have)) { byKey.set(k, withPictureOf(c, have)); from.set(k, 'replaced'); }
+  }
+  const catches = [];
+  const n = { added: 0, replaced: 0, gone: 0 };
+  for (const k of order) {
+    const c = byKey.get(k);
+    if (removed[k]) {
+      if (!(stampOf(c) > String(removed[k]))) { if (from.get(k) !== 'added') n.gone++; continue; }
+      delete removed[k];   // changed after it was deleted: it is back
+    }
+    if (from.has(k)) n[from.get(k)]++;
+    catches.push(c);
+  }
+  return { catches, removed, ...n };
 }

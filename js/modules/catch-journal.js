@@ -26,7 +26,7 @@ import { groupPhotosByWaypoint, fishAtMark, waypointReadings, localIso, fmtGap }
 import { marksToAsk, markRecord, saveMark, loadMarks, MARK_LABELS } from './garmin-marks.js';
 import { claudeBridgeStatus, claudeLook } from './claude-bridge.js';
 import { SORT_PX, MEASURE_PX, jsonOf, sortPrompt, photoLabel, boardsOf, measurePrompt, aiFromMeasure } from '../utils/claude-fish-id.js';
-import { flattenJournal } from '../utils/journal-merge.js';
+import { flattenJournal, stampJournal, PHOTO_FIELDS } from '../utils/journal-merge.js';
 import { catchWaters, catchesGpx } from '../utils/catch-gpx.js';
 import { pinOffItsWater } from '../utils/catch-pins.js';
 const DEFAULT_HELPER = 'http://127.0.0.1:8787';
@@ -457,10 +457,12 @@ function normalizeCsvRow(row, importedFrom = 'csv') {
 function catchesForSync() {
   return getCatches().map((c) => {
     if (!c || typeof c !== 'object') return c;
-    const { photoDataUrl, lurePhotoDataUrl, thumbDataUrl, ...rest } = c;
+    // PHOTO_FIELDS is journal-merge.js's list, so a pull keeps on this device every field left out here.
+    const rest = { ...c };
+    let pictured = false;
+    for (const f of PHOTO_FIELDS) { if (rest[f]) pictured = true; delete rest[f]; }
     // Said out loud on the record, so a phone showing no picture is explained rather than broken.
-    return (photoDataUrl || lurePhotoDataUrl || thumbDataUrl)
-      ? { ...rest, photoOnDevice: true } : rest;
+    return pictured ? { ...rest, photoOnDevice: true } : rest;
   });
 }
 
@@ -468,12 +470,25 @@ async function saveCatches() {
   // The single most costly thing this app can lose. A catch is logged once, on the water,
   // often with the phone about to go in a dry bag -- there is no second chance to re-enter it
   // and no way to notice it is gone until you look for it weeks later.
-  await tryPut('journal', { name: CATCHES_DB_KEY, data: getCatches() }, 'catch journal');
+  //
+  // EVERY FISH THAT CHANGED CARRIES WHEN (2026-10-09). Measured against the last save: a fish that
+  // is new or not what it was gets `editedAt`, a fish that is gone goes into `removed`, so the
+  // change wins on his other devices and at the Worker (journal-merge.js). Whatever changed it --
+  // the species or water pencil, an import, a delete -- it is stamped here. A last save that cannot
+  // be read stamps nothing this time and never stops the save.
+  let removed;
+  try {
+    const last = await dbGet('journal', CATCHES_DB_KEY);
+    ({ removed } = stampJournal(last?.data || [], getCatches(), last?.removed, new Date().toISOString()));
+  } catch (err) {
+    console.warn('[catch-journal] the last save could not be read, so no fish was stamped this time:', err);
+  }
+  await tryPut('journal', { name: CATCHES_DB_KEY, data: getCatches(), removed }, 'catch journal');
   // Sync to cloud so catches are available across devices
   // Absent is fine (cloud-sync may not have loaded); throwing is not -- it means the catch
   // saved locally and never left the device, which looks identical to a synced one.
   callGlobal('pushItemOnSave', 'catch', CATCHES_DB_KEY,
-             { name: CATCHES_DB_KEY, data: catchesForSync() });
+             { name: CATCHES_DB_KEY, data: catchesForSync(), removed });
 }
 async function saveQueue() {
   // The queue is what replays catches to the cloud once there is signal again. Losing it

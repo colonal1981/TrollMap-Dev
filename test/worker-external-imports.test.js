@@ -132,6 +132,10 @@ describe('the Worker bundle can be built', () => {
     //
     // ONE MORE ADDED 2026-09-25: geo.js, the one haversine. conditions.js, river-geometry.js and
     // worker-data.js each carried their own, on two different earth radii. Pure, no imports.
+    //
+    // ONE MORE ADDED 2026-10-09: journal-merge.js, the rule for two copies of the catch journal.
+    // The app's pull and the Worker's push of `catch/catches` both use it, so a phone and the cloud
+    // cannot disagree about which copy of a fish wins. Pure, no imports.
     const EXPECTED = [
       'js/data/ga-access-species.js',
       'js/data/lake-keys.js',
@@ -143,6 +147,7 @@ describe('the Worker bundle can be built', () => {
       'js/utils/geo.js',
       'js/utils/geojson-coords.js',
       'js/utils/html-text.js',
+      'js/utils/journal-merge.js',
       'js/utils/num.js',
       'js/utils/reach-places.js',
       'js/utils/water-scope.js',
