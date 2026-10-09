@@ -449,9 +449,12 @@ def slim_full_pool(doc, nopool):
     statement because it is the rule a consumer has to honour: full pool is the MAXIMUM of the
     operating target, not today's value of it.
 
-    Nothing reads this object yet. It is published so that chartDatumShape() can, once the
-    vertical-datum question is settled -- see the usace.conservation_pool_ft comment in
-    Worker/conditions.js for the objection that applies equally here.
+    chartDatumShape() in Worker/conditions.js reads it: the number, its status, and `datum`, the
+    vertical datum the full pool is stated on. The Worker subtracts a gauge's level from it only
+    when the gauge's own datum has the same name, so a row without `datum` keeps its difference
+    withheld. Lake Marion, 2026-10-08: Santee Cooper's 76.8 is on NGVD29 and so are the numbers
+    LMES1 publishes, and the card still said "measured from different marks" -- the row's datum
+    never left this file.
     """
     rows = (doc or {}).get("rows") or {}
     out = {}
@@ -468,6 +471,8 @@ def slim_full_pool(doc, nopool):
                "read": r.get("read")}
         if r.get("full_pool_status"):
             row["status"] = r["full_pool_status"]
+        if r.get("datum"):
+            row["datum"] = r["datum"]
         out[slug] = row
     none_ = {}
     for slug, why in ((nopool or {}).get("confirmed") or {}).items():

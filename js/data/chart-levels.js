@@ -79,6 +79,28 @@ export const CHART_LEVELS = Object.freeze({
     how: "his unit's ACTIVE LOG (26SEP26EXPORT.GPX, 28SEP26EXPORT.GPX) against the pack's depth bands "
        + 'and contours; on 9/28 his Keel Offset read 0 and a measuring board matched the sounder',
   }),
+  // LAKE MARION, 2026-10-08, Wyboo Creek. Ryan, comparing the day's track with Option 1: "so this
+  // appears to match what i saw on my sounder vs the map... so it looks like marion was charted by
+  // garmin at full pool". Measured the Wateree way (`_scratch/marion_level_1008/`): the middle of
+  // the charted band under each active-log point read 3.41 ft deeper than the sounder, the contours
+  // within 5 m read 3.41, and the sounder trace in his RSD (17,924 one-second readings) 3.43; it is
+  // the same from 5 to 30 ft. The lake was 4.01 ft down: USGS 02169921 at Elloree read 72.78-72.81
+  // on its NGVD29 series through the trip, and Santee Cooper's 76.8 full pool is on that scale (NWS
+  // PNVS1 states "76.8: Full pool" on the scale it publishes 72.77 on). So the chart was made about
+  // 0.6 ft below full pool -- near it, where Wateree's is 2.35 below.
+  //
+  // THE GAUGE'S MARK IS NGVD29, WHATEVER ITS NWS RECORD SAYS. NWS lists LMES1 and PNVS1 as NAVD88,
+  // but the numbers they publish are USGS's NGVD29 series (73.50 at 13:00 EDT on 9/13 on both, where
+  // the NAVD88 series read 72.43). Read against NAVD88 the lake would have been 1.07 ft further down
+  // and this row 1.07 ft lower.
+  lake_marion: levelRow({
+    measured: [
+      { day: '2026-10-08', chartMinusSounderFt: 3.41, belowFullPoolFt: 4.01,
+        level: 'USGS 02169921 (NWS LMES1) 72.78-72.81 ft NGVD29, 12:15-17:06 EDT; full pool 76.8' },
+    ],
+    how: "his unit's ACTIVE LOG (08OCT2026.GPX, 918 points) against the pack's depth bands and "
+       + "contours; the sounder trace from the same day's RSD read the same within 0.02 ft",
+  }),
 });
 
 /** The measured chart level for a water, or null when nobody has measured it. */
