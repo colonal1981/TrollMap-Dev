@@ -56,8 +56,12 @@ let nightlyNote = '';
 const localPhotoUrls = new Map(); // filename(lower) -> object URL from folder picker
 const localPhotoFiles = new Map();
 
+// WHITE PERCH, 2026-10-09. Ryan, after a perch on a jerkbait at Wyboo: "somehow we never put white
+// perch in the app... i just used hybrid / white bass... there are a lot that are in there that way i
+// think". The plan's species picker has had it all along (species-selector.js); this list, which the
+// review form and Claude's fish ID both read, never did.
 const SPECIES = [
-  '', 'Striped Bass', 'White Bass / Hybrid', 'Largemouth Bass', 'Spotted Bass', 'Smallmouth Bass',
+  '', 'Striped Bass', 'White Bass / Hybrid', 'White Perch', 'Largemouth Bass', 'Spotted Bass', 'Smallmouth Bass',
   'Crappie', 'Black Crappie', 'White Crappie', 'Catfish', 'Blue Catfish', 'Channel Catfish', 'Flathead Catfish',
   'Bowfin', 'Chain Pickerel', 'Bluegill', 'Sunfish (Panfish)', 'Redear Sunfish (Shellcracker)',
   'Yellow Perch', 'Gar', 'Longnose Gar', 'Red Drum (Redfish)', 'Speckled Trout (Spotted Seatrout)',
@@ -112,6 +116,7 @@ function inferSpeciesFromNotes(species, notes) {
     ['Sunfish (Panfish)', /\b(sunfish|panfish|shellcracker|redear|redbreast)\b/],
     ['Gar', /\bgar\b/],
     ['Yellow Perch', /\byellow perch\b/],
+    ['White Perch', /\bwhite perch\b/],
     ['White Bass / Hybrid', /\b(white bass|hybrid)\b/],
     ['Red Drum (Redfish)', /\b(redfish|red drum)\b/],
     ['Speckled Trout (Spotted Seatrout)', /\b(speckled trout|spotted seatrout)\b/],
@@ -645,7 +650,7 @@ function renderJournalOnly(body = document.getElementById('catchCenterBody')) {
       <div style="display:flex;align-items:flex-start;gap:8px;padding:8px 0;border-bottom:1px solid var(--line);font-size:12px">
         <span style="font-size:18px">🐟</span>
         <div style="flex:1;min-width:0">
-          <div><b>${esc(c.species || 'Fish')}</b>${c.length ? ` · ${esc(c.length)}"` : ''} · ${esc(c.date || '')} ${esc(c.time || '')} · ${esc(c.lake || '')} <button data-editlake="${i}" class="small" title="Change the water this fish is filed under" style="padding:0 5px">✎</button>${c.reviewFlags?.includes('lake_mismatch_on_recheck') ? ` <span style="color:#e0a030">⚠ suggested: ${esc(c.lakeRecheckSuggestion || '')}</span>` : ''}</div>
+          <div><b>${esc(c.species || 'Fish')}</b> <button data-editspecies="${i}" class="small" title="Change the species of this fish" style="padding:0 5px">✎</button>${c.length ? ` · ${esc(c.length)}"` : ''} · ${esc(c.date || '')} ${esc(c.time || '')} · ${esc(c.lake || '')} <button data-editlake="${i}" class="small" title="Change the water this fish is filed under" style="padding:0 5px">✎</button>${c.reviewFlags?.includes('lake_mismatch_on_recheck') ? ` <span style="color:#e0a030">⚠ suggested: ${esc(c.lakeRecheckSuggestion || '')}</span>` : ''}</div>
           <div class="muted">${c.depth ? `Depth: ${esc(describeCatchDepth(c).text)}` : ''}${c.waterTempF != null ? ` · Water ${esc(c.waterTempF)} °F` : ''}${c.sourceFile ? ` · ${esc(c.sourceFile)}` : ''}${c.verification?.length ? ` · length: ${esc(c.verification.length)}` : ''}</div>
           ${c.notes ? `<div style="margin-top:2px">${esc(c.notes)}</div>` : ''}
         </div>
@@ -656,6 +661,7 @@ function renderJournalOnly(body = document.getElementById('catchCenterBody')) {
   body.querySelector('#exportJournalBtn')?.addEventListener('click', exportJournalCsv);
   body.querySelector('#exportCatchGpxBtn')?.addEventListener('click', () => exportCatchGpx(body));
   body.querySelectorAll('[data-editlake]').forEach((btn) => btn.addEventListener('click', () => editCatchWater(body, +btn.dataset.editlake, btn)));
+  body.querySelectorAll('[data-editspecies]').forEach((btn) => btn.addEventListener('click', () => editCatchSpecies(body, +btn.dataset.editspecies, btn)));
   body.querySelector('#recheckLakesBtn')?.addEventListener('click', () => recheckJournalLakes(body));
   body.querySelector('#deleteAllJournalBtn')?.addEventListener('click', async () => {
     const n = getCatches().length;
@@ -1241,6 +1247,33 @@ function editCatchWater(body, i, btn) {
     c.lake = name;
     if (Array.isArray(c.reviewFlags)) c.reviewFlags = c.reviewFlags.filter((f) => f !== 'lake_mismatch_on_recheck');
     delete c.lakeRecheckSuggestion;
+    await saveCatches();
+    renderJournalOnly(body);
+  });
+}
+
+// THE SPECIES OF A CONFIRMED CATCH, CHANGED ON ITS CARD. Ryan, 2026-10-09, on 30 fish filed as White
+// Bass / Hybrid that were white perch, stripers and a largemouth: "somehow we never put white perch in
+// the app... i just used hybrid / white bass", and, told the card could only change a fish's water,
+// "sounds good" to a ✎ beside the species too. The list is the review form's (speciesOptions), and only
+// the species changes.
+function editCatchSpecies(body, i, btn) {
+  const c = getCatches()[i];
+  if (!c || !btn || btn.disabled) return;
+  btn.disabled = true;
+  const box = document.createElement('div');
+  box.style.cssText = 'display:flex;gap:6px;align-items:center;margin-top:4px';
+  box.innerHTML = `<select style="flex:1;min-width:0" aria-label="Species of this fish">${speciesOptions(c.species || '')}</select>`
+    + '<button class="primary small">Save</button><button class="small">Cancel</button>';
+  btn.parentElement.after(box);
+  const [select, save, cancel] = [box.querySelector('select'), ...box.querySelectorAll('button')];
+  select.focus();
+  cancel.addEventListener('click', () => { box.remove(); btn.disabled = false; });
+  select.addEventListener('keydown', (e) => { if (e.key === 'Enter') save.click(); if (e.key === 'Escape') cancel.click(); });
+  save.addEventListener('click', async () => {
+    const species = select.value;
+    if (!species || species === c.species) { box.remove(); btn.disabled = false; return; }
+    c.species = species;
     await saveCatches();
     renderJournalOnly(body);
   });
