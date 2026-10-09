@@ -563,6 +563,13 @@ export function riverPromptBlock(ws, o = {}) {
 // the offset is the lake against the chart's own level, and `cannotUse` already carries it. Where
 // it has not -- Ryan's call: the chart as it stands, and say so -- the model is told the drawdown
 // is NOT the correction, with the measured lakes as the reason.
+// WHERE A MEASURED CHART SITS, IN WORDS. Marion's, measured 2026-10-08, is at full pool to the tenth
+// this block prints ("about 0.0 ft below full pool" is not a sentence); Wateree's is 2.35 below.
+function madeAt(ft, say) {
+  if (Number(Number(ft).toFixed(1)) === 0) return 'at full pool';
+  return ft > 0 ? `${say(ft)} ft below full pool` : `${say(-ft)} ft above full pool`;
+}
+
 function poolPromptBlock(ws) {
   if (!ws || ws.error) return '';
   if (ws.featureType && ws.featureType !== 'lake') return '';   // rivers and coast have their own
@@ -575,7 +582,7 @@ function poolPromptBlock(ws) {
   if (Number.isFinite(cb)) {
     const days = measuredDays(chartLevelFor(ws.slug));
     body = `Every depth in this prompt — the contours, the structure, the ceilings on each leg — comes
-off Garmin's chart, and on this water that chart was made about ${cb.toFixed(1)} ft below full pool,
+off Garmin's chart, and on this water that chart was made ${madeAt(cb, (v) => `about ${v.toFixed(1)}`)},
 measured against his own sounder${days ? ` on ${days}` : ''}.${shift == null
   ? ' The lake is at that level today, so the charted depths are the water under the boat.'
   : ` So today the water is ${Math.abs(shift).toFixed(1)} ft ${shift > 0 ? 'SHALLOWER' : 'DEEPER'} than the chart.
@@ -584,12 +591,12 @@ ${Math.abs(shift).toFixed(1)} ft.${shift > 0 ? ` Take ${shift.toFixed(1)} ft off
 trust it: a bait picked against a charted 16 ft ceiling is working ${(16 - shift).toFixed(1)} ft of water today.` : ''}`}`;
   } else {
     const known = Object.entries(CHART_LEVELS)
-      .map(([slug, r]) => `${slug.replace(/_/g, ' ')} (made ${r.belowFullPoolFt} ft below full pool)`);
+      .map(([slug, r]) => `${slug.replace(/_/g, ' ')} (made ${madeAt(r.belowFullPoolFt, (v) => `${v}`)})`);
     body = `Every depth in this prompt — the contours, the structure, the ceilings on each leg — is
 Garmin's chart as it stands, and nothing in this app has adjusted it. The level that chart was made
 at has NOT been measured on this water, so the drawdown above is NOT the correction and must not be
-subtracted from the charted depths.${known.length ? ` Where his sounder has measured a chart it was not
-made at full pool: ${known.join('; ')}.` : ''} Read the charted depths as the chart's, and let the
+subtracted from the charted depths.${known.length ? ` Where his sounder has measured a chart, the level
+differs by water: ${known.join('; ')}.` : ''} Read the charted depths as the chart's, and let the
 sounder on the day say how far off they are.`;
   }
   return `

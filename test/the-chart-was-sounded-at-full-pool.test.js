@@ -66,6 +66,17 @@ test('a measured water above its chart level is not told to take anything off', 
   assert.doesNotMatch(p, /Take [\d.]+ ft off/);
 });
 
+// Marion's chart, measured 2026-10-08, is at full pool: "about 0.0 ft below full pool" is not a sentence.
+test('a measured chart at full pool is said to be at full pool', () => {
+  const p = prompt({ ...LAKE, slug: 'lake_marion', belowFullPoolFt: 4.02, chartBelowFullPoolFt: 0.03 });
+  assert.match(p, /that chart was made at full pool,\s+measured against his own sounder on 2026-10-08/);
+  assert.match(p, /the water is 4\.0 ft SHALLOWER than the chart/);
+  assert.doesNotMatch(p, /0\.0 ft below full pool/);
+  const unmeasured = prompt(LAKE);
+  assert.match(unmeasured, /lake marion \(made at full pool\)/, 'and the list of measured lakes says so too');
+  assert.doesNotMatch(unmeasured, /it was not\s+made at full pool/);
+});
+
 test('a measured water at its chart level says so', () => {
   const p = prompt({ ...LAKE, belowFullPoolFt: 2.3, chartBelowFullPoolFt: 2.3 });
   assert.match(p, /The lake is at that level today/);

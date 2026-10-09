@@ -81,25 +81,31 @@ export const CHART_LEVELS = Object.freeze({
   }),
   // LAKE MARION, 2026-10-08, Wyboo Creek. Ryan, comparing the day's track with Option 1: "so this
   // appears to match what i saw on my sounder vs the map... so it looks like marion was charted by
-  // garmin at full pool". Measured the Wateree way (`_scratch/marion_level_1008/`): the middle of
-  // the charted band under each active-log point read 3.41 ft deeper than the sounder, the contours
-  // within 5 m read 3.41, and the sounder trace in his RSD (17,924 one-second readings) 3.43; it is
-  // the same from 5 to 30 ft. The lake was 4.01 ft down: USGS 02169921 at Elloree read 72.78-72.81
-  // on its NGVD29 series through the trip, and Santee Cooper's 76.8 full pool is on that scale (NWS
-  // PNVS1 states "76.8: Full pool" on the scale it publishes 72.77 on). So the chart was made about
-  // 0.6 ft below full pool -- near it, where Wateree's is 2.35 below.
+  // garmin at full pool", and of what he saw on the water: "on my fish finder compared from the chart
+  // i to the depth i am given from the sonar there was approximately a 4ft difference".
+  //
+  // His active log says the same with each charted band read by its DEEPER number (`depth_max_ft`,
+  // the number this app reads: depthGrid(), plan-water-index.js, the map's colours): the chart read
+  // 3.98 ft deeper than the sounder over 918 points (the app's own grid 3.99; the RSD sonar trace,
+  // 17,924 one-second readings, 4.03), and the same from 5 to 30 ft (`_scratch/marion_level_1008/`).
+  // The lake was 4.01 ft down. So the chart is at full pool, as Garmin says.
+  //
+  // THIS ROW FIRST SAID 0.6 FT BELOW (`261a117`), off the band's MIDDLE and the contour lines (3.41),
+  // half a foot shallower than the number the app reads -- my reading, not his sounder. Ryan: "just
+  // fix marion". Wateree's row above is read at the band's middle too and is left as it is: "i have
+  // no idea for wateree".
   //
   // THE GAUGE'S MARK IS NGVD29, WHATEVER ITS NWS RECORD SAYS. NWS lists LMES1 and PNVS1 as NAVD88,
   // but the numbers they publish are USGS's NGVD29 series (73.50 at 13:00 EDT on 9/13 on both, where
-  // the NAVD88 series read 72.43). Read against NAVD88 the lake would have been 1.07 ft further down
-  // and this row 1.07 ft lower.
+  // the NAVD88 series read 72.43), and Santee Cooper's 76.8 is on that scale (PNVS1 states "76.8: Full
+  // pool" on it). Read against NAVD88 the lake would have looked 1.07 ft further down.
   lake_marion: levelRow({
     measured: [
-      { day: '2026-10-08', chartMinusSounderFt: 3.41, belowFullPoolFt: 4.01,
+      { day: '2026-10-08', chartMinusSounderFt: 3.98, belowFullPoolFt: 4.01,
         level: 'USGS 02169921 (NWS LMES1) 72.78-72.81 ft NGVD29, 12:15-17:06 EDT; full pool 76.8' },
     ],
-    how: "his unit's ACTIVE LOG (08OCT2026.GPX, 918 points) against the pack's depth bands and "
-       + "contours; the sounder trace from the same day's RSD read the same within 0.02 ft",
+    how: "his unit's ACTIVE LOG (08OCT2026.GPX, 918 points), each band read by its deeper number as the "
+       + 'app reads it; his fish finder showed him about 4 ft; the RSD sonar trace read 4.03',
   }),
 });
 

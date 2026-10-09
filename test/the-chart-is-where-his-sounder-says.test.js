@@ -36,8 +36,8 @@ describe('the chart level is a measurement with its days on it', () => {
       // What each day says the chart was made at: the lake's drawdown less how much deeper the
       // chart read than the sounder. The row's figure is the median of its own days, and it sits
       // inside their spread -- no tolerance of ours decides whether a day agrees.
-      // Each day to the hundredth, as the row is: Marion's one day is 4.01 - 3.41, which a float
-      // makes 0.5999999999999996 against a row of 0.6.
+      // Each day to the hundredth, as the row is: Marion's one day is 4.01 - 3.98, which a float
+      // makes 0.029999999999999805 against a row of 0.03.
       const implied = row.measured.map((m) => Math.round((m.belowFullPoolFt - m.chartMinusSounderFt) * 100) / 100);
       assert.ok(row.belowFullPoolFt >= Math.min(...implied) && row.belowFullPoolFt <= Math.max(...implied),
         `${slug}: ${row.belowFullPoolFt} is outside its days ${implied.map((x) => x.toFixed(2))}`);
@@ -57,18 +57,19 @@ describe('the water state carries it, and the offset is against it', () => {
     assert.equal(poolOffsetFt(ws), 1.15);
   });
 
-  // Marion, 2026-10-08 at Wyboo Creek: the chart read 3.41 ft deeper than his sounder with the lake
-  // 4.01 ft down, so it was made about 0.6 ft below full pool. The card's 76.8 and 72.78 are both on
-  // NGVD29, and the offset is the same whether the Worker states the drawdown or withholds it.
-  it('Marion 4.02 ft down is about 3.4 ft shallower than its chart', () => {
-    assert.equal(chartLevelFor('lake_marion').belowFullPoolFt, 0.6);
+  // Marion, 2026-10-08 at Wyboo Creek: read by each band's deeper number, as the app reads it, the
+  // chart was 3.98 ft deeper than his sounder with the lake 4.01 ft down -- at full pool. His fish
+  // finder showed him "approximately a 4ft difference". The card's 76.8 and 72.78 are both on NGVD29,
+  // and the offset is the same whether the Worker states the drawdown or withholds it.
+  it('Marion 4.02 ft down is 4 ft shallower than its chart', () => {
+    assert.equal(chartLevelFor('lake_marion').belowFullPoolFt, 0.03);
     assert.equal(measuredDays(chartLevelFor('lake_marion')), '2026-10-08');
     const stated = readConditions({ slug: 'lake_marion', water: { slug: 'lake_marion', feature_type: 'lake',
       chart_datum: { below_full_pool_ft: 4.02, level_ft: 72.78, full_pool_ft: 76.8, source: 'registry levels: nws:HP' } } });
-    assert.equal(poolOffsetFt(stated), 3.42);
+    assert.equal(poolOffsetFt(stated), 3.99);
     const withheld = readConditions({ slug: 'lake_marion', water: { slug: 'lake_marion', feature_type: 'lake',
       chart_datum: { below_full_pool_ft: null, level_ft: 72.78, full_pool_ft: 76.8, source: 'registry levels: nws:HP' } } });
-    assert.equal(poolOffsetFt(withheld), 3.42);
+    assert.equal(poolOffsetFt(withheld), 3.99);
   });
 
   it('a lake nobody has measured gets the chart as it stands', () => {
