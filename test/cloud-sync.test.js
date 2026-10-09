@@ -38,6 +38,23 @@ globalThis.fetch = async (url, opts = {}) => {
   return { ok: replyOk, status: replyOk ? 200 : 401, json: async () => ({ items: [] }) };
 };
 
+// WHAT cloud-sync.js PRINTS IS KEPT HERE, NOT WRITTEN TO STDOUT (2026-10-09). This file failed 54 of
+// 90 full local runs since 9/20 with "Unable to deserialize cloned data due to invalid or unsupported
+// version", and passed on its own. Its tests were fine; Node 24.18's test runner could not read its
+// output. A test file's stdout carries the runner's own messages, each a v8 header, a 4-byte size and
+// a value, and any console.log lands between them. When a message and the line drainPendingQueue()
+// prints ("☁️ Draining 1 queued sync items…") arrive in one chunk, the runner reads the line's third
+// to sixth bytes as the next message's size: 81 ef b8 8f, the end of the cloud and the emoji marker
+// after it. Read as a signed 32-bit number that makes the message -2,114,996,075 bytes long, the
+// runner finds its 39 bytes are not fewer than that, tries to read the line as a message, and throws.
+// An ASCII line gives a large positive size and the runner waits for more; no other file has failed
+// this way in those logs. Replayed with the runner's own code over 40 runs' chunks
+// (_scratch\synctest_1009\probe.mjs): 20 failed, and every raw stream was well formed. Node's main
+// branch reads the size unsigned and checks every head; no release checked does (22.22.2, 24.18.0,
+// 25.0.0).
+const logged = [];
+console.log = (...args) => { logged.push(args.join(' ')); };
+
 // The real db module against the fake IndexedDB -- cloud-sync's offline queue is a genuine
 // `settings/pending_sync` record now, not a stub's Map.
 const db = await import('../js/utils/db.js');
@@ -125,6 +142,8 @@ describe('cloud-sync — a queued delete replays as a DELETE', () => {
     const replay = calls.find((c) => /ghost_plan/.test(c.url));
     expect(replay).toBeDefined();
     expect(replay.method).toBe('DELETE');
+    // and it was the queue that sent it
+    expect(logged.some((l) => /Draining 1 queued sync items/.test(l))).toBe(true);
     expect(replay.token).toBe('trollmap2026');
   });
 });
