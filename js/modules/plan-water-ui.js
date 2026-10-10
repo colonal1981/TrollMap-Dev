@@ -1565,7 +1565,7 @@ export function optionShapeSaid(op) {
 /** Where an option's depth came from. */
 export function bandFromSaid(op, readings) {
   if (op.bandFrom === 'deepest') return 'the deepest water';
-  if (op.bandFrom === 'sounder') return `your sounder at ${readings} of your fish, ±the band you steer`;
+  if (op.bandFrom === 'sounder') return `your sounder at ${readings} of your fish`;
   if (op.bandFrom === 'chart') return 'the chart under your fish, none of them with a sounder reading';
   return 'the same depth against the bottom there as your fish';
 }

@@ -160,13 +160,15 @@ test('4. his sounder at his fish sets the depth; a mark the same day beside a fi
                  { at: at(1050, 0), date: '2026-09-27', datetime: '2026-09-27T11:00:00', depthFt: 30 },
                  { at: at(2000, 10), date: '2026-09-26', datetime: '2026-09-26T17:00:00', depthFt: 20 }];
   assert.deepEqual(readingsFor(fish, marks), [{ from: 'waypoint', ft: 9.6 }, { from: 'mark', ft: 12.5 }]);
-  // and the day holds the middle of them, his 5 ft either side
+  // and the day holds the water his sounder read: 21 to 23 ft, with his 5 ft steering added once, as the
+  // alarm edge below it, not once into the band and again under it (Rowland, 2026-10-10)
   const r = trollLoop({ ...DAY, ramp: at(-10, 1500), daFeatures: FLAT, allCatches: PAIR,
                         catches: PAIR.map((f, i) => ({ ...f, sounderFt: i ? 21 : 23 })) });
   assert.ok(!r.error, r.error);
   assert.equal(r.kinds[0].bandFrom, 'sounder');
   assert.equal(r.kinds[0].readings, 2);
-  assert.deepEqual(r.options[0].band, [17, 27]);
+  assert.deepEqual(r.options[0].band, [21, 23]);
+  assert.equal(r.legs[0].edgeFt, 16, 'the alarm edge: his shallowest reading less his 5 ft');
 });
 
 // TWO ARMS OF ONE CROSS-SECTION -- 400 m wide, 10 ft for 100 m at each bank and 25 ft in the middle --

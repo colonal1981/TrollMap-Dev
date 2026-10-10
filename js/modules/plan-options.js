@@ -320,6 +320,15 @@ function sidesOf(net, line, reach) {
 }
 
 /**
+ * WHERE A LINE MUST GO UNDER HIS ALARM, AS LITTLE UNDER IT AS THE WATER ALLOWS. The cells shallower than his
+ * band less his 5 ft were all one price, "dearer than any number of" the others, so a way home with no
+ * water at his depth on its side took -1 ft as readily as 13: Option 1 from Rowland, the upper creek, 10/10.
+ * Now each is dearer by the square of how many steering bands it is under the edge, as bandCost() prices
+ * water off the band. Land and unknown water (D not a number) are the dearest.
+ */
+const underEdge = (d, lo, steer) => (Number.isFinite(d) ? 1 + (Math.max(0, lo - steer - d) / steer) ** 2 : 1e6);
+
+/**
  * beside(), on the one side of the way out the way home keeps to, so the two never cross. Ryan, 10/6: "why
  * does this way out from the ramp and the same one for option 1 cross itself... and then it looks like
  * option 1 crosses itself again in front of counts island". And his rules in their order, as sideWay() has
@@ -340,9 +349,10 @@ function besideOn(net, out, lo, hi, steer, ends, side, sg) {
     if (near[k] && !e[k]) { tier[k] = 1; n1++; continue; }
     c[k] = base[k]; sum += base[k];
   }
-  // dearer than any way round, then dearer than any number of those
+  // dearer than any way round, then dearer than any number of those -- and under his alarm, the less
+  // under it the better (underEdge())
   const t1 = sum + 1, t2 = t1 * (n1 + 2);
-  for (let k = 0; k < n; k++) if (tier[k] === 1) c[k] = t1 + base[k]; else if (tier[k] === 2) c[k] = t2;
+  for (let k = 0; k < n; k++) if (tier[k] === 1) c[k] = t1 + base[k]; else if (tier[k] === 2) c[k] = t2 * underEdge(net.D[k], lo, steer);
   return c;
 }
 
@@ -367,9 +377,10 @@ function sideWay(net, mid, side, sg, from, to, lo, center, steer) {
     if (!end && near[k]) { tier[k] = 1; n1++; continue; }
     c[k] = 1 + ((D[k] - center) / steer) ** 2; sum += c[k];
   }
-  // dearer than any way round, then dearer than any number of those
+  // dearer than any way round, then dearer than any number of those -- and under his alarm, the less
+  // under it the better (underEdge())
   const t1 = sum + 1, t2 = t1 * (n1 + 2);
-  for (let k = 0; k < n; k++) if (tier[k] === 1) c[k] = t1 + 1 + ((D[k] - center) / steer) ** 2; else if (tier[k] === 2) c[k] = t2;
+  for (let k = 0; k < n; k++) if (tier[k] === 1) c[k] = t1 + 1 + ((D[k] - center) / steer) ** 2; else if (tier[k] === 2) c[k] = t2 * underEdge(D[k], lo, steer);
   return wayOf(net, from, to, c);
 }
 
@@ -1267,11 +1278,21 @@ function* layOptions(k) {
     else { kinds[0].spots.push(x); x.kind = 0; x.how = 'other water'; }
   }
 
-  // ── RULE 1: HIS DEPTH, from his sounder at his own fish of that kind ±5 ft; else the chart at his pins ──
+  // ── RULE 1: HIS DEPTH, from his sounder at his own fish of that kind; else the chart at his pins ──
+  //
+  // EITHER WAY THE BAND IS THE WATER HIS FISH WERE OVER, AND HIS 5 FT IS ADDED ONCE. Ryan, 2026-10-10: "I am
+  // looking at the options for lake marion at rowland subdivision landing and they all cross water that is
+  // too shallow". The sounder band was his reading with his 5 ft steering either side (19.5 ft at Rowland,
+  // so 14.5-24.5), and every way below takes his 5 ft off the band's foot again for the alarm edge
+  // (bandCost(), sideWay()): water down to 9.5 ft was open, at most double the cost of his depth. The
+  // shortest way inside that flat ten feet hugged the shallow edge of the channel, so Option 1 crossed the
+  // bar at the creek mouth and came home up the bank of the upper creek: 2.2 km under 14 ft today, -1 ft at
+  // the shallowest. A chart band has always been the range of his fish's depths with the steering added
+  // once; the sounder band is now the same, the range of his readings. Put to him with the picture: "ok".
   for (const kd of kinds) {
     const rd = readingsFor(kd.spots.flatMap((x) => x.fish.map((f) => f.m)), o.sounderMarks || []);
     kd.readings = rd;
-    if (rd.length) { const med = median(rd.map((r) => r.ft)); kd.band = [med - steer, med + steer]; kd.bandFrom = 'sounder'; }
+    if (rd.length) { const fts = rd.map((r) => r.ft); kd.band = [Math.min(...fts), Math.max(...fts)]; kd.bandFrom = 'sounder'; }
     else { kd.band = [kd.lead.lo, kd.lead.hi]; kd.bandFrom = 'chart'; }
   }
 
