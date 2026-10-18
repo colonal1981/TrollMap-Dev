@@ -20,6 +20,7 @@ import { handleReports } from './reports.js';
 import { handlePlaces } from './places.js';
 import { handleGuideReports } from './guide-reports.js';
 import { mergeJournals } from '../js/utils/journal-merge.js';
+import { handleClaudeHealth, handleClaudeAsk, handleClaudeLook } from './claude-api.js';
 import { fetchStateRegulations, getLakeRegulations } from './research/clients.js';
 import { regulationsTable, lakeIndex, resolveRegistryRow } from './registry.js';
 import { handleResearchLimnologyData, refreshStaleLimnology, handleResearchDiscover, handleResearchProxyDownload, handleResearchProxyDownloadBatch, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, registrySpeciesFor, speciesFoodHabits, speciesMeasuredTraits, handleResearchAnalyzeFacts, handleResearchAgent, handleResearchList, handleResearchGet, handleResearchSave, handleResearchRegsDebug, handleResearchDelete, handleEnhancedLakeIntel, RESEARCH_AGENTS, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey } from './worker-research.js';
@@ -52,10 +53,20 @@ const MUTATING_ROUTES = [
 ];
 
 /**
+ * ROUTES THAT SPEND, BEHIND THE SAME GATE. Each call to these is paid from his monthly API credit
+ * (Worker/claude-api.js), so a scanner that finds the URL must not be able to make one. Not a
+ * write, so not in the list above; the gate is the same one.
+ */
+const SPENDING_ROUTES = [
+  "/claude/ask",
+  "/claude/look",
+];
+
+/**
  * True when this request is allowed to proceed. Non-mutating requests always are.
  */
 async function allowMutation(request, url, path, env) {
-  let mutating = MUTATING_ROUTES.includes(path);
+  let mutating = MUTATING_ROUTES.includes(path) || SPENDING_ROUTES.includes(path);
   // A GET that deletes three KV entries is still a write, whatever the verb says.
   if (path === "/debug/regs-cache" && url.searchParams.get("bust")) mutating = true;
   if (!mutating) return true;
@@ -1224,6 +1235,10 @@ var trollmap_worker_default = {
           return new Response(JSON.stringify({ success: false, error: err.message }), { status: 500, headers: JSON_HEADERS });
         }
       }
+      // Claude on his API credit: a plan, and the fish photos. See Worker/claude-api.js.
+      if (path === "/claude/health" && request.method === "GET") return handleClaudeHealth(env);
+      if (path === "/claude/ask" && request.method === "POST") return await handleClaudeAsk(request, env);
+      if (path === "/claude/look" && request.method === "POST") return await handleClaudeLook(request, env);
       if (path === "/groq-query" && request.method === "POST") {
         try {
           const body = await request.json();

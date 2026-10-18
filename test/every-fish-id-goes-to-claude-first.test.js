@@ -9,7 +9,9 @@
 //
 // The same day's 7 photos went to claude_fish_sorter.py's questions on Opus 5.5 on his PC: the two
 // rig shots and the deck shot were not on the board, the other four were four fish. These hold the
-// app to asking those questions, through the plan bridge's /look, and to reading the answers.
+// app to asking those questions, through the plan bridge's /look, and to reading the answers. The
+// bridge tests ask with the Worker's Claude off (apiUrl: null); since 2026-10-18 it is asked first,
+// on his monthly API credit: test/claude-on-his-api-credit-answers-first.test.js.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -41,19 +43,19 @@ test('photos go to the bridge as one simple request, and the answer is its text 
     calls.push({ url, init });
     return json(200, { text: '{"species":"Striped Bass"}', _trollmap: { model: 'claude-opus-5-5', seconds: 12.1 } });
   };
-  const out = await claudeLook('measure it', [{ label: 'Photo A (the board shot)', data: '/9j/AA' }], { fetchImpl });
+  const out = await claudeLook('measure it', [{ label: 'Photo A (the board shot)', data: '/9j/AA' }], { fetchImpl, apiUrl: null });
   assert.equal(calls[0].url, `${CLAUDE_BRIDGE_URL}/look`);
   assert.equal(calls[0].init.method, 'POST');
   assert.equal(calls[0].init.headers, undefined, 'no Content-Type, so the browser sends no preflight');
   assert.deepEqual(JSON.parse(calls[0].init.body), { prompt: 'measure it', images: [{ label: 'Photo A (the board shot)', data: '/9j/AA' }] });
-  assert.deepEqual(out, { text: '{"species":"Striped Bass"}', model: 'claude-opus-5-5', seconds: 12.1 });
+  assert.deepEqual(out, { text: '{"species":"Striped Bass"}', model: 'claude-opus-5-5', seconds: 12.1, via: 'this PC' });
 });
 
 test('a usage limit comes back as one, and any other failure as an error', async () => {
   const limit = async () => json(502, { error: "claude: You've hit your weekly limit", usageLimit: true });
-  await assert.rejects(claudeLook('p', [{ data: 'x' }], { fetchImpl: limit }), (e) => e.usageLimit === true);
+  await assert.rejects(claudeLook('p', [{ data: 'x' }], { fetchImpl: limit, apiUrl: null }), (e) => e.usageLimit === true);
   const down = async () => { throw new TypeError('Failed to fetch'); };
-  await assert.rejects(claudeLook('p', [{ data: 'x' }], { fetchImpl: down }), /Failed to fetch/);
+  await assert.rejects(claudeLook('p', [{ data: 'x' }], { fetchImpl: down, apiUrl: null }), /Failed to fetch/);
 });
 
 test('the sort asks for every photo and the fish among them, and a rig shot is not a board shot', () => {
@@ -112,7 +114,8 @@ test('the nightly upload asks Claude first for every catch, and Gemini only when
   const journal = src('js/modules/catch-journal.js');
   const start = journal.indexOf('async function handleNightlyPhotoUpload(');
   const drop = journal.slice(start, journal.indexOf('\n}\n', start));
-  assert.ok(drop.includes('await claudeBridgeStatus()'));
+  // Either Claude (the Worker's on his API credit, or this PC's): claudeStatus() asks both.
+  assert.ok(drop.includes('await claudeStatus()'));
   const iClaude = drop.indexOf('ai = await claudeMeasure(board');
   const iGemini = drop.indexOf('if (!ai) try {');
   assert.ok(iClaude > 0 && iGemini > iClaude, 'Claude, then Gemini only if there is no answer');

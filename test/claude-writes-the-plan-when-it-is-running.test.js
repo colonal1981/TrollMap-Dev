@@ -4,6 +4,10 @@
 // connected to claude". The planners ask Claude on this PC (Scripts/claude_plan_bridge.py) first,
 // and Gemini whenever the bridge is not there, fails, or is at the usage limit -- and the plan says
 // which one answered and, when Gemini did, why Claude did not.
+//
+// These hold the bridge's own behaviour, so each asks with the Worker's Claude off (apiUrl: null).
+// Since 2026-10-18 the Worker's Claude, on his monthly API credit, is asked before the bridge:
+// test/claude-on-his-api-credit-answers-first.test.js.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -43,7 +47,7 @@ test('the bridge is running: Claude answers, Gemini is never asked, and the plan
                                         ask: json(200, CLAUDE_BODY) });
   const g = gemini();
   const said = [];
-  const out = await claudeFirstAsker(g, { fetchImpl, say: (m) => said.push(m) })(REQ);
+  const out = await claudeFirstAsker(g, { fetchImpl, apiUrl: null, say: (m) => said.push(m) })(REQ);
   assert.equal(out.content, '{"from":"claude"}');
   assert.equal(out.meta.provider, 'claude (this PC)');
   assert.equal(out.meta.model, 'claude-sonnet-5');
@@ -58,7 +62,7 @@ test('the bridge is not running: Gemini answers exactly as before, and the plan 
   const { fetchImpl } = bridge({ health: new TypeError('Failed to fetch') });
   const g = gemini();
   const said = [];
-  const out = await claudeFirstAsker(g, { fetchImpl, say: (m) => said.push(m) })(REQ);
+  const out = await claudeFirstAsker(g, { fetchImpl, apiUrl: null, say: (m) => said.push(m) })(REQ);
   assert.equal(out.content, '{"from":"gemini"}');
   assert.equal(out.meta.provider, 'gemini');
   assert.match(out.meta.claudeBridge, /not running on this PC/);
@@ -70,7 +74,7 @@ test('Claude at the usage limit: Gemini answers and the plan says it was the lim
   const { fetchImpl } = bridge({ health: json(200, { ok: true, model: 'sonnet', claude: true }),
     ask: json(502, { error: "claude: You've hit your weekly limit", usageLimit: true }) });
   const g = gemini();
-  const out = await claudeFirstAsker(g, { fetchImpl })(REQ);
+  const out = await claudeFirstAsker(g, { fetchImpl, apiUrl: null })(REQ);
   assert.equal(g.calls, 1);
   assert.match(out.meta.claudeBridge, /usage limit/);
 });
@@ -86,7 +90,7 @@ test('the bridge dropping mid-answer falls back rather than failing the plan', a
   const { fetchImpl } = bridge({ health: json(200, { ok: true, model: 'opus', claude: true }),
                                  ask: new TypeError('network error') });
   const g = gemini();
-  const out = await claudeFirstAsker(g, { fetchImpl })(REQ);
+  const out = await claudeFirstAsker(g, { fetchImpl, apiUrl: null })(REQ);
   assert.equal(out.content, '{"from":"gemini"}');
   assert.match(out.meta.claudeBridge, /stopped answering/);
 });
@@ -100,7 +104,7 @@ test('the ask is a simple request, so the browser sends no preflight to the loop
     if (u.endsWith('/health')) return new Response(JSON.stringify({ ok: true, model: 'sonnet', claude: true }), { status: 200 });
     return new Response(JSON.stringify({ choices: [{ message: { content: '{"ok":1}' } }] }), { status: 200 });
   };
-  const out = await claudeFirstAsker(async () => ({ content: 'gemini' }), { fetchImpl })(REQ);
+  const out = await claudeFirstAsker(async () => ({ content: 'gemini' }), { fetchImpl, apiUrl: null })(REQ);
   assert.equal(out.content, '{"ok":1}');
   const ask = seen.find((s) => s.u.endsWith('/ask'));
   assert.equal(ask.init.method, 'POST');

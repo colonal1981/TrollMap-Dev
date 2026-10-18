@@ -76,7 +76,9 @@ test('the asker sends the effort it was handed, says it, and marks the answer', 
     return json(CLAUDE_BODY);
   };
   const said = [];
-  const ask = claudeFirstAsker(async () => ({ content: '' }), { fetchImpl, say: (m) => said.push(m) });
+  // The bridge's own handling (apiUrl: null). The Worker's Claude carries the effort the same way:
+  // test/claude-on-his-api-credit-answers-first.test.js.
+  const ask = claudeFirstAsker(async () => ({ content: '' }), { fetchImpl, apiUrl: null, say: (m) => said.push(m) });
   const out = await ask({ system: 's', user: 'u', effort: 'low' });
   assert.deepEqual(sent[0], { system: 's', user: 'u', effort: 'low' });
   assert.equal(out.meta.effort, 'low');

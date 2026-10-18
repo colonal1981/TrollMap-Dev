@@ -181,10 +181,13 @@ for (const [f, m] of Object.entries(modules)) {
 
 const workerFiles = FILES.filter(f => f.startsWith('Worker/'));
 const routerSrc = SRC['Worker/trollmap-worker.js'] || '';
-const mutatingList = (() => {
-  const m = routerSrc.match(/const\s+MUTATING_ROUTES\s*=\s*\[([\s\S]*?)\]/);
+// THE GATE READS TWO LISTS. allowMutation() gates MUTATING_ROUTES (writes) and, since 2026-10-18,
+// SPENDING_ROUTES (Claude calls paid from his monthly API credit, Worker/claude-api.js) -- one gate.
+// Reading the first alone reported /claude/ask and /claude/look as open.
+const mutatingList = ['MUTATING_ROUTES', 'SPENDING_ROUTES'].flatMap((name) => {
+  const m = routerSrc.match(new RegExp(`const\\s+${name}\\s*=\\s*\\[([\\s\\S]*?)\\]`));
   return m ? [...m[1].matchAll(/["']([^"']+)["']/g)].map(x => x[1]) : [];
-})();
+});
 
 // AUTH IS NOT ONLY THE MUTATING_ROUTES LIST. `/sync/*` is gated by an enclosing
 // `if (path.startsWith("/sync")) { if (!await isAuthorized(...)) return 401; ... }`, and the

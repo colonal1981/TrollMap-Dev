@@ -8,8 +8,9 @@
  * difference lol"*, *"if its not then use the same route that smartplan now uses for the plans"*,
  * and, asked whether that was every fish or only a mark with several, *"All fish to claude"*.
  *
- * The route is the plan bridge (Scripts/claude_plan_bridge.py, POST /look; claudeLook() in
- * js/modules/claude-bridge.js). The questions are claude_fish_sorter.py's, which sorted and
+ * The route is the Worker's Claude on his API credit (Worker/claude-api.js, POST /claude/look), then
+ * the plan bridge (Scripts/claude_plan_bridge.py, POST /look); claudeLook() in
+ * js/modules/claude-bridge.js asks them in that order. The questions are claude_fish_sorter.py's, which sorted and
  * measured his 2023-2026 photos: the same day's 7 photos went to it on Opus 5.5 on his PC and it
  * named the two rig shots and the deck shot as not on the board and the other four as four fish.
  * The sizes are its too. This file only builds the questions and reads the answers; nothing here
@@ -98,7 +99,7 @@ Return ONE JSON object and nothing else:
  * answered. A species not on the app's list is kept in the notes and comes in as "Other Fish", so the
  * review form can show it.
  */
-export function aiFromMeasure(answer, model, species) {
+export function aiFromMeasure(answer, model, species, via = 'this PC') {
   const a = answer || {};
   const named = typeof a.species === 'string' ? a.species.trim() : '';
   const known = species.includes(named);
@@ -117,6 +118,6 @@ export function aiFromMeasure(answer, model, species) {
     on_bump_board: true,
     board_detected: true,
     length_source: a.length_in == null ? '' : 'board',
-    model: model ? `Claude ${model} (this PC)` : 'Claude (this PC)',
+    model: model ? `Claude ${model} (${via})` : `Claude (${via})`,
   };
 }
