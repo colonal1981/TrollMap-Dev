@@ -3529,6 +3529,30 @@ export function planArgsFrom(res, candidates, ctx = {}) {
   // `c.drift` IS THE TEST, the same one selectCandidates uses for `isDrift` and for the whole
   // fished-back price. A river candidate is a drift by construction and a lake candidate is a
   // contour lane, so the day answers this about itself rather than being told twice.
+  // A STOP THAT PUT ITS STRUCTURE WHERE ITS LEG GOES. Ryan's Rowland plan for 10/24 (2026-10-18): the
+  // model wrote `"runId": "lake_marion#0:p1"`, the channel-edge point's own id, and the assembler
+  // dropped the 25-minute stop there ("that run is not in the plan"), though a stop on the way home said
+  // it was a return to that point. Each structure is listed under one leg -- a second leg past it lists
+  // it under an id of its own -- so a structure id that one leg lists has one reading: the stop is on
+  // that leg, and the plan says it was put there. A runId that is no leg and no listed structure is
+  // left as it came, and the assembler refuses it as before.
+  const legsOf = new Map();
+  for (const c of (candidates || [])) {
+    for (const h of [...(Array.isArray(c && c.passes) ? c.passes : []), ...(Array.isArray(c && c.structures) ? c.structures : [])]) {
+      if (!h || !str(h.id)) continue;
+      if (!legsOf.has(h.id)) legsOf.set(h.id, new Set());
+      legsOf.get(h.id).add(c.runId);
+    }
+  }
+  const legOfStop = (s) => {
+    if (byRun.has(s.runId)) return s.runId;
+    const ref = str(s.id) || str(s.structureId);
+    const legs = legsOf.get(ref);
+    if (!legs || legs.size !== 1) return s.runId;
+    const [runId] = legs;
+    problems.push(`a stop named its structure (${s.runId}) where its leg goes; put on ${runId}, the one leg that lists ${ref}`);
+    return runId;
+  };
   const stops = (Array.isArray(res.stops) ? res.stops : []).filter((s) => {
     if (riverDay) {
       problems.push('dropped a stop-and-cast: this is a river and the boat cannot be held on a '
@@ -3539,7 +3563,7 @@ export function planArgsFrom(res, candidates, ctx = {}) {
     problems.push(`dropped a stop with no runId or structure reference: ${JSON.stringify(s)}`);
     return false;
   }).map((s) => ({
-    runId: s.runId, structureId: str(s.id) || str(s.structureId),
+    runId: legOfStop(s), structureId: str(s.id) || str(s.structureId),
     rods: Array.isArray(s.rods)
       ? s.rods.map(reseat).filter((x) => ROD_IDS.includes(x) && usable(x, `a stop on ${s.runId}`))
       : [],

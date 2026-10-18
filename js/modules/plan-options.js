@@ -336,23 +336,42 @@ const underEdge = (d, lo, steer) => (Number.isFinite(d) ? 1 + (Math.max(0, lo - 
  * the water at his depth is too narrow for both, and shallower than his alarm only where it must. beside()
  * alone has those the other way round, and on the narrow stretch past the Hilton cove put the way home in
  * 8 ft on the chart to keep its gap.
+ *
+ * AND THE WAY OUT'S OWN LINE, WHERE HIS SIDE OF IT HAS NOTHING AT HIS DEPTH (`onLine`). Ryan's Rowland plan
+ * for 10/24, built 2026-10-18 with Marion 2.9 ft down: at the creek mouth the way out holds the 19-21 ft edge
+ * on the bank side of the channel, the bank drops to 6 ft within one cell of it, and the way home, kept to
+ * that side, went up onto the bar -- 180 m under his 14 ft, 5 ft at the shallowest. With the lake 1.1 ft
+ * lower on 10/10 the way out had run one cell farther off the bank and left the way home 17 ft there. The
+ * way out's line is at his depth, and coming back along it for those cells keeps both of his rules: it does
+ * not cross the way out, and it does not go under his alarm. Its cells are dearer than any number of the
+ * gap's, and under his alarm stays dearer than any number of them.
  */
-function besideOn(net, out, lo, hi, steer, ends, side, sg) {
+function besideOn(net, out, lo, hi, steer, ends, side, sg, onLine = false) {
   const base = bandCost(net, lo, hi, steer), n = base.length;
   const near = nearMask(net, out, BESIDE), e = nearMask(net, ends, TURN_W / 2), corridor = nearMask(net, out, TURN_W);
+  const onOut = new Uint8Array(n);
+  for (const q of out) if (q >= 0) onOut[q] = 1;
   const c = new Float64Array(n).fill(Infinity), tier = new Uint8Array(n);
-  let sum = 0, n1 = 0;
+  let sum = 0, n1 = 0, nL = 0;
   for (let k = 0; k < n; k++) {
     if (!net.open[k] || !corridor[k]) continue;
-    if (side[k] !== sg && k !== ends[0] && k !== ends[1]) continue;
-    if (!(base[k] < Infinity)) { tier[k] = 2; continue; }
+    const end = k === ends[0] || k === ends[1];
+    const line = onLine && !end && onOut[k] === 1 && side[k] === 0;
+    if (side[k] !== sg && !line && !end) continue;
+    if (!(base[k] < Infinity)) { tier[k] = 3; continue; }
+    if (line) { tier[k] = 2; nL++; continue; }
     if (near[k] && !e[k]) { tier[k] = 1; n1++; continue; }
     c[k] = base[k]; sum += base[k];
   }
-  // dearer than any way round, then dearer than any number of those -- and under his alarm, the less
-  // under it the better (underEdge())
-  const t1 = sum + 1, t2 = t1 * (n1 + 2);
-  for (let k = 0; k < n; k++) if (tier[k] === 1) c[k] = t1 + base[k]; else if (tier[k] === 2) c[k] = t2 * underEdge(net.D[k], lo, steer);
+  // dearer than any way round, then dearer than any number of those, then the way out's own line dearer
+  // than any number of those -- and under his alarm, the less under it the better (underEdge()). With no
+  // line offered the prices are the ones they were.
+  const t1 = sum + 1, tL = t1 * (n1 + 2), t2 = nL ? tL * (nL + 2) : tL;
+  for (let k = 0; k < n; k++) {
+    if (tier[k] === 1) c[k] = t1 + base[k];
+    else if (tier[k] === 2) c[k] = tL + base[k];
+    else if (tier[k] === 3) c[k] = t2 * underEdge(net.D[k], lo, steer);
+  }
   return c;
 }
 
@@ -1390,6 +1409,14 @@ function* layOptions(k) {
         const side = sidesOf(so, out, TURN_W);
         const sg = side[from] || 1;
         home = wayOf(so, from, S, besideOn(so, out, lo0, hi0, steer, [S, from], side, sg));
+        // ONLY WHERE IT WOULD GO UNDER HIS ALARM is the way out's own line offered, and the way home comes
+        // back along it rather than up the bank (Rowland, 10/24). A way home that holds his depth on its
+        // side is left as it was, and where no way keeps to its side at all, beside() below lays it as it
+        // always has: Moultrie, Murray's other options, Wateree, Bates and Marion's largemouth come out
+        // the same (2026-10-18).
+        if (home && home.some((q) => !(so.D[q] >= lo0 - steer))) {
+          home = wayOf(so, from, S, besideOn(so, out, lo0, hi0, steer, [S, from], side, sg, true)) || home;
+        }
       }
       if (!home) home = from === S ? [S] : wayOf(so, from, S, beside(so, out, c, [S, from])) || out.slice().reverse();
     }

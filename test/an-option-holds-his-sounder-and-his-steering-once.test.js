@@ -35,7 +35,9 @@ test('2. the alarm edge is the band less his 5 ft, once', () => {
 
 test('3. under the edge, the less under it the better, wherever a way can go there', () => {
   assert.ok(live.includes('const underEdge = (d, lo, steer) => (Number.isFinite(d) ? 1 + (Math.max(0, lo - steer - d) / steer) ** 2 : 1e6);'));
-  assert.ok(live.includes('else if (tier[k] === 2) c[k] = t2 * underEdge(net.D[k], lo, steer);'), 'besideOn');
+  // besideOn's under-the-edge tier is 3 since 2026-10-18: the way out's own line sits between it and the
+  // gap (test/the-way-home-comes-back-along-the-way-out-before-it-goes-under-his-alarm.test.js)
+  assert.ok(live.includes('else if (tier[k] === 3) c[k] = t2 * underEdge(net.D[k], lo, steer);'), 'besideOn');
   assert.ok(live.includes('else if (tier[k] === 2) c[k] = t2 * underEdge(D[k], lo, steer);'), 'sideWay');
   assert.ok(!/tier\[k\] === 2\) c\[k\] = t2;/.test(live), 'no cell under the edge at one flat price');
 });
