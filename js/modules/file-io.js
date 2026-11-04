@@ -12,6 +12,7 @@
 import { state } from '../core/state.js';
 import { parseGPX, parseKML, kmlToGeoJSON, buildGPX, geoJSONToLines } from '../utils/parsers.js';
 import { admFile, cueBoundaries } from '../utils/adm.js';
+import { woodBoundaries } from '../utils/wood-rings.js';
 import { setFilename, getFilename, renderAll } from '../core/map-init.js';
 
 /**
@@ -88,7 +89,10 @@ function wireButtons() {
   // card: Where To > Menu > Manage User Data > Data Transfer > File Type ADM > Merge from Card.
   // Named for the plan's day, TMmmdd.ADM, short and plain so the unit's file list shows it whole.
   document.getElementById('saveAdmBtn')?.addEventListener('click', () => {
-    const boundaries = cueBoundaries(state.DATA && state.DATA.routes);
+    // AND, ONLY WHEN TICKED, THE SNAGS ON THIS PLAN'S LEGS: his 10 ft round each piece, rings that
+    // touch as one outline, alarm off -- see wood-rings.js. Off by default: no clutter he did not ask for.
+    const wood = document.getElementById('admWoodChk')?.checked ? woodBoundaries(window._planV2) : [];
+    const boundaries = [...cueBoundaries(state.DATA && state.DATA.routes), ...wood];
     if (!boundaries.length) {
       alert('No plan cue lines to write. Build a plan, or load one saved since 2026-09-28 '
         + '(older saved plans did not keep their cue lines); the ADM holds them as boundaries.');

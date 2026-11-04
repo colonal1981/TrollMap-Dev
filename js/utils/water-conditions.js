@@ -1021,15 +1021,36 @@ export function poolOffsetFt(c) {
   const num = (v) => (v == null || v === '' ? NaN : Number(v));
   const chart = num(c.chartBelowFullPoolFt);
   if (!Number.isFinite(chart)) return null;
+  const d = belowFullPoolTodayFt(c);
+  if (d == null) return null;
+  const off = Math.round((d - chart) * 100) / 100;
+  return Math.abs(off) < 0.05 ? null : off;
+}
+
+/**
+ * HOW FAR BELOW FULL POOL THE LAKE IS TODAY, IN FEET -- the first half of poolOffsetFt(), alone.
+ *
+ * The stated figure wins (`belowFullPoolFt`, what Chilhowee and Calderwood publish), otherwise full
+ * pool less the level, to the hundredth. Null on a failed lookup, a river or a coastal zone, or where
+ * neither is published. Positive = down.
+ *
+ * NOT LESS THE CHART'S OWN LEVEL. That is poolOffsetFt()'s job, and it is about the CHART. The wood
+ * in a pack (wood.geojson, js/utils/wood.js) was measured by his own sounder, not by the chart, and
+ * each read carries the lake's feet below full pool when it was taken -- on Marion, 76.8 less the
+ * NGVD29 series of USGS 02169921, the same scale js/data/chart-levels.js settled on 2026-10-08. So a
+ * read is brought to today by this number alone.
+ */
+export function belowFullPoolTodayFt(c) {
+  if (!c || c.error) return null;
+  if (c.featureType && c.featureType !== 'lake') return null;
+  const num = (v) => (v == null || v === '' ? NaN : Number(v));
   const stated = num(c.belowFullPoolFt);
   const lvl = num(c.levelFt);
   const full = num(c.fullPoolFt);
   const d = Number.isFinite(stated) ? stated
     : (Number.isFinite(lvl) && Number.isFinite(full)) ? Math.round((full - lvl) * 100) / 100
     : NaN;
-  if (!Number.isFinite(d)) return null;
-  const off = Math.round((d - chart) * 100) / 100;
-  return Math.abs(off) < 0.05 ? null : off;
+  return Number.isFinite(d) ? d : null;
 }
 
 /**

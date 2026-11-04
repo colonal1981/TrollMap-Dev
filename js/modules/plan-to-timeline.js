@@ -64,6 +64,7 @@
 
 import { planCues, risesAtM, riseSentence, bottomGapFt } from './plan-assemble.js';
 import { todayDepthFt } from '../utils/water-conditions.js';
+import { HIS_CLEAR_FT } from '../utils/wood.js';
 import { ozLabel } from '../utils/oz.js';
 import { lightLabel } from '../utils/light-state.js';
 
@@ -435,6 +436,23 @@ function sonarLine(leg) {
   return bits.join(' ');
 }
 
+/**
+ * "Wood under this pass: 3 pieces, 2 of them a snag to a rod in the water, 1 a target."
+ *
+ * The leg's own list, from his rule (plan-wood.js). Each snag is said in full with the plan's
+ * warnings, and each piece is cued as the boat comes to it; this is the count, on the card.
+ */
+function woodLine(leg) {
+  const w = (leg && leg.wood) || [];
+  if (!w.length) return '';
+  const snags = w.filter((e) => (e.rods || []).some((r) => r.verdict === 'snag')).length;
+  const targets = w.length - snags;
+  const parts = [snags ? `${snags} a snag to a rod in the water` : '',
+                 targets ? `${targets} a target with your lures ${HIS_CLEAR_FT} ft or more over it` : '']
+    .filter(Boolean);
+  return `Wood under this pass: ${w.length} piece${w.length === 1 ? '' : 's'}, ${parts.join(', ')}.`;
+}
+
 function fallbackLine(leg, rodsById) {
   const f = leg && leg.ifNotProducing;
   if (!f || !f.rodId || !f.insteadOf) return '';
@@ -619,12 +637,14 @@ export function planToTimeline(plan, o = {}) {
       // print, the HTML export and the phone without five readers having to learn a new name. The
       // rod's own lure is named from the loadout, because "put R2 on" is not an instruction anybody
       // can follow with four rods behind the seat.
-      longDesc: [clean(leg.why), fallbackLine(leg, rodsById), sonarLine(leg)]
+      longDesc: [clean(leg.why), fallbackLine(leg, rodsById), sonarLine(leg), woodLine(leg)]
         .filter(Boolean).join(' '),
       ifNotProducing: leg.ifNotProducing || null,
       // Carried as well as said, because the panel draws the depths and wants the numbers, not the
       // sentence. Same rule as `ifNotProducing` beside it.
       sonarCheck: leg.sonarCheck || null,
+      // The wood under the pass, for the panel and the exports. Never a waypoint.
+      wood: leg.wood || null,
       speedMph: leg.speedMph,
       // Carried so every reader downstream can tell a second pass from a second stretch without
       // re-deriving it from a repeated runId.

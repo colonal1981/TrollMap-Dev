@@ -160,11 +160,17 @@ LAYERS = {
     # Opt-in like the rest of this group: a separate pass builds it, and most packs have none.
     #     py Scripts\upload_garmin_to_r2.py --root F:\TrollMapPipeline\chartpack --layers keep_out --no-boundaries
     "keep_out":         "keep_out.geojson",
+    # The wood he has gone over with the sounder -- Scripts/build_wood.py, from registry/wood/
+    # (2026-11-03). The map's Wood button and the plan's wood rule read it (js/utils/wood.js,
+    # js/modules/plan-wood.js). Opt-in like keep_out: a separate pass builds it, and most packs
+    # have none -- and none is no wood, not a failure.
+    #     py Scripts\upload_garmin_to_r2.py --root F:\TrollMapPipeline\chartpack --layers wood --no-boundaries
+    "wood":             "wood.geojson",
 }
 # Not uploaded unless named explicitly with --layers. `boundary` would replace the NHD/3DHP
 # polygon the app renders as the lake outline.
 LAYERS_OPT_IN = {"boundary", "areas", "water_graph", "structure", "trolling_runs", "water_features",
-                 "centreline", "launches", "channels", "pools", "keep_out"}
+                 "centreline", "launches", "channels", "pools", "keep_out", "wood"}
 
 # ── What R2 does not need ─────────────────────────────────────────────────────────────
 #

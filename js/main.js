@@ -77,6 +77,7 @@ import './modules/ble-motor.js';
 import './modules/wet-hands-remote.js';
 import './modules/gear-autopilot.js';
 import './modules/osm-structure.js';
+import './modules/wood-layer.js';
 import './modules/quickdraw-key.js';
 import './modules/sw-register.js';
 import './modules/supplemental-layers.js';

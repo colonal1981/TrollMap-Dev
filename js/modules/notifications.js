@@ -328,6 +328,9 @@ export function loadSessionFromPlan(plan, o = {}) {
       if (!at || !Number.isFinite(at[0]) || !Number.isFinite(at[1])) continue;
       const title = cue.kind === 'stop' ? '🎯 Stop and cast'
                   : cue.kind === 'depth' ? '⚠️ Shallow ahead'
+                  // The wood his rule found under this pass (plan-wood.js): a snag to pick a rod up
+                  // over, or a target to watch the tips over.
+                  : cue.kind === 'wood' ? (cue.verdict === 'snag' ? '🪵 Wood ahead' : '🪵 Wood under you')
                   : cue.kind === 'change' ? '🪝 Lure change'
                   : '📍 Coming up';
       _planPins.push({ id: `plan-${cue.kind}-${cue.ref}`, lat: at[1], lon: at[0],

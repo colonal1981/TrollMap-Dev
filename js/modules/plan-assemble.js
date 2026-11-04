@@ -33,7 +33,9 @@ import { JIGHEADS_OWNED_OZ, TROLLING_WEIGHTS_OWNED_OZ,
 import { FISHING_STYLE } from '../data/fishing-style-profile.js';
 import { ozLabel } from '../utils/oz.js';
 import { legLightFor, lightAgrees } from '../utils/light-state.js';
-import { poolOffsetFt, todayDepthFt } from '../utils/water-conditions.js';
+import { poolOffsetFt, todayDepthFt, belowFullPoolTodayFt } from '../utils/water-conditions.js';
+import { woodPieces } from '../utils/wood.js';
+import { woodOnLeg, woodWarning, woodForLeg, woodCueText } from './plan-wood.js';
 
 /**
  * THE MINUTES A STOP GETS WHEN THE MODEL DOES NOT SAY. The prompt's own example stop carries this
@@ -791,6 +793,41 @@ function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warn
 }
 
 /**
+ * THE WINDOW A ROD IS FISHING ON THIS LEG, AND WHAT SETS IT.
+ *
+ * Read by sonarContingency() and by the wood rule (plan-wood.js), so the two can never disagree about
+ * how deep one rod runs on one leg. It was sonarContingency()'s inner `windowFor()`, moved out whole.
+ *
+ * The numbers prefer capBaitDepth()'s answer, because on a deployed rod the cap may have shortened
+ * the lead for this leg's ceiling and the bag's lead is then not what is behind the boat.
+ *
+ * `mode` NEVER comes from the cap. The first cut of this read it as "did the cap write a leadFt",
+ * which is a question about whether this leg was shallow, not about what controls the bait -- so
+ * the identical rod reported lead-controlled while it sat on the bench and NOT lead-controlled the
+ * moment it was deployed, and leg 3 of Ryan's 2026-09-18 Congaree day said "nothing else in the
+ * boat reaches them" over 13 ft of water while holding two lead-controlled baits that more line
+ * would have taken straight down to the fish. What controls a bait is a property of the bait:
+ * depthWindow() answers it ('lead', 'surface', a rated bill), and it is asked every time.
+ *
+ * @returns {{min:number, max:number, mode:string}|null} null when the lure does not resolve, or
+ *          neither the cap nor depthWindow() gives a pair.
+ */
+export function rodWindowOnLeg(rod, rodPlan, speedMph, lureByName) {
+  if (!rod || typeof lureByName !== 'function') return null;
+  const lure = lureByName(rod.lure);
+  if (!lure) return null;
+  const planned = rodPlan && rodPlan[rod.id] ? rodPlan[rod.id] : null;
+  const leadFt = (planned && planned.leadFt) ?? rod.leadFt;
+  const w = depthWindow(planned && planned.jigheadOz
+    ? { ...lure, weightOz: planned.jigheadOz } : lure, { speedMph, leadFt });
+  const pair = planned && Array.isArray(planned.runsDepthFt)
+               && planned.runsDepthFt.every((v) => Number.isFinite(v))
+    ? planned.runsDepthFt : (Number.isFinite(w.min) && Number.isFinite(w.max) ? [w.min, w.max]
+                                                                             : null);
+  return pair ? { min: pair[0], max: pair[1], mode: w.mode } : null;
+}
+
+/**
  * WHAT THE PAIR IN THE WATER REACHES, AND WHAT IS IN THE BOAT THAT REACHES PAST IT.
  *
  * ── WHY THIS EXISTS AT ALL ────────────────────────────────────────────────────────────────────
@@ -843,31 +880,8 @@ function sonarContingency(rods, deploy, rodPlan, speedMph, lureByName) {
   if (typeof lureByName !== 'function' || !deploy) return undefined;
   const out = [deploy.port, deploy.starboard].filter(Boolean);
 
-  // The window a rod is fishing on THIS leg, and WHAT SETS IT.
-  //
-  // The numbers prefer capBaitDepth()'s answer, because on a deployed rod the cap may have shortened
-  // the lead for this leg's ceiling and the bag's lead is then not what is behind the boat.
-  //
-  // `mode` NEVER comes from the cap. The first cut of this read it as "did the cap write a leadFt",
-  // which is a question about whether this leg was shallow, not about what controls the bait -- so
-  // the identical rod reported lead-controlled while it sat on the bench and NOT lead-controlled the
-  // moment it was deployed, and leg 3 of Ryan's 2026-09-18 Congaree day said "nothing else in the
-  // boat reaches them" over 13 ft of water while holding two lead-controlled baits that more line
-  // would have taken straight down to the fish. What controls a bait is a property of the bait:
-  // depthWindow() answers it ('lead', 'surface', a rated bill), and it is asked every time.
-  const windowFor = (rod) => {
-    const lure = lureByName(rod.lure);
-    if (!lure) return null;
-    const planned = rodPlan && rodPlan[rod.id] ? rodPlan[rod.id] : null;
-    const leadFt = (planned && planned.leadFt) ?? rod.leadFt;
-    const w = depthWindow(planned && planned.jigheadOz
-      ? { ...lure, weightOz: planned.jigheadOz } : lure, { speedMph, leadFt });
-    const pair = planned && Array.isArray(planned.runsDepthFt)
-                 && planned.runsDepthFt.every((v) => Number.isFinite(v))
-      ? planned.runsDepthFt : (Number.isFinite(w.min) && Number.isFinite(w.max) ? [w.min, w.max]
-                                                                               : null);
-    return pair ? { min: pair[0], max: pair[1], mode: w.mode } : null;
-  };
+  // The window a rod is fishing on THIS leg, and what sets it. See rodWindowOnLeg().
+  const windowFor = (rod) => rodWindowOnLeg(rod, rodPlan, speedMph, lureByName);
 
   const inWater = [];
   for (const id of out) {
@@ -1249,6 +1263,12 @@ export function assemblePlan(o) {
   // Smart Plan and Pick Water alike. Null (no chart level measured, no level published, a river,
   // or the lake at its chart's level) changes nothing: the depths stand as the chart's.
   const poolOff = poolOffsetFt(o.waterState);
+  // THE WOOD HE HAS GONE OVER, AND TODAY'S FEET BELOW FULL POOL TO BRING ITS TOPS TO. Both planners
+  // read wood.geojson beside the rest of the pack and hand its features in as `o.wood`; most packs
+  // have none, and none is no wood. The level is NOT poolOff: the wood's depths are his sounder's,
+  // not the chart's, so they are brought to today by the feet below full pool alone. See plan-wood.js.
+  const wood = woodPieces({ features: Array.isArray(o.wood) ? o.wood : [] });
+  const belowToday = wood.length ? belowFullPoolTodayFt(o.waterState) : null;
   // THE MEASURED OXYGEN FLOOR, forwarded by both planners from the same oxygenFloorFt() the
   // prompt's bait gate reads. See capBaitDepth(): no bait lead can lift runs below it.
   const oxygenFloorFt = o.oxygenFloorFt != null && Number(o.oxygenFloorFt) > 0
@@ -1900,6 +1920,17 @@ export function assemblePlan(o) {
                                    chartCeilingFt, drawdownFt: poolOff, oxygenFloorFt,
                                    fitsSaid }, legLight,
                                  freshDecisions);
+    // THE WOOD THE LURES PASS OVER, AND WHAT IT IS TO EACH ROD IN THE WATER -- his rule, after the
+    // cap, on the window the cap left each rod. A snag is a warning on the leg; the line stays where
+    // it is. See plan-wood.js.
+    const woodHere = deploy && wood.length
+      ? woodOnLeg({ coords: trollCoords, pieces: wood, deploy, rods, belowTodayFt: belowToday,
+                    windowFor: (rod) => rodWindowOnLeg(rod, rodPlan, waterMph, o.lureByName) })
+      : [];
+    for (const e of woodHere) {
+      const w = woodWarning(c.runId, e, `about ${riseSentence([e.atM])}`);
+      if (w) fresh.push(w);
+    }
     for (const w of fresh) sayOnce(w);
     // Deduped the same way and by the same key, so a decision repeated across both passes of a
     // reach is still said once. It simply lands in the other list.
@@ -1953,6 +1984,10 @@ export function assemblePlan(o) {
       // Priced at the WATER speed, the same one capBaitDepth() judged the pair at, so the two can
       // never disagree about how deep the same rod is running on the same leg.
       sonarCheck: sonarContingency(rods, deploy, rodPlan, waterMph, o.lureByName),
+      // THE WOOD THE LURES PASS OVER, in the order the boat meets it, each piece with its top today
+      // and each rod's verdict -- for the card, the cues and the exports. Absent when there is none.
+      // Never a waypoint: "i just don't want to clutter up the screen with waypoints".
+      wood: woodHere.length ? woodForLeg(woodHere) : undefined,
       batteryAh: round2(a),
       estDurationMin: Math.round(mins + stopMin), estStartTime: formatClock(clock),
       light: legLight,
@@ -2100,6 +2135,12 @@ export function assemblePlan(o) {
         marks: (prev.marks || []).map((m) => ({
           ...m, atM: Math.max(0, Math.round(legLen - m.atM)),
         })),
+        // The same wood, met the other way round: mirrored, and re-ordered by where this pass meets
+        // it. The rods and the water are the same, so is every verdict.
+        wood: prev.wood
+          ? prev.wood.map((w) => ({ ...w, atM: Math.max(0, Math.round(legLen - w.atM)) }))
+            .sort((x, y) => x.atM - y.atM)
+          : undefined,
         stops: [],
         pass: np, ofPasses: legPasses,
       });
@@ -2360,7 +2401,34 @@ export function planCues(plan) {
     cues.push({ atM: c.atM, kind: 'change', ref: c.id, what: `${c.rodId} → ${c.to}`, cost: c.cost });
   }
   cues.push(...depthCues(plan));
+  cues.push(...woodCues(plan));
   return cues.sort((a, b) => a.atM - b.atM);
+}
+
+/**
+ * THE WOOD, ANNOUNCED ONE SPREAD-LENGTH BEFORE IT, target and snag alike.
+ *
+ * The same lead as depthCues() and for the same reason: the baits trail the boat by about a spread,
+ * so a cue fired one spread-length early arrives while there is still water between the baits and
+ * the wood -- time to pick a rod up over a snag, or to watch the rod tips over a target. Read off
+ * `leg.wood`, which assemblePlan() wrote from his rule (plan-wood.js). A target reads like "wood
+ * under you, top 7 ft, your lures at 2".
+ */
+export function woodCues(plan, { spreadM = 27 } = {}) {
+  const out = [];
+  for (const leg of ((plan && plan.legs) || [])) {
+    for (const e of (leg.wood || [])) {
+      out.push({
+        atM: (leg.startM || 0) + Math.max(0, e.atM - spreadM),
+        kind: 'wood', legId: leg.id, ref: `${leg.id}:w:${e.id}`,
+        woodId: e.id, topFt: e.topTodayFt,
+        verdict: e.rods.some((r) => r.verdict === 'snag') ? 'snag' : 'target',
+        aheadM: spreadM,
+        what: woodCueText(e, spreadM),
+      });
+    }
+  }
+  return out;
 }
 
 /**

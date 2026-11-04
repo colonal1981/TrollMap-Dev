@@ -915,7 +915,7 @@ export async function findWater() {
   // I offered twice before checking the bucket. 385 packs carry a shoreline against 543 carrying
   // runs, so the shoreline is genuinely absent a lot and its absence must stay silent rather than
   // become a claim of open water.
-  const [fcAll, daFc, slFc, wfAll, stAll, poAll, dkAll, poolsFile, koFc, channelsFile] = await Promise.all([
+  const [fcAll, daFc, slFc, wfAll, stAll, poAll, dkAll, poolsFile, koFc, channelsFile, woodFc] = await Promise.all([
     get(`/${r2Key}/trolling_runs.geojson`),
     get(`/${r2Key}/depth_areas.geojson`).catch(() => null),
     get(`/${r2Key}/garmin_shoreline.geojson`).catch(() => null),
@@ -937,6 +937,9 @@ export async function findWater() {
     // WHERE EACH LANE RUNS IN A CHANNEL (Scripts/stamp_channels.mjs), the same file Smart Plan reads:
     // one of the things trollForMe()'s options measure water by. A pack without it measures without it.
     get(`/${r2Key}/channels.json`).catch(() => null),
+    // THE WOOD HE HAS GONE OVER -- Scripts/build_wood.py. The plan's wood rule reads it (plan-wood.js).
+    // Most packs have none, and none is no wood, not a failure.
+    get(`/${r2Key}/wood.geojson`).catch(() => null),
   ]);
   // ── THE WATER THIS RAMP LAUNCHES ONTO, AND NOTHING BEHIND A DIKE ──────────────────────────────
   //
@@ -1139,6 +1142,8 @@ export async function findWater() {
     // research says the fish are over. A new Find starts the troll over.
     depthAt,
     koFeatures: (koFc && koFc.features) || [],
+    // THE WOOD, whole, for the assembler's wood rule when the day is built. See plan-wood.js.
+    woodFeatures: (woodFc && woodFc.features) || [],
     // WHAT THE OPTIONS MEASURE WATER BY (plan-options.js): the layers above as this ramp's pool has
     // them, whole -- the lanes with their channel stretches, the structure, the water features, the
     // POIs and the docks.
@@ -1737,6 +1742,8 @@ export async function buildFromPicked() {
       chosenSpotKeys: [...T.pickedSpots],
       // So each leg's marks are pinned on the structure itself -- see legFrom().
       structures: T.structures || null,
+      // THE WOOD HE HAS GONE OVER, for the assembler's wood rule. Smart Plan passes the same field.
+      wood: T.woodFeatures || [],
       // So the prompt can say the reasons he picked by were written in today's water.
       todayOffsetFt: T.offsetFt || 0,
       ramp: T.ramp,

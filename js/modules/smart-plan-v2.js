@@ -84,7 +84,7 @@ export const CANDIDATE_LIMIT = 12;
 export async function buildSmartPlanV2(o) {
   const base = o.chartpackBase || '';
   const [runsAll, structAll, waterAll, docksAll, poisAll, centrelineFc, boundaryFc, osmAll, channelsFile,
-         poolsFile] = await Promise.all([
+         poolsFile, woodFc] = await Promise.all([
     o.fetchJson(`${base}/${o.r2Key}/trolling_runs.geojson`),
     o.fetchJson(`${base}/${o.r2Key}/structure.geojson`),
     o.fetchJson(`${base}/${o.r2Key}/water_features.geojson`),
@@ -123,6 +123,9 @@ export async function buildSmartPlanV2(o) {
     // TENTH: WHICH WATER THIS RAMP CAN REACH. Scripts/build_pools.py, lakes only; see lake-pools.js.
     // Optional like the five above: a pack without it plans every pool, as it did.
     Promise.resolve(o.fetchJson(`${base}/${o.r2Key}/pools.json`)).catch(() => null),
+    // ELEVENTH: THE WOOD HE HAS GONE OVER. Scripts/build_wood.py; the plan's wood rule reads it
+    // (plan-wood.js). Most packs have none, and none is no wood, not a failure.
+    Promise.resolve(o.fetchJson(`${base}/${o.r2Key}/wood.geojson`)).catch(() => null),
   ]);
   // ── THE WATER THIS RAMP LAUNCHES ONTO, AND NOTHING BEHIND A DIKE ──────────────────────────────
   //
@@ -880,6 +883,8 @@ export async function buildSmartPlanV2(o) {
     // AND THE ANOXIC LINE THE PROMPT WAS GIVEN, so no lead the app fits runs a bait under it.
     // Pick Water passes the same field. See capBaitDepth().
     oxygenFloorFt,
+    // AND THE WOOD UNDER THE PASSES, for his rule. Pick Water passes the same field. See plan-wood.js.
+    wood: (woodFc && woodFc.features) || [],
   }));
   plan.notes = args.notes;
   // What planArgsFrom() settled while reading the answer goes with what the assembler settled.
