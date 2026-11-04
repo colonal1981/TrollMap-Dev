@@ -141,7 +141,18 @@ export const LURE_KNOWLEDGE = {
     label: 'A-Rig / Umbrella Rig',
     depthMode: 'lead',
     ratedDepth: null,
-    leadRatio: { byWeightOz: [[1.65, 7.5], [2.65, 6.5], [3.5, 5.5]] },
+    // HIS RIG, MEASURED ONCE. 2026-11-02, lower Marion: the A-rig with five 3/8 oz heads (the
+    // 1.6 oz frame + 1.875 oz = 3.475 oz) on about 100 ft of line hit bottom in about 28 ft once
+    // he slowed to about 1.4 mph, and stayed off the same 28 ft bottom at about 2.0 mph. Ryan:
+    // "so i snagged in 30 feet of water monday with an a-rig with about 100 ft of line out going
+    // 1.5 mph... and i only snagged once i got that slow". His sonar has the stop at 3:35:20 PM
+    // over 27.6 ft, after six minutes at 1.3-1.6 mph over 27.6-28.3 ft.
+    // The ratio is that one point taken back through speedFactor(); every other weight follows
+    // from it by applyWeight(). The series it replaces (1.65 / 2.65 / 3.5 oz at 7.5 / 6.5 / 5.5)
+    // came with the first upload, unsourced, and put this rig at 20.7 ft. speedFactor()'s own
+    // shape is still uncalibrated: one point cannot draw it. 11/2 agrees with it at 2.0 mph
+    // (24.6 ft on 100 ft, above the bottom he did not snag).
+    leadRatio: { base: 100 / (28 * speedFactor(1.4)), refOz: 1.6 + 5 * 0.375 },
     speedAffectsLead: true,
     speed:     { min:1.4, ideal:1.8, max:2.4 },
     speedIsHardLimit: false,
@@ -1256,9 +1267,10 @@ export function trollableBaits(inventory, o = {}) {
     // 1/8oz Road Runner quoted "138 ft of lead" against the 120 ft it was measured at. When the
     // budget is what binds, the lead IS the budget, exactly; only a floor that cuts in shallower
     // needs the maths run again.
-    // AND THE FLOOR ONLY CUTS IF THE LINE CAN GET THERE. An A-Rig Medium needs 128 ft to make
-    // 19.7, which is past the 120 he runs -- so the BUDGET binds, not the floor, and quoting the
-    // floor's lead would print a number he cannot let out.
+    // AND THE FLOOR ONLY CUTS IF THE LINE CAN GET THERE. A bait that needs more line than the
+    // 120 he runs to make the floor (the old A-Rig Medium needed 128 ft to make 19.7) has the
+    // BUDGET binding, not the floor, and quoting the floor's lead would print a number he cannot
+    // let out.
     const toFloor = hasFloor && floor < at120.max
       ? leadForDepth(lure, floor, speedFor(bought.type)) : null;
     const cut = Number.isFinite(toFloor) && toFloor > 0 && toFloor <= maxLeadFt;

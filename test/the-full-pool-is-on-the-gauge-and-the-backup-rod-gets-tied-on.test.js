@@ -181,8 +181,8 @@ describe('the rigging list says to tie the backup rod on', () => {
   const LOADOUT = { rods: [
     { id: 'R1', rig: 'fluoro', lure: 'DD3 Crankbait (20-25ft)' },
     { id: 'R2', rig: 'fluoro', lure: 'DD2 Crankbait (16-20ft)' },
-    { id: 'R3', rig: 'fluoro', lure: 'A-Rig Heavy (~3.5oz) – 5" Swimbait' },
-    { id: 'R4', rig: 'fluoro', lure: 'A-Rig Medium (~2.65oz) – 4.6" Swimbait' },
+    { id: 'R3', rig: 'fluoro', lure: 'A-Rig – four 3/4oz heads, 1oz middle (~5.6oz)' },
+    { id: 'R4', rig: 'fluoro', lure: 'A-Rig – five 1/2oz heads (~4.1oz)' },
   ] };
   const ROW = (key, port, stbd, extra) => ({ type: 'troll', key, estStartTime: '06:02',
     rods: [{ side: 'Port', rod: port, lure: 'x' }, { side: 'Stbd', rod: stbd, lure: 'y' }], ...extra });
@@ -206,7 +206,7 @@ describe('the rigging list says to tie the backup rod on', () => {
   it('off the sentence on the file he saved for 10/4, which has no field', () => {
     // His saved row's own words.
     const why = 'This leg launches straight off the ramp in the dark. If they are not producing: '
-      + 'put R4 (A-Rig Medium (~2.65oz) – 4.6" Swimbait) on in place of R1 — In the dark and at first '
+      + 'put R4 (A-Rig – five 1/2oz heads (~4.1oz)) on in place of R1 — In the dark and at first '
       + 'light fish sit higher.. In the water here: 18–25 ft.';
     const p = { plan: { loadout: LOADOUT }, timeline: [ROW('L1', 'R3', 'R1', { why })] };
     const r4 = rodsAtLaunch(p).rods.find((r) => r.id === 'R4');

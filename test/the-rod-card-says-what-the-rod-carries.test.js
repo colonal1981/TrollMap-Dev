@@ -17,7 +17,7 @@ const LEADER = /\+ 20lb fluoro leader/;
 const SNAP = /directly tied to swivel snap/;
 
 const ROWS = {
-  L3: [{ side: 'Port', rod: 'R3', lure: 'A-Rig Heavy (~3.5oz) – 5" Swimbait', reel: '' },
+  L3: [{ side: 'Port', rod: 'R3', lure: 'A-Rig – four 3/4oz heads, 1oz middle (~5.6oz)', reel: '' },
        { side: 'Stbd', rod: 'R4', lure: 'Nichols Lake Fork Flutter Spoon 5" 1-1/8oz (FS14-118)', reel: '' }],
   L13: [{ side: 'Port', rod: 'R5', lure: 'SPRO Prime Bucktail Jig 3oz (SBTJ-3)', reel: '' },
         { side: 'Stbd', rod: 'R6', lure: 'Swimbait 5" – Jighead', reel: '' }],
@@ -35,12 +35,12 @@ test('every row of the 10/2 Moultrie plan says what its rod carries', () => {
 
 test('a snap bait on a leader rod reads leader, and a leader bait on a snap rod reads snap', () => {
   assert.match(reelForRod('R4', 'Nichols Lake Fork Flutter Spoon 5" 1-1/8oz (FS14-118)'), LEADER);
-  assert.match(reelForRod('R3', 'A-Rig Heavy (~3.5oz) – 5" Swimbait'), LEADER);
+  assert.match(reelForRod('R3', 'A-Rig – four 3/4oz heads, 1oz middle (~5.6oz)'), LEADER);
   assert.match(reelForRod('R5', 'SPRO Prime Bucktail Jig 3oz (SBTJ-3)'), SNAP);
   assert.match(reelForRod('R6', 'Swimbait 5" – Jighead'), SNAP);
 });
 
 test('a row with no rod id -- the hand-built spread table -- keeps the old guess', () => {
-  assert.equal(reelForRod('', 'A-Rig Heavy (~3.5oz) – 5" Swimbait'), reelForLure('A-Rig Heavy (~3.5oz) – 5" Swimbait'));
+  assert.equal(reelForRod('', 'A-Rig – four 3/4oz heads, 1oz middle (~5.6oz)'), reelForLure('A-Rig – four 3/4oz heads, 1oz middle (~5.6oz)'));
   assert.equal(reelForRod(undefined, '1/2oz Spinnerbait'), reelForLure('1/2oz Spinnerbait'));
 });

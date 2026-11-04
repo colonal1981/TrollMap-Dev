@@ -33,7 +33,7 @@ const TIE3 = 'MR Crankbait (6-12ft)';
 const TIE4 = 'SR Crankbait (3-5ft)';
 const TIE5 = '3/8oz Spinnerbait';
 const SNAP = 'Nichols Lake Fork Flutter Spoon 3/4oz';
-const SNAP2 = 'A-Rig Medium (~2.65oz) – 4.6" Swimbait';
+const SNAP2 = 'A-Rig – five 1/2oz heads (~4.1oz)';
 
 const CONN = {
   [TIE]: 'tie', [TIE2]: 'tie', [TIE3]: 'tie', [TIE4]: 'tie', [TIE5]: 'tie',

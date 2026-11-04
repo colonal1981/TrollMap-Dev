@@ -79,17 +79,20 @@ const AS_BOUGHT = [
     type:'blade_vibe', trollable:true, castable:true, weightOz:0.5, sizes:['3"'] },
 
   // ── A-Rigs / Umbrella Rigs ────────────────────────────────────────────────
-  { id:'arig_light',  name:'A-Rig Light (~1.65oz) – 3.8" Swimbait',
-    type:'umbrella_rig', trollable:true, castable:true, weightOz:1.65,
-    sizes:['3.8"'] },
+  // ONE RIG, WEIGHTED THREE WAYS. Ryan, 2026-11-04: "this is the only a-rig i buy and the lightest
+  // jigs heads i have are 3/8oz", a 1.6 oz frame with 4 blades and 5 baits; "the heaviest i would
+  // run probably is 4 3/4oz weights with a 1oz in the middle"; and, asked for a third, five 1/2 oz
+  // heads. weightOz is the frame plus its five heads; the plastics are not weighed. The ids are
+  // kept. The 1.65 / 2.65 / 3.5 oz rigs they used to name came with the first upload and are not
+  // his; replaceShippedBuiltins() below brings a saved tackle box over.
+  { id:'arig_light',  name:'A-Rig – five 3/8oz heads (~3.5oz)',
+    type:'umbrella_rig', trollable:true, castable:true, weightOz: 1.6 + 5 * 0.375 },
 
-  { id:'arig_medium', name:'A-Rig Medium (~2.65oz) – 4.6" Swimbait',
-    type:'umbrella_rig', trollable:true, castable:true, weightOz:2.65,
-    sizes:['4.6"'] },
+  { id:'arig_medium', name:'A-Rig – five 1/2oz heads (~4.1oz)',
+    type:'umbrella_rig', trollable:true, castable:true, weightOz: 1.6 + 5 * 0.5 },
 
-  { id:'arig_heavy',  name:'A-Rig Heavy (~3.5oz) – 5" Swimbait',
-    type:'umbrella_rig', trollable:true, castable:true, weightOz:3.5,
-    sizes:['5"'] },
+  { id:'arig_heavy',  name:'A-Rig – four 3/4oz heads, 1oz middle (~5.6oz)',
+    type:'umbrella_rig', trollable:true, castable:true, weightOz: 1.6 + 4 * 0.75 + 1 },
 
   // ── Swimbaits (Paddle Tail) ───────────────────────────────────────────────
   { id:'swimbait_3in', name:'Swimbait 3.8" – Jighead',
@@ -436,12 +439,47 @@ async function mergeNewBuiltins(saved) {
   return merged;
 }
 
+/**
+ * A BUILT-IN REPLACED IN PLACE REACHES A SAVED BOX ONLY IF IT IS STILL AS IT SHIPPED.
+ *
+ * mergeNewBuiltins() adds ids the box has never had and never touches one it has, so on
+ * 2026-11-04 his saved box would have kept the three A-rigs he does not run. An entry whose name
+ * and weight are still exactly what shipped takes the new name and weight (and loses the old
+ * swimbait size); anything else on it is kept. An entry he edited is left as he left it.
+ */
+const SHIPPED_BEFORE = {
+  arig_light:  { name: 'A-Rig Light (~1.65oz) – 3.8" Swimbait', weightOz: 1.65 },
+  arig_medium: { name: 'A-Rig Medium (~2.65oz) – 4.6" Swimbait', weightOz: 2.65 },
+  arig_heavy:  { name: 'A-Rig Heavy (~3.5oz) – 5" Swimbait', weightOz: 3.5 },
+};
+
+export function replaceShippedBuiltins(saved) {
+  let changed = 0;
+  const inventory = saved.map((l) => {
+    const was = SHIPPED_BEFORE[l?.id];
+    const now = was && TACKLE_INVENTORY.find((b) => b.id === l.id);
+    if (!now || l.name !== was.name || l.weightOz !== was.weightOz) return l;
+    changed++;
+    const { sizes, ...kept } = l;
+    return { ...kept, name: now.name, weightOz: now.weightOz };
+  });
+  return { inventory, changed };
+}
+
 export async function getInventory() {
   if (_inventory) return _inventory;
   const saved = await idbLoad();
-  _inventory = saved ? await mergeNewBuiltins(saved)
-                     : JSON.parse(JSON.stringify(TACKLE_INVENTORY));
-  if (!saved) await idbPut(IDB_SEEN_KEY, TACKLE_INVENTORY.map(l => l.id));
+  if (saved) {
+    const r = replaceShippedBuiltins(await mergeNewBuiltins(saved));
+    if (r.changed) {
+      await saveInventory(r.inventory);
+      console.log(`[tackle-inventory] brought ${r.changed} A-rig(s) in the saved box over to his rigs`);
+    }
+    _inventory = r.inventory;
+    return _inventory;
+  }
+  _inventory = JSON.parse(JSON.stringify(TACKLE_INVENTORY));
+  await idbPut(IDB_SEEN_KEY, TACKLE_INVENTORY.map(l => l.id));
   return _inventory;
 }
 

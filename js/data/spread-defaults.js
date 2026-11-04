@@ -16,14 +16,14 @@ export const DEFAULT_SPREAD = [
   newRodRow({
     side: 'Port', position: 'Bow',
     reel: 'Spinning / 30lb 8-strand braid + 20lb fluoro leader',
-    lure: 'A-Rig Medium (~2.65oz) – 4.6" Swimbait',
+    lure: 'A-Rig – five 1/2oz heads (~4.1oz)',
     color: 'Blueback Herring', depth: '25', lead: '95',
     notes: 'Port ledge channel',
   }),
   newRodRow({
     side: 'Starboard', position: 'Bow',
     reel: 'Spinning / 30lb 8-strand braid + 20lb fluoro leader',
-    lure: 'A-Rig Medium (~2.65oz) – 4.6" Swimbait',
+    lure: 'A-Rig – five 1/2oz heads (~4.1oz)',
     color: 'Natural Pearl / Smoke', depth: '25', lead: '95',
     notes: 'Starboard ledge',
   }),

@@ -33,9 +33,9 @@ export const REEL_PRESETS = [
 
 export const LURE_PRESETS = [
   '— A-Rigs —',
-  'A-Rig Light (~1.65oz) – 3.8" Swimbait',
-  'A-Rig Medium (~2.65oz) – 4.6" Swimbait',
-  'A-Rig Heavy (~3.5oz) – 5" Swimbait',
+  'A-Rig – five 3/8oz heads (~3.5oz)',
+  'A-Rig – five 1/2oz heads (~4.1oz)',
+  'A-Rig – four 3/4oz heads, 1oz middle (~5.6oz)',
   '— Crankbaits —',
   'Squarebill Crankbait',
   'SR Crankbait (3-5ft)',
@@ -358,8 +358,8 @@ function wireButtons() {
 
   document.getElementById('fillDefaultSpreadBtn')?.addEventListener('click', () => {
     state.SPREAD = [
-      newRodRow({ side: 'Port', position: 'Bow', reel: 'Spinning / 30lb 8-strand braid + 20lb fluoro leader', lure: 'A-Rig Medium (~2.65oz) – 4.6" Swimbait', color: 'Blueback Herring', depth: '25', lead: '95', notes: 'Port ledge channel' }),
-      newRodRow({ side: 'Starboard', position: 'Bow', reel: 'Spinning / 30lb 8-strand braid + 20lb fluoro leader', lure: 'A-Rig Medium (~2.65oz) – 4.6" Swimbait', color: 'Natural Pearl / Smoke', depth: '25', lead: '95', notes: 'Starboard ledge' }),
+      newRodRow({ side: 'Port', position: 'Bow', reel: 'Spinning / 30lb 8-strand braid + 20lb fluoro leader', lure: 'A-Rig – five 1/2oz heads (~4.1oz)', color: 'Blueback Herring', depth: '25', lead: '95', notes: 'Port ledge channel' }),
+      newRodRow({ side: 'Starboard', position: 'Bow', reel: 'Spinning / 30lb 8-strand braid + 20lb fluoro leader', lure: 'A-Rig – five 1/2oz heads (~4.1oz)', color: 'Natural Pearl / Smoke', depth: '25', lead: '95', notes: 'Starboard ledge' }),
       newRodRow({ side: 'Port', position: 'Mid', reel: 'Spinning / 30lb 8-strand braid + 20lb fluoro leader', lure: 'MR Crankbait (6-12ft)', color: 'Blue / Silver Herring', depth: '10', lead: '30', notes: 'Port secondary bottom drop' }),
       newRodRow({ side: 'Starboard', position: 'Mid', reel: 'Spinning / 30lb 8-strand braid + 20lb fluoro leader', lure: 'MR Crankbait (6-12ft)', color: 'Sexy Shad', depth: '10', lead: '30', notes: 'Starboard secondary bottom drop' }),
       newRodRow({ side: 'Port', position: 'Stern', reel: 'Spinning / 30lb 8-strand braid directly tied to swivel snap', lure: 'Nichols Lake Fork Flutter Spoon 3/4oz', color: 'Shattered Glass Silver', depth: '32', lead: '112', notes: 'Port deep flutter tail' }),
