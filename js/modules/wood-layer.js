@@ -33,7 +33,15 @@ import { woodPieces, topToday, woodMarkLabel, markRadiusPx, readByText, kindText
 // a 10 px radius. The tallest piece on a water is drawn that size and every other piece by area
 // against it, so the wood sits in the range of everything else on the water.
 const MAX_PX = 10;
-const COLOR = '#a1887f';
+// A COLOUR NOTHING ELSE ON THE WATER USES. The depth shading (depth-palette.js) runs red, orange,
+// yellow, teal, cyan, blue, purple and white, and satellite water is near black with green and brown
+// banks, so a brown mark vanished into both. Magenta is in neither.
+const COLOR = '#ff1fd2';
+// AND AN EDGE THAT SHOWS ON ANY GROUND: a black halo drawn under each mark, with the mark's own
+// stroke down its middle -- white round a filled mark, magenta for a hollow one. Black|white|black
+// reads on the white deep band and on dark satellite water alike.
+const HALO = '#000';
+const HALO_W = 5;
 
 (function initWoodLayer() {
   if (typeof document === 'undefined' || !document.getElementById('btnWood')) return;
@@ -84,9 +92,13 @@ const COLOR = '#a1887f';
     for (const p of pieces) {
       const hollow = NO_TOP_KINDS.has(p.kind) || !Number.isFinite(p.heightFt);
       const top = topToday(p, below);
+      const radius = hollow ? MAX_PX : Math.max(1, markRadiusPx(p.heightFt, tallest, MAX_PX));
+      group.addLayer(L.circleMarker([p.at[1], p.at[0]], {
+        radius, color: HALO, weight: HALO_W, opacity: 0.9, fill: false, interactive: false,
+      }));
       const m = L.circleMarker([p.at[1], p.at[0]], {
-        radius: hollow ? MAX_PX : Math.max(1, markRadiusPx(p.heightFt, tallest, MAX_PX)),
-        color: COLOR, weight: 2, fillColor: COLOR, fillOpacity: hollow ? 0 : 0.85,
+        radius, color: hollow ? COLOR : '#fff', weight: hollow ? 2.5 : 1.5, opacity: 1,
+        fillColor: COLOR, fillOpacity: hollow ? 0 : 0.9,
       });
       const label = hollow ? '' : woodMarkLabel(top);
       if (label) {
