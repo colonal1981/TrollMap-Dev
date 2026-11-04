@@ -732,7 +732,9 @@ export async function showConditionsFor(rec, opts = {}) {
   // the same river and look like it worked.
   const key = `${rec.slug}|${activeRamp ? activeRamp.name : ''}`;
   const hit = cache.get(key);
-  if (hit && Date.now() - hit.at < CACHE_MS && !opts.force) { paint(rec, hit.c); return hit.c; }
+  if (hit && Date.now() - hit.at < CACHE_MS && !opts.force) {
+    paint(rec, hit.c); conditionsRead(rec.slug, hit.c); return hit.c;
+  }
 
   paint(rec, { ok: true, pending: 'reading…' });
   const worker = CF_WORKER_URL || window.CF_WORKER_URL;
@@ -747,7 +749,25 @@ export async function showConditionsFor(rec, opts = {}) {
   if (mine !== seq || lastSlug !== rec.slug) return c;
   cache.set(key, { at: Date.now(), c });
   paint(rec, c);
+  conditionsRead(rec.slug, c);
   return c;
+}
+
+/**
+ * WHAT THIS WATER'S CONDITIONS HOLD, FOR WHOEVER ELSE ON THE PAGE NEEDS THEM -- without a second
+ * fetch. The map's Wood button brings each piece's top to today's level off these (wood-layer.js).
+ * The last reading per slug, and an event when one arrives.
+ */
+const held = new Map();
+function conditionsRead(slug, c) {
+  if (!slug || !c || c.pending) return;
+  held.set(slug, c);
+  try { window.dispatchEvent(new CustomEvent('trollmap:conditions', { detail: { slug, c } })); }
+  catch (_) { /* no window in a test */ }
+}
+/** The last conditions read for `slug`, or null until they arrive. */
+export function heldConditions(slug) {
+  return held.get(slug) || null;
 }
 
 /** Resolve whatever the picker holds and show it. */

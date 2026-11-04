@@ -850,6 +850,9 @@ export async function planFromWater(o) {
     // could never fire. Over 15 sustained is a no-go for a 12.5 ft kayak whichever tab picked
     // the water.
     safety: args.safety,
+    // THE WOOD UNDER THE PASSES, read with the pack in plan-water-ui.js, for his rule. Smart Plan
+    // passes the same field. See plan-wood.js.
+    wood: o.wood || [],
   }));
 
   plan.notes = args.notes;

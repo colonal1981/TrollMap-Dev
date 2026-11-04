@@ -304,6 +304,7 @@ describe('layer-registry — migrated modules keep no private visibility state',
     'js/modules/gis-toggles.js', 'js/modules/coastal-layers.js',
     'js/modules/ramps.js', 'js/modules/catch-plot.js',
     'js/modules/osm-structure.js',
+    'js/modules/wood-layer.js',
     // casting-rings.js was here until 2026-08-07. Ryan: "cast rings can get completely
     // deleted when we have time." Superseded by the structure pipeline and the Garmin POIs.
   ];

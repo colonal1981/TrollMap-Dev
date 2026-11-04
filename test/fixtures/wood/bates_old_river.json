@@ -1,0 +1,583 @@
+{
+ "_note": "Personal use only, not for distribution or resale; not for navigation. Wood in Bates Old River from the 10/31 and 11/1 recordings: the finder (side imaging, several passes) placed each piece; ClearVu read by eye where a pass went over it. 10/31 reads stand on his answer of 11/1 (\"the ones that look like stumps and trees are stumps and trees\"). Bates has no level gauge in the app: depths are as read, on the day.",
+ "slug": "bates_old_river",
+ "level": null,
+ "pieces": [
+  {
+   "id": "bates_old_river-1",
+   "lat": 33.78527,
+   "lon": -80.635729,
+   "kind": "wood",
+   "what": "stumps and limbs over 16 m; 4 ft over 7 mid-patch",
+   "his_mark": null,
+   "seen": "10/31, 11/1",
+   "reads": [
+    {
+     "at": "2026-10-31T15:47:13-04:00",
+     "top_ft": 2.0,
+     "bottom_ft": 5.5,
+     "level_ft": null,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": true,
+     "note": "stumps or limbs, top 2 ft down over 5.5 ft",
+     "below_full_pool_ft": null,
+     "read_by": [
+      "desktop"
+     ]
+    },
+    {
+     "at": "2026-11-01T14:31:49-05:00",
+     "top_ft": 4.2,
+     "bottom_ft": 7.0,
+     "level_ft": null,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "note": "limbs to about 4 ft down over 7 ft, 1.3 m off its middle",
+     "below_full_pool_ft": null,
+     "read_by": [
+      "desktop"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "bates_old_river-2",
+   "lat": 33.785174,
+   "lon": -80.635799,
+   "kind": "no_height",
+   "what": "never gone over",
+   "his_mark": null,
+   "seen": "side imaging only (10/31 finder)",
+   "reads": []
+  },
+  {
+   "id": "bates_old_river-3",
+   "lat": 33.78529,
+   "lon": -80.63602,
+   "kind": "low_wood",
+   "what": "low lumps, under 1 ft",
+   "his_mark": null,
+   "seen": "10/31",
+   "reads": [
+    {
+     "at": "2026-10-31T18:02:22-04:00",
+     "top_ft": 4.0,
+     "bottom_ft": 5.0,
+     "level_ft": null,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": true,
+     "note": "low lumps, under 1 ft, over 5 ft",
+     "below_full_pool_ft": null,
+     "read_by": [
+      "desktop"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "bates_old_river-4",
+   "lat": 33.78538,
+   "lon": -80.636,
+   "kind": "low_wood",
+   "what": "low lumps, under 1 ft",
+   "his_mark": null,
+   "seen": "10/31",
+   "reads": [
+    {
+     "at": "2026-10-31T18:04:06-04:00",
+     "top_ft": 4.5,
+     "bottom_ft": 5.5,
+     "level_ft": null,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": true,
+     "note": "low lumps, under 1 ft, over 5.5 ft",
+     "below_full_pool_ft": null,
+     "read_by": [
+      "desktop"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "bates_old_river-5",
+   "lat": 33.785377,
+   "lon": -80.635637,
+   "kind": "no_height",
+   "what": "never gone over",
+   "his_mark": null,
+   "seen": "side imaging only (10/31 finder)",
+   "reads": []
+  },
+  {
+   "id": "bates_old_river-7",
+   "lat": 33.785332,
+   "lon": -80.633839,
+   "kind": "low_wood",
+   "what": "a stump, 1-1.4 ft",
+   "his_mark": null,
+   "seen": "10/31, 11/1",
+   "reads": [
+    {
+     "at": "2026-10-31T17:09:23-04:00",
+     "top_ft": 3.0,
+     "bottom_ft": 4.4,
+     "level_ft": null,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": true,
+     "note": "a stump 1.4 ft over 4.4 ft; above it a broken column to 1.5 ft on both beams: fish or bait over it, or a thin limb",
+     "below_full_pool_ft": null,
+     "read_by": [
+      "desktop"
+     ]
+    },
+    {
+     "at": "2026-11-01T14:36:26-05:00",
+     "top_ft": 3.3,
+     "bottom_ft": 4.2,
+     "level_ft": null,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "note": "a stump about 1 ft tall, top 3.3 ft down over 4.2 ft, both passes",
+     "below_full_pool_ft": null,
+     "read_by": [
+      "desktop"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "bates_old_river-13",
+   "lat": 33.784862,
+   "lon": -80.631324,
+   "kind": "wood",
+   "what": "your 0023 A; solid to 9 ft, a limb tip at 5-6",
+   "his_mark": "your 0023 A",
+   "seen": "10/31",
+   "reads": [
+    {
+     "at": "2026-10-31T17:54:23-04:00",
+     "top_ft": 5.0,
+     "bottom_ft": 11.4,
+     "level_ft": null,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": true,
+     "note": "snag to 9 ft over 11.4; a thin upright mark at 5-6 ft, likely a limb tip",
+     "below_full_pool_ft": null,
+     "read_by": [
+      "desktop"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "bates_old_river-14",
+   "lat": 33.78474,
+   "lon": -80.631327,
+   "kind": "no_height",
+   "what": "never gone over",
+   "his_mark": null,
+   "seen": "side imaging only (10/31 finder)",
+   "reads": []
+  },
+  {
+   "id": "bates_old_river-16",
+   "lat": 33.785085,
+   "lon": -80.629515,
+   "kind": "no_height",
+   "what": "never gone over",
+   "his_mark": null,
+   "seen": "side imaging only (10/31 finder)",
+   "reads": []
+  },
+  {
+   "id": "bates_old_river-18",
+   "lat": 33.784626,
+   "lon": -80.62848,
+   "kind": "wood",
+   "what": "a limb or log",
+   "his_mark": null,
+   "seen": "10/31",
+   "reads": [
+    {
+     "at": "2026-10-31T16:03:38-04:00",
+     "top_ft": 10.0,
+     "bottom_ft": 12.5,
+     "level_ft": null,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": true,
+     "note": "a limb or log rising to 10 ft over 12-13 ft",
+     "below_full_pool_ft": null,
+     "read_by": [
+      "desktop"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "bates_old_river-19",
+   "lat": 33.783907,
+   "lon": -80.627625,
+   "kind": "low_wood",
+   "what": "a log or mound about 2 ft high",
+   "his_mark": null,
+   "seen": "10/31, 11/1",
+   "reads": [
+    {
+     "at": "2026-10-31T16:05:58-04:00",
+     "top_ft": 14.0,
+     "bottom_ft": 16.0,
+     "level_ft": null,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": true,
+     "note": "a mound 2 ft high, top 14 ft down",
+     "below_full_pool_ft": null,
+     "read_by": [
+      "desktop"
+     ]
+    },
+    {
+     "at": "2026-11-01T16:30:33-05:00",
+     "top_ft": 15.0,
+     "bottom_ft": 17.0,
+     "level_ft": null,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "note": "a log lying about 2 ft off a 17 ft bottom, top about 15 ft down, 3 m off",
+     "below_full_pool_ft": null,
+     "read_by": [
+      "desktop"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "bates_old_river-20",
+   "lat": 33.782785,
+   "lon": -80.626706,
+   "kind": "low_wood",
+   "what": "limb tips under 1 ft; fish over it",
+   "his_mark": null,
+   "seen": "11/1",
+   "reads": [
+    {
+     "at": "2026-11-01T13:42:47-05:00",
+     "top_ft": 13.2,
+     "bottom_ft": 14.0,
+     "level_ft": null,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "note": "limb tips under 1 ft over 14 ft, 4 m off; fish arching at 8-11 ft over it on the CHIRP",
+     "below_full_pool_ft": null,
+     "read_by": [
+      "desktop"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "bates_old_river-21",
+   "lat": 33.782443,
+   "lon": -80.626534,
+   "kind": "no_height",
+   "what": "never gone over",
+   "his_mark": null,
+   "seen": "side imaging only (10/31 finder)",
+   "reads": []
+  },
+  {
+   "id": "bates_old_river-22",
+   "lat": 33.781986,
+   "lon": -80.626414,
+   "kind": "wood",
+   "what": "a log arching off the bottom",
+   "his_mark": null,
+   "seen": "10/31, 11/1",
+   "reads": [
+    {
+     "at": "2026-10-31T14:15:03-04:00",
+     "top_ft": 10.0,
+     "bottom_ft": 13.5,
+     "level_ft": null,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": true,
+     "note": "a log arching to 10 ft over 13.5 ft",
+     "below_full_pool_ft": null,
+     "read_by": [
+      "desktop"
+     ]
+    },
+    {
+     "at": "2026-11-01T13:44:34-05:00",
+     "top_ft": 10.1,
+     "bottom_ft": 13.5,
+     "level_ft": null,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "note": "a log arching to 10 ft down over 13.5 ft, both passes",
+     "below_full_pool_ft": null,
+     "read_by": [
+      "desktop"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "bates_old_river-23",
+   "lat": 33.781897,
+   "lon": -80.62646,
+   "kind": "wood",
+   "what": "your 0022 B",
+   "his_mark": "your 0022 B",
+   "seen": "10/31, 11/1",
+   "reads": [
+    {
+     "at": "2026-10-31T16:11:13-04:00",
+     "top_ft": 10.5,
+     "bottom_ft": 13.0,
+     "level_ft": null,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": true,
+     "note": "a tree, top 10.5 ft down over 13 ft",
+     "below_full_pool_ft": null,
+     "read_by": [
+      "desktop"
+     ]
+    },
+    {
+     "at": "2026-11-01T16:25:07-05:00",
+     "top_ft": 10.3,
+     "bottom_ft": 13.5,
+     "level_ft": null,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "note": "a limb, top 10.3 ft down over 13.5 ft, both passes",
+     "below_full_pool_ft": null,
+     "read_by": [
+      "desktop"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "bates_old_river-24",
+   "lat": 33.781793,
+   "lon": -80.626652,
+   "kind": "no_height",
+   "what": "your 0022 A, the laydown; never gone over",
+   "his_mark": "your 0022 A, the laydown",
+   "seen": "side imaging only (10/31 finder)",
+   "reads": []
+  },
+  {
+   "id": "bates_old_river-25",
+   "lat": 33.781013,
+   "lon": -80.626232,
+   "kind": "wood",
+   "what": "a forked limb",
+   "his_mark": null,
+   "seen": "10/31, 11/1",
+   "reads": [
+    {
+     "at": "2026-10-31T17:41:53-04:00",
+     "top_ft": 7.0,
+     "bottom_ft": 9.0,
+     "level_ft": null,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": true,
+     "note": "a forked limb, top 7 ft down over 9 ft",
+     "below_full_pool_ft": null,
+     "read_by": [
+      "desktop"
+     ]
+    },
+    {
+     "at": "2026-11-01T16:07:16-05:00",
+     "top_ft": 7.0,
+     "bottom_ft": 9.0,
+     "level_ft": null,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "note": "a forked limb, top 7 ft down over 9 ft, both passes",
+     "below_full_pool_ft": null,
+     "read_by": [
+      "desktop"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "bates_old_river-26",
+   "lat": 33.78055,
+   "lon": -80.625889,
+   "kind": "no_height",
+   "what": "never gone over",
+   "his_mark": null,
+   "seen": "side imaging only (10/31 finder)",
+   "reads": []
+  },
+  {
+   "id": "bates_old_river-27",
+   "lat": 33.780525,
+   "lon": -80.625894,
+   "kind": "no_height",
+   "what": "never gone over",
+   "his_mark": null,
+   "seen": "side imaging only (10/31 finder)",
+   "reads": []
+  },
+  {
+   "id": "bates_old_river-28",
+   "lat": 33.779723,
+   "lon": -80.626199,
+   "kind": "low_wood",
+   "what": "a log on the bottom",
+   "his_mark": null,
+   "seen": "10/31",
+   "reads": [
+    {
+     "at": "2026-10-31T16:16:12-04:00",
+     "top_ft": 6.6,
+     "bottom_ft": 7.8,
+     "level_ft": null,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": true,
+     "note": "a log on the bottom, 1.2 ft, top 6.6 ft down",
+     "below_full_pool_ft": null,
+     "read_by": [
+      "desktop"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "bates_old_river-29",
+   "lat": 33.778837,
+   "lon": -80.625955,
+   "kind": "wood",
+   "what": "your 0021 A; 11/1: 3.7 over 6 on its shallow side",
+   "his_mark": "your 0021 A",
+   "seen": "10/31, 11/1",
+   "reads": [
+    {
+     "at": "2026-10-31T17:35:17-04:00",
+     "top_ft": 3.0,
+     "bottom_ft": 8.0,
+     "level_ft": null,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": true,
+     "note": "a tree, top 3 ft down over 8 ft (two passes agree)",
+     "below_full_pool_ft": null,
+     "read_by": [
+      "desktop"
+     ]
+    },
+    {
+     "at": "2026-11-01T13:55:11-05:00",
+     "top_ft": 3.7,
+     "bottom_ft": 6.0,
+     "level_ft": null,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "note": "limbs to 3.7 ft down over 6 ft, both passes, 5-6 m from its middle",
+     "below_full_pool_ft": null,
+     "read_by": [
+      "desktop"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "bates_old_river-30",
+   "lat": 33.778748,
+   "lon": -80.626066,
+   "kind": "low_wood",
+   "what": "your 0021 B; low limbs",
+   "his_mark": "your 0021 B",
+   "seen": "10/31, 11/1",
+   "reads": [
+    {
+     "at": "2026-10-31T17:34:02-04:00",
+     "top_ft": 5.0,
+     "bottom_ft": 6.5,
+     "level_ft": null,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": true,
+     "note": "low limbs to 5 ft down over 6.5 ft; above them a broken column to 2.5 ft on both beams: fish over it, or a thin limb",
+     "below_full_pool_ft": null,
+     "read_by": [
+      "desktop"
+     ]
+    },
+    {
+     "at": "2026-11-01T14:02:20-05:00",
+     "top_ft": 4.5,
+     "bottom_ft": 5.5,
+     "level_ft": null,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "note": "low limbs to about 4.5 ft down over 5.5 ft, 3 m off",
+     "below_full_pool_ft": null,
+     "read_by": [
+      "desktop"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "bates_old_river-31",
+   "lat": 33.785415,
+   "lon": -80.633557,
+   "kind": "low_wood",
+   "what": "NEW: short stumps in a row",
+   "his_mark": null,
+   "seen": "11/1",
+   "reads": [
+    {
+     "at": "2026-11-01T14:37:00-05:00",
+     "top_ft": 2.8,
+     "bottom_ft": 3.6,
+     "level_ft": null,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "note": "NEW: short stumps in a row, the tallest about 1 ft, top 2.8 ft down in 3.6 ft, both passes",
+     "below_full_pool_ft": null,
+     "read_by": [
+      "desktop"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "bates_old_river-32",
+   "lat": 33.785152,
+   "lon": -80.630441,
+   "kind": "low_wood",
+   "what": "NEW: a stump under 1 ft",
+   "his_mark": null,
+   "seen": "11/1",
+   "reads": [
+    {
+     "at": "2026-11-01T12:41:14-05:00",
+     "top_ft": 5.5,
+     "bottom_ft": 6.2,
+     "level_ft": null,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "note": "NEW: a stump under 1 ft over 6.2 ft, a dotted column to 2.5 ft above it (fish or bait, or a thin limb); the other pass, 2 m off, shows nothing",
+     "below_full_pool_ft": null,
+     "read_by": [
+      "desktop"
+     ]
+    }
+   ]
+  }
+ ],
+ "_fields": {
+  "kind": "wood (stands 2 ft or more off the bottom), low_wood (under 2 ft), no_height (seen only off to the side by the side-imaging finder; never gone over), unsure (Claude's read and the desktop's differ, or neither could tell; no top)",
+  "reads[].top_ft / bottom_ft": "feet below the surface on the sounder at the time of the read (ClearVu, the kayak over it)",
+  "reads[].read_by": "claude_api = Claude through the Worker's /claude/look; desktop = the desktop Claude session reading the same picture",
+  "reads[].confirmed_by_ryan": "true where Ryan answered for that day's pictures (10/31: 'the ones that look like stumps and trees are stumps and trees')",
+  "reads[].level_ft / below_full_pool_ft": "the lake gauge at the read, where the app has one for this water; null where it has none",
+  "lat / lon": "the kayak's GPS fix when it was over the top (WGS84)"
+ }
+}
