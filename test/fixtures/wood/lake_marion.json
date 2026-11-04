@@ -1,0 +1,1383 @@
+{
+ "_note": "Personal use only, not for distribution or resale; not for navigation. Wood in lower Lake Marion off Rowland and White Oak from the 11/2 recordings: where the CHIRP stood 2 ft or more off a flat bottom, Claude read the ClearVu picture (answers.json) and I read it beside it (review_1102.json). Agreed pieces carry the top; the ones we differ on, or neither of us can tell, are \"unsure\" with no top. Fish we both called fish are left out.",
+ "slug": "lake_marion",
+ "level": {
+  "source": "USGS 02169921 00062, the NGVD29 series (the app reads the same gauge for Lake Marion; full pool 76.8 ft NGVD29)",
+  "datum": "NGVD29",
+  "full_pool_ft": 76.8,
+  "note": "level_ft is the gauge at the 15-minute reading nearest the read; below_full_pool_ft = 76.8 - level_ft. Today's top = top_ft - (feet below full pool today - below_full_pool_ft): a lake lower today brings the top nearer the surface."
+ },
+ "pieces": [
+  {
+   "id": "lake_marion-2026-11-02-m001",
+   "lat": 33.568357,
+   "lon": -80.211321,
+   "kind": "low_wood",
+   "reads": [
+    {
+     "at": "2026-11-02T13:59:19-05:00",
+     "top_ft": 8.2,
+     "bottom_ft": 9.8,
+     "level_ft": 74.35,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "picture": "m001",
+     "below_full_pool_ft": 2.45,
+     "level_at": "2026-11-02T14:00:00-05:00",
+     "read_by": [
+      "claude_api",
+      "desktop"
+     ],
+     "desktop": "agree: a stump about 2 ft in the middle (Claude took it for bait) and a limb at the left edge; both tops about 8 ft",
+     "claude_api": {
+      "kind": "low_wood",
+      "top_ft": 8.2,
+      "confidence": "low",
+      "why": "The centre blob shows in ClearVu as a speckled column over a dip in the bed, which looks like bait rather than wood, while the thin arched limb joining the bed at the left edge (about -9 s) is wood standing only about 1.6 ft above the bed."
+     }
+    }
+   ]
+  },
+  {
+   "id": "lake_marion-2026-11-02-m002",
+   "lat": 33.560069,
+   "lon": -80.211124,
+   "kind": "wood",
+   "reads": [
+    {
+     "at": "2026-11-02T14:13:31-05:00",
+     "top_ft": 11.0,
+     "bottom_ft": 14.4,
+     "level_ft": 74.36,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "picture": "m002",
+     "below_full_pool_ft": 2.44,
+     "level_at": "2026-11-02T14:15:00-05:00",
+     "read_by": [
+      "claude_api",
+      "desktop"
+     ],
+     "desktop": "agree",
+     "claude_api": {
+      "kind": "wood",
+      "top_ft": 11.0,
+      "confidence": "high",
+      "why": "ClearVu shows a thin arching limb rising from a mound on the bed near 0 s to a top near 11 ft at about +2 s, matching the bed-joined CHIRP blob; the smaller spike at +7.5 s is shorter."
+     }
+    }
+   ]
+  },
+  {
+   "id": "lake_marion-2026-11-02-m003",
+   "lat": 33.55806,
+   "lon": -80.211974,
+   "kind": "wood",
+   "reads": [
+    {
+     "at": "2026-11-02T14:17:21-05:00",
+     "top_ft": 12.6,
+     "bottom_ft": 15.0,
+     "level_ft": 74.36,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "picture": "m003",
+     "below_full_pool_ft": 2.44,
+     "level_at": "2026-11-02T14:15:00-05:00",
+     "read_by": [
+      "claude_api",
+      "desktop"
+     ],
+     "desktop": "agree",
+     "claude_api": {
+      "kind": "wood",
+      "top_ft": 12.6,
+      "confidence": "high",
+      "why": "ClearVu shows thin, forked limbs and arches joined to the bed from about -5 s to +5 s, peaking near 12.6 ft over a 15 ft bed, which matches the CHIRP blob, so this is a submerged tree about 2.4 ft tall."
+     }
+    }
+   ]
+  },
+  {
+   "id": "lake_marion-2026-11-02-m004",
+   "lat": 33.557662,
+   "lon": -80.212082,
+   "kind": "low_wood",
+   "reads": [
+    {
+     "at": "2026-11-02T14:18:06-05:00",
+     "top_ft": 13.9,
+     "bottom_ft": 15.7,
+     "level_ft": 74.36,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "picture": "m004",
+     "below_full_pool_ft": 2.44,
+     "level_at": "2026-11-02T14:15:00-05:00",
+     "read_by": [
+      "claude_api",
+      "desktop"
+     ],
+     "desktop": "agree: about 2 ft, on the line",
+     "claude_api": {
+      "kind": "low_wood",
+      "top_ft": 13.9,
+      "confidence": "low",
+      "why": "ClearVu shows forked limbs arching up from the flat bed near -5 s to about 0 s, and their top reaches only about 13.9 ft over a 15.7 ft bed, which is just under 2 ft. CHIRP's fatter blob edge near 13.3 ft would make it borderline 'wood'."
+     }
+    }
+   ]
+  },
+  {
+   "id": "lake_marion-2026-11-02-m005",
+   "lat": 33.557446,
+   "lon": -80.212187,
+   "kind": "low_wood",
+   "reads": [
+    {
+     "at": "2026-11-02T14:18:31-05:00",
+     "top_ft": 14.3,
+     "bottom_ft": 15.9,
+     "level_ft": 74.36,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "picture": "m005",
+     "below_full_pool_ft": 2.44,
+     "level_at": "2026-11-02T14:15:00-05:00",
+     "read_by": [
+      "claude_api",
+      "desktop"
+     ],
+     "desktop": "agree",
+     "claude_api": {
+      "kind": "low_wood",
+      "top_ft": 14.3,
+      "confidence": "low",
+      "why": "From about +4 to +10 s, ClearVu shows a solid branched shape and a leaning limb joined to a flat bed, topping near 14.3 ft (about 1.6 ft above the bed), with only scattered fish or bait specks rising higher to about 11.7 ft."
+     }
+    }
+   ]
+  },
+  {
+   "id": "lake_marion-2026-11-02-m006",
+   "lat": 33.557408,
+   "lon": -80.212213,
+   "kind": "low_wood",
+   "reads": [
+    {
+     "at": "2026-11-02T14:18:36-05:00",
+     "top_ft": 14.4,
+     "bottom_ft": 15.9,
+     "level_ft": 74.36,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "picture": "m006",
+     "below_full_pool_ft": 2.44,
+     "level_at": "2026-11-02T14:15:00-05:00",
+     "read_by": [
+      "claude_api",
+      "desktop"
+     ],
+     "desktop": "agree",
+     "claude_api": {
+      "kind": "low_wood",
+      "top_ft": 14.4,
+      "confidence": "medium",
+      "why": "ClearVu shows a solid forked arch joining the bed from about -1 to +5 s that peaks near 14.4 ft, only about 1.5 ft above the 15.9 ft bed; the speckled column above it is fish or bait over the wood."
+     }
+    }
+   ]
+  },
+  {
+   "id": "lake_marion-2026-11-02-m007",
+   "lat": 33.554628,
+   "lon": -80.213434,
+   "kind": "wood",
+   "reads": [
+    {
+     "at": "2026-11-02T14:24:19-05:00",
+     "top_ft": 13.9,
+     "bottom_ft": 16.4,
+     "level_ft": 74.36,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "picture": "m007",
+     "below_full_pool_ft": 2.44,
+     "level_at": "2026-11-02T14:30:00-05:00",
+     "read_by": [
+      "claude_api",
+      "desktop"
+     ],
+     "desktop": "agree",
+     "claude_api": {
+      "kind": "wood",
+      "top_ft": 13.9,
+      "confidence": "high",
+      "why": "Both views show a branching, limb-like structure joined to the bed near +2 s, rising about 2.5 ft to roughly 13.9 ft; the speck column at +7\u20138 s is bait or fish with no tall solid shape under it."
+     }
+    }
+   ]
+  },
+  {
+   "id": "lake_marion-2026-11-02-m008",
+   "lat": 33.547808,
+   "lon": -80.2173,
+   "kind": "wood",
+   "reads": [
+    {
+     "at": "2026-11-02T14:42:05-05:00",
+     "top_ft": 18.0,
+     "bottom_ft": 20.1,
+     "level_ft": 74.37,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "picture": "m008",
+     "below_full_pool_ft": 2.43,
+     "level_at": "2026-11-02T14:45:00-05:00",
+     "read_by": [
+      "claude_api",
+      "desktop"
+     ],
+     "desktop": "agree",
+     "claude_api": {
+      "kind": "wood",
+      "top_ft": 18.0,
+      "confidence": "medium",
+      "why": "ClearVu shows a narrow forked trunk-like shape joined to the bed at about 0 s, rising to about 18 ft over a bed near 20.1 ft (roughly 2 ft tall), and it matches the CHIRP blob."
+     }
+    }
+   ]
+  },
+  {
+   "id": "lake_marion-2026-11-02-m009",
+   "lat": 33.546725,
+   "lon": -80.218074,
+   "kind": "wood",
+   "reads": [
+    {
+     "at": "2026-11-02T14:45:05-05:00",
+     "top_ft": 18.9,
+     "bottom_ft": 21.6,
+     "level_ft": 74.37,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "picture": "m009",
+     "below_full_pool_ft": 2.43,
+     "level_at": "2026-11-02T14:45:00-05:00",
+     "read_by": [
+      "claude_api",
+      "desktop"
+     ],
+     "desktop": "agree",
+     "claude_api": {
+      "kind": "wood",
+      "top_ft": 18.9,
+      "confidence": "medium",
+      "why": "ClearVu shows a thin vertical trunk with a forked base joining the bed near +1 s, rising to about 18.9 ft over a 21.6 ft bed, and CHIRP shows a matching blob joined to the bed; the floating mark at 17\u201318 ft is separate fish or bait, and the smooth slanted band on the left is most likely a side bank or slope."
+     }
+    }
+   ]
+  },
+  {
+   "id": "lake_marion-2026-11-02-m010",
+   "lat": 33.542871,
+   "lon": -80.220151,
+   "kind": "low_wood",
+   "reads": [
+    {
+     "at": "2026-11-02T14:54:57-05:00",
+     "top_ft": 20.8,
+     "bottom_ft": 21.9,
+     "level_ft": 74.37,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "picture": "m010",
+     "below_full_pool_ft": 2.43,
+     "level_at": "2026-11-02T15:00:00-05:00",
+     "read_by": [
+      "claude_api",
+      "desktop"
+     ],
+     "desktop": "agree",
+     "claude_api": {
+      "kind": "low_wood",
+      "top_ft": 20.8,
+      "confidence": "medium",
+      "why": "At about +6 s ClearVu shows a thin slanted limb joined to the bed and CHIRP shows a matching bed-attached blob, standing only about 1.1 ft above the 21.9 ft bed; the arches near 0 s are fish suspended in the water, not wood."
+     }
+    }
+   ]
+  },
+  {
+   "id": "lake_marion-2026-11-02-m011",
+   "lat": 33.537732,
+   "lon": -80.220249,
+   "kind": "wood",
+   "reads": [
+    {
+     "at": "2026-11-02T15:04:14-05:00",
+     "top_ft": 20.5,
+     "bottom_ft": 23.6,
+     "level_ft": 74.37,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "picture": "m011",
+     "below_full_pool_ft": 2.43,
+     "level_at": "2026-11-02T15:00:00-05:00",
+     "read_by": [
+      "claude_api",
+      "desktop"
+     ],
+     "desktop": "agree",
+     "claude_api": {
+      "kind": "wood",
+      "top_ft": 20.5,
+      "confidence": "high",
+      "why": "ClearVu shows a solid vertical column joined to the bed at about 0 s, rising roughly 3 ft to 20.5 ft, matching the CHIRP blob, so it is a standing stump or trunk rather than fish."
+     }
+    }
+   ]
+  },
+  {
+   "id": "lake_marion-2026-11-02-m013",
+   "lat": 33.529913,
+   "lon": -80.216604,
+   "kind": "low_wood",
+   "reads": [
+    {
+     "at": "2026-11-02T15:20:41-05:00",
+     "top_ft": 22.3,
+     "bottom_ft": 23.7,
+     "level_ft": 74.37,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "picture": "m013",
+     "below_full_pool_ft": 2.43,
+     "level_at": "2026-11-02T15:15:00-05:00",
+     "read_by": [
+      "claude_api",
+      "desktop"
+     ],
+     "desktop": "agree",
+     "claude_api": {
+      "kind": "low_wood",
+      "top_ft": 22.3,
+      "confidence": "medium",
+      "why": "ClearVu shows a small forked limb at about +1 s rising from the bed to about 22.3 ft, roughly 1.4 ft tall, matching the CHIRP mound, while the dotted column at +6 s has no solid shape under it and looks like bait."
+     }
+    }
+   ]
+  },
+  {
+   "id": "lake_marion-2026-11-02-m014",
+   "lat": 33.529021,
+   "lon": -80.216034,
+   "kind": "low_wood",
+   "reads": [
+    {
+     "at": "2026-11-02T15:22:35-05:00",
+     "top_ft": 24.6,
+     "bottom_ft": 25.5,
+     "level_ft": 74.38,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "picture": "m014",
+     "below_full_pool_ft": 2.42,
+     "level_at": "2026-11-02T15:30:00-05:00",
+     "read_by": [
+      "claude_api",
+      "desktop"
+     ],
+     "desktop": "agree",
+     "claude_api": {
+      "kind": "low_wood",
+      "top_ft": 24.6,
+      "confidence": "medium",
+      "why": "ClearVu shows two short, thin stick shapes joined to the bed near -2 s and -0.2 s, the taller rising only about 0.9 ft; the high speck column is bait and the arch at +8 s is a fish."
+     }
+    }
+   ]
+  },
+  {
+   "id": "lake_marion-2026-11-02-m015",
+   "lat": 33.528737,
+   "lon": -80.215901,
+   "kind": "wood",
+   "reads": [
+    {
+     "at": "2026-11-02T15:23:01-05:00",
+     "top_ft": 21.1,
+     "bottom_ft": 26.2,
+     "level_ft": 74.38,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "picture": "m015",
+     "below_full_pool_ft": 2.42,
+     "level_at": "2026-11-02T15:30:00-05:00",
+     "read_by": [
+      "claude_api",
+      "desktop"
+     ],
+     "desktop": "agree",
+     "claude_api": {
+      "kind": "wood",
+      "top_ft": 21.1,
+      "confidence": "high",
+      "why": "ClearVu shows a solid upright column joined to the bed, rising from about 26.2 ft to about 21.1 ft, which matches the CHIRP blob and reads as a standing stump or trunk about 5 ft tall."
+     }
+    }
+   ]
+  },
+  {
+   "id": "lake_marion-2026-11-02-m016",
+   "lat": 33.528091,
+   "lon": -80.215676,
+   "kind": "unsure",
+   "reads": [
+    {
+     "at": "2026-11-02T15:23:56-05:00",
+     "top_ft": null,
+     "bottom_ft": 27.1,
+     "level_ft": 74.38,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "picture": "m016",
+     "below_full_pool_ft": 2.42,
+     "level_at": "2026-11-02T15:30:00-05:00",
+     "read_by": [
+      "claude_api"
+     ],
+     "desktop": "differ: fish near the bottom in the middle; Claude reported a small shape at the left edge",
+     "claude_api": {
+      "kind": "low_wood",
+      "top_ft": 25.5,
+      "confidence": "medium",
+      "why": "At the left edge, ClearVu shows a solid shape joined to the flat bed, standing about 1.6 ft high; the higher blobs near -2 s are detached arches and specks, so they are fish rather than wood."
+     }
+    }
+   ]
+  },
+  {
+   "id": "lake_marion-2026-11-02-m017",
+   "lat": 33.526896,
+   "lon": -80.215025,
+   "kind": "unsure",
+   "reads": [
+    {
+     "at": "2026-11-02T15:26:21-05:00",
+     "top_ft": null,
+     "bottom_ft": 27.4,
+     "level_ft": 74.38,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "picture": "m017",
+     "below_full_pool_ft": 2.42,
+     "level_at": "2026-11-02T15:30:00-05:00",
+     "read_by": [
+      "claude_api"
+     ],
+     "desktop": "differ: fish arches near the bottom; Claude said low wood, low confidence",
+     "claude_api": {
+      "kind": "low_wood",
+      "top_ft": 26.2,
+      "confidence": "low",
+      "why": "ClearVu shows a low solid clump joined to the bed near -3 s with a column of separate fish/bait specks above it, and CHIRP shows stacked fish arches rather than a single solid blob."
+     }
+    }
+   ]
+  },
+  {
+   "id": "lake_marion-2026-11-02-m018",
+   "lat": 33.526657,
+   "lon": -80.214902,
+   "kind": "wood",
+   "reads": [
+    {
+     "at": "2026-11-02T15:26:52-05:00",
+     "top_ft": 24.4,
+     "bottom_ft": 27.6,
+     "level_ft": 74.38,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "picture": "m018",
+     "below_full_pool_ft": 2.42,
+     "level_at": "2026-11-02T15:30:00-05:00",
+     "read_by": [
+      "claude_api",
+      "desktop"
+     ],
+     "desktop": "agree",
+     "claude_api": {
+      "kind": "wood",
+      "top_ft": 24.4,
+      "confidence": "medium",
+      "why": "ClearVu shows a solid tapered shape joined to the bed near -1 s and rising to about 24.4 ft. The separate specks above it at 20\u201324 ft are fish or bait over the wood, matching the CHIRP blob."
+     }
+    }
+   ]
+  },
+  {
+   "id": "lake_marion-2026-11-02-m019",
+   "lat": 33.524917,
+   "lon": -80.213063,
+   "kind": "low_wood",
+   "reads": [
+    {
+     "at": "2026-11-02T15:37:16-05:00",
+     "top_ft": 26.9,
+     "bottom_ft": 27.8,
+     "level_ft": 74.38,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "picture": "m019",
+     "below_full_pool_ft": 2.42,
+     "level_at": "2026-11-02T15:30:00-05:00",
+     "read_by": [
+      "claude_api",
+      "desktop"
+     ],
+     "desktop": "agree",
+     "claude_api": {
+      "kind": "low_wood",
+      "top_ft": 26.9,
+      "confidence": "low",
+      "why": "The tall CHIRP blob is a dotted bait column in ClearVu that does not reach the bed, but a small solid shape joins the bed beneath it near -3 s and stands about 0.9 ft high; the +6 s ClearVu mark, if wood, would also be under 2 ft."
+     }
+    }
+   ]
+  },
+  {
+   "id": "lake_marion-2026-11-02-m020",
+   "lat": 33.524434,
+   "lon": -80.212868,
+   "kind": "wood",
+   "reads": [
+    {
+     "at": "2026-11-02T15:38:20-05:00",
+     "top_ft": 24.9,
+     "bottom_ft": 27.9,
+     "level_ft": 74.38,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "picture": "m020",
+     "below_full_pool_ft": 2.42,
+     "level_at": "2026-11-02T15:45:00-05:00",
+     "read_by": [
+      "claude_api",
+      "desktop"
+     ],
+     "desktop": "agree",
+     "claude_api": {
+      "kind": "wood",
+      "top_ft": 24.9,
+      "confidence": "medium",
+      "why": "ClearVu shows a solid, bright column rising from the bed at 0 s to about 24.9 ft, matching the CHIRP blob, so it is a stump about 3 ft tall; the arches near +8 s are only isolated specks in ClearVu and look like fish."
+     }
+    }
+   ]
+  },
+  {
+   "id": "lake_marion-2026-11-02-m021",
+   "lat": 33.522369,
+   "lon": -80.211909,
+   "kind": "wood",
+   "reads": [
+    {
+     "at": "2026-11-02T15:42:55-05:00",
+     "top_ft": 23.5,
+     "bottom_ft": 27.3,
+     "level_ft": 74.38,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "picture": "m021",
+     "below_full_pool_ft": 2.42,
+     "level_at": "2026-11-02T15:45:00-05:00",
+     "read_by": [
+      "claude_api",
+      "desktop"
+     ],
+     "desktop": "agree",
+     "claude_api": {
+      "kind": "wood",
+      "top_ft": 23.5,
+      "confidence": "medium",
+      "why": "ClearVu shows a solid, tapering upright shape joined to the bed from about 0 to +2 s, topping out near 23.5 ft, about 4 ft above the bed, which matches the bed-connected CHIRP blob; the scattered marks to the left are fish."
+     }
+    }
+   ]
+  },
+  {
+   "id": "lake_marion-2026-11-02-m022",
+   "lat": 33.51945,
+   "lon": -80.214532,
+   "kind": "low_wood",
+   "reads": [
+    {
+     "at": "2026-11-02T15:51:20-05:00",
+     "top_ft": 23.2,
+     "bottom_ft": 24.1,
+     "level_ft": 74.38,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "picture": "m022",
+     "below_full_pool_ft": 2.42,
+     "level_at": "2026-11-02T15:45:00-05:00",
+     "read_by": [
+      "claude_api",
+      "desktop"
+     ],
+     "desktop": "agree",
+     "claude_api": {
+      "kind": "low_wood",
+      "top_ft": 23.2,
+      "confidence": "medium",
+      "why": "ClearVu shows a short solid stub joined to the bed at about -0.3 s that rises only to about 23.2 ft, with a separate blob at 22\u201322.8 ft above it that is likely a fish holding over it (it matches CHIRP's upper arch)."
+     }
+    }
+   ]
+  },
+  {
+   "id": "lake_marion-2026-11-02-m023",
+   "lat": 33.518973,
+   "lon": -80.218523,
+   "kind": "low_wood",
+   "reads": [
+    {
+     "at": "2026-11-02T15:57:18-05:00",
+     "top_ft": 25.9,
+     "bottom_ft": 27.0,
+     "level_ft": 74.38,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "picture": "m023",
+     "below_full_pool_ft": 2.42,
+     "level_at": "2026-11-02T16:00:00-05:00",
+     "read_by": [
+      "claude_api",
+      "desktop"
+     ],
+     "desktop": "agree",
+     "claude_api": {
+      "kind": "low_wood",
+      "top_ft": 25.9,
+      "confidence": "medium",
+      "why": "ClearVu shows a narrow peaked shape joined to the bed at about -2.7 s, rising only about 1.1 ft, which matches the CHIRP hump; the specks at the right edge look like bait."
+     }
+    }
+   ]
+  },
+  {
+   "id": "lake_marion-2026-11-02-m024",
+   "lat": 33.518816,
+   "lon": -80.219385,
+   "kind": "wood",
+   "reads": [
+    {
+     "at": "2026-11-02T15:58:33-05:00",
+     "top_ft": 23.5,
+     "bottom_ft": 26.0,
+     "level_ft": 74.38,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "picture": "m024",
+     "below_full_pool_ft": 2.42,
+     "level_at": "2026-11-02T16:00:00-05:00",
+     "read_by": [
+      "claude_api",
+      "desktop"
+     ],
+     "desktop": "agree",
+     "claude_api": {
+      "kind": "wood",
+      "top_ft": 23.5,
+      "confidence": "high",
+      "why": "ClearVu shows a thin, forked shape joined to the bed near +1 s that rises to about 23.5 ft, roughly 2.5 ft above the 26 ft bed, and it matches the tall CHIRP blob there."
+     }
+    }
+   ]
+  },
+  {
+   "id": "lake_marion-2026-11-02-m025",
+   "lat": 33.518748,
+   "lon": -80.222771,
+   "kind": "wood",
+   "reads": [
+    {
+     "at": "2026-11-02T16:09:13-05:00",
+     "top_ft": 20.3,
+     "bottom_ft": 22.6,
+     "level_ft": 74.38,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "picture": "m025",
+     "below_full_pool_ft": 2.42,
+     "level_at": "2026-11-02T16:15:00-05:00",
+     "read_by": [
+      "claude_api",
+      "desktop"
+     ],
+     "desktop": "agree",
+     "claude_api": {
+      "kind": "wood",
+      "top_ft": 20.3,
+      "confidence": "medium",
+      "why": "ClearVu shows a solid arched limb whose legs join the bed and which rises to about 20.3 ft near +5 s, roughly 2.3 ft above the bed; the dotted column reaching about 19 ft near 0 s sits over that wood, so its top is not used."
+     }
+    }
+   ]
+  },
+  {
+   "id": "lake_marion-2026-11-02-m026",
+   "lat": 33.519521,
+   "lon": -80.218864,
+   "kind": "low_wood",
+   "reads": [
+    {
+     "at": "2026-11-02T16:15:15-05:00",
+     "top_ft": 26.0,
+     "bottom_ft": 26.6,
+     "level_ft": 74.38,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "picture": "m026",
+     "below_full_pool_ft": 2.42,
+     "level_at": "2026-11-02T16:15:00-05:00",
+     "read_by": [
+      "claude_api",
+      "desktop"
+     ],
+     "desktop": "agree: hardly anything there, under 1 ft",
+     "claude_api": {
+      "kind": "low_wood",
+      "top_ft": 26.0,
+      "confidence": "medium",
+      "why": "At about +7 s, ClearVu shows a short, thin spike joined to the bed that matches the CHIRP blob, standing only about 0.6 ft high, while the dotted column near -5 s has no solid shape under it and looks like bait."
+     }
+    }
+   ]
+  },
+  {
+   "id": "lake_marion-2026-11-02-m027",
+   "lat": 33.519694,
+   "lon": -80.21814,
+   "kind": "wood",
+   "reads": [
+    {
+     "at": "2026-11-02T16:16:19-05:00",
+     "top_ft": 24.4,
+     "bottom_ft": 27.0,
+     "level_ft": 74.38,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "picture": "m027",
+     "below_full_pool_ft": 2.42,
+     "level_at": "2026-11-02T16:15:00-05:00",
+     "read_by": [
+      "claude_api",
+      "desktop"
+     ],
+     "desktop": "agree",
+     "claude_api": {
+      "kind": "wood",
+      "top_ft": 24.4,
+      "confidence": "medium",
+      "why": "ClearVu shows a solid upright shape joined to the bed near -1 s, rising from about 27 ft to about 24.4 ft, with a dotted column of fish or bait above it."
+     }
+    }
+   ]
+  },
+  {
+   "id": "lake_marion-2026-11-02-m029",
+   "lat": 33.520091,
+   "lon": -80.213479,
+   "kind": "unsure",
+   "reads": [
+    {
+     "at": "2026-11-02T16:23:16-05:00",
+     "top_ft": null,
+     "bottom_ft": null,
+     "level_ft": 74.39,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "picture": "m029",
+     "below_full_pool_ft": 2.41,
+     "level_at": "2026-11-02T16:30:00-05:00",
+     "read_by": [
+      "claude_api"
+     ],
+     "desktop": "differ: several thin dotted lines standing from the bottom to 8-12 ft; I read standing timber, Claude bait",
+     "claude_api": {
+      "kind": "fish",
+      "top_ft": null,
+      "confidence": "medium",
+      "why": "From about -3 s to +5 s, scattered separate specks rise from 15.5 ft up to about 8 ft in both views, but neither view shows a solid trunk or limb joined to the smooth bed at about 15.7 ft, so this looks like bait or fish rather than wood."
+     }
+    }
+   ]
+  },
+  {
+   "id": "lake_marion-2026-11-02-m030",
+   "lat": 33.519997,
+   "lon": -80.21304,
+   "kind": "wood",
+   "reads": [
+    {
+     "at": "2026-11-02T16:23:54-05:00",
+     "top_ft": 7.6,
+     "bottom_ft": 15.7,
+     "level_ft": 74.39,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "picture": "m030",
+     "below_full_pool_ft": 2.41,
+     "level_at": "2026-11-02T16:30:00-05:00",
+     "read_by": [
+      "claude_api",
+      "desktop"
+     ],
+     "desktop": "agree: the same kind of thin lines as m029, which Claude called timber here",
+     "claude_api": {
+      "kind": "wood",
+      "top_ft": 7.6,
+      "confidence": "medium",
+      "why": "At the left edge, ClearVu shows near-continuous thin vertical lines that join the bed at about 15.7 ft and rise to about 7.6 ft, taller than the trunk-like line near 0 s that tops out around 10.4 ft."
+     }
+    }
+   ]
+  },
+  {
+   "id": "lake_marion-2026-11-02-m031",
+   "lat": 33.521468,
+   "lon": -80.212736,
+   "kind": "wood",
+   "reads": [
+    {
+     "at": "2026-11-02T16:26:42-05:00",
+     "top_ft": 17.7,
+     "bottom_ft": 22.2,
+     "level_ft": 74.39,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "picture": "m031",
+     "below_full_pool_ft": 2.41,
+     "level_at": "2026-11-02T16:30:00-05:00",
+     "read_by": [
+      "claude_api",
+      "desktop"
+     ],
+     "desktop": "agree",
+     "claude_api": {
+      "kind": "wood",
+      "top_ft": 17.7,
+      "confidence": "medium",
+      "why": "At about -6 s, ClearVu shows a solid column joined to the bed that rises to about 17.7 ft, matching a tall CHIRP blob; this is taller than the thin trunk at 0 s, which tops out near 20.3 ft."
+     }
+    }
+   ]
+  },
+  {
+   "id": "lake_marion-2026-11-02-m032",
+   "lat": 33.524211,
+   "lon": -80.214195,
+   "kind": "wood",
+   "reads": [
+    {
+     "at": "2026-11-02T16:30:02-05:00",
+     "top_ft": 21.4,
+     "bottom_ft": 23.8,
+     "level_ft": 74.39,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "picture": "m032",
+     "below_full_pool_ft": 2.41,
+     "level_at": "2026-11-02T16:30:00-05:00",
+     "read_by": [
+      "claude_api",
+      "desktop"
+     ],
+     "desktop": "agree",
+     "claude_api": {
+      "kind": "wood",
+      "top_ft": 21.4,
+      "confidence": "medium",
+      "why": "Near 0 s, ClearVu shows thin forked limbs joined to the bed rising to about 21.4 ft over a 23.8 ft bed, the tallest of several snags (the -8 s snag stands only about 1.8 ft above the bed), while the long smooth slanted line at +5 to +10 s follows the bed slope and is a side bank."
+     }
+    }
+   ]
+  },
+  {
+   "id": "lake_marion-2026-11-02-m033",
+   "lat": 33.524462,
+   "lon": -80.214259,
+   "kind": "unsure",
+   "reads": [
+    {
+     "at": "2026-11-02T16:30:23-05:00",
+     "top_ft": null,
+     "bottom_ft": 20.0,
+     "level_ft": 74.39,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "picture": "m033",
+     "below_full_pool_ft": 2.41,
+     "level_at": "2026-11-02T16:30:00-05:00",
+     "read_by": [
+      "claude_api"
+     ],
+     "desktop": "unsure: the picture does not reach the bottom, so the solid mass could be the bed rising",
+     "claude_api": {
+      "kind": "wood",
+      "top_ft": 14.2,
+      "confidence": "medium",
+      "why": "A solid mass rises from the bottom of the display (about 20 ft) to a peak near 14.2 ft at about -4.5 s, then slopes back down in both views, with a bright vertical trunk-like core in ClearVu, so it reads as a large standing tree or stump rather than a drop-off or fish."
+     }
+    }
+   ]
+  },
+  {
+   "id": "lake_marion-2026-11-02-m034",
+   "lat": 33.524171,
+   "lon": -80.214224,
+   "kind": "unsure",
+   "reads": [
+    {
+     "at": "2026-11-02T16:31:36-05:00",
+     "top_ft": null,
+     "bottom_ft": 23.0,
+     "level_ft": 74.39,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "picture": "m034",
+     "below_full_pool_ft": 2.41,
+     "level_at": "2026-11-02T16:30:00-05:00",
+     "read_by": [
+      "claude_api"
+     ],
+     "desktop": "unsure: a tall column 15-23 ft: a tree or a tight bait school",
+     "claude_api": {
+      "kind": "low_wood",
+      "top_ft": 21.8,
+      "confidence": "medium",
+      "why": "The tall column at 0 to +2 s is diffuse specks and floats off the bed in CHIRP, so it reads as bait; the only wood is a small arch joined to the bed near -5 s, standing about 1.2 ft high."
+     }
+    }
+   ]
+  },
+  {
+   "id": "lake_marion-2026-11-02-m035",
+   "lat": 33.524256,
+   "lon": -80.214243,
+   "kind": "unsure",
+   "reads": [
+    {
+     "at": "2026-11-02T16:33:08-05:00",
+     "top_ft": null,
+     "bottom_ft": 23.4,
+     "level_ft": 74.39,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "picture": "m035",
+     "below_full_pool_ft": 2.41,
+     "level_at": "2026-11-02T16:30:00-05:00",
+     "read_by": [
+      "claude_api"
+     ],
+     "desktop": "unsure: a tall column 16-23 ft: a tree or a tight bait school",
+     "claude_api": {
+      "kind": "low_wood",
+      "top_ft": 21.8,
+      "confidence": "medium",
+      "why": "ClearVu shows a solid arched limb joining the bed at about 0 s that rises only about 1.6 ft, while the tall speckled column at -5.5 s looks like bait over the bed rather than a trunk."
+     }
+    }
+   ]
+  },
+  {
+   "id": "lake_marion-2026-11-02-m036",
+   "lat": 33.524463,
+   "lon": -80.214372,
+   "kind": "wood",
+   "reads": [
+    {
+     "at": "2026-11-02T16:33:27-05:00",
+     "top_ft": 24.0,
+     "bottom_ft": 26.0,
+     "level_ft": 74.39,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "picture": "m036",
+     "below_full_pool_ft": 2.41,
+     "level_at": "2026-11-02T16:30:00-05:00",
+     "read_by": [
+      "claude_api",
+      "desktop"
+     ],
+     "desktop": "agree",
+     "claude_api": {
+      "kind": "wood",
+      "top_ft": 24.0,
+      "confidence": "medium",
+      "why": "At about +5 s, ClearVu shows a solid vertical column joined to the bed and rising about 2 ft to 24 ft, with a CHIRP blob and bait specks above it; the shape at about -7 s on the slope is only about 1 ft tall, and the marks near 0 s float free of the bed."
+     }
+    }
+   ]
+  },
+  {
+   "id": "lake_marion-2026-11-02-m037",
+   "lat": 33.524871,
+   "lon": -80.214722,
+   "kind": "unsure",
+   "reads": [
+    {
+     "at": "2026-11-02T16:34:10-05:00",
+     "top_ft": null,
+     "bottom_ft": 26.6,
+     "level_ft": 74.39,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "picture": "m037",
+     "below_full_pool_ft": 2.41,
+     "level_at": "2026-11-02T16:30:00-05:00",
+     "read_by": [
+      "claude_api"
+     ],
+     "desktop": "unsure: a tall column to 20 ft over 26.6: a tree or a tight bait school",
+     "claude_api": {
+      "kind": "wood",
+      "top_ft": 19.9,
+      "confidence": "medium",
+      "why": "ClearVu shows a solid upright column joined to the bed, rising about 6.7 ft to near 19.9 ft, which matches the tall CHIRP blob at the same time, so it is a standing trunk or stump rather than fish."
+     }
+    }
+   ]
+  },
+  {
+   "id": "lake_marion-2026-11-02-m038",
+   "lat": 33.524966,
+   "lon": -80.21484,
+   "kind": "unsure",
+   "reads": [
+    {
+     "at": "2026-11-02T16:34:21-05:00",
+     "top_ft": null,
+     "bottom_ft": 26.6,
+     "level_ft": 74.39,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "picture": "m038",
+     "below_full_pool_ft": 2.41,
+     "level_at": "2026-11-02T16:30:00-05:00",
+     "read_by": [
+      "claude_api"
+     ],
+     "desktop": "differ: bait schools off the bottom; Claude reported a small shape at the left edge",
+     "claude_api": {
+      "kind": "low_wood",
+      "top_ft": 25.2,
+      "confidence": "medium",
+      "why": "The large central blob is detached from the bed in both views, so it is a fish or bait school, while at the far left ClearVu shows a solid mound joined to the bed rising only about 1.4 ft, with a dotted column of fish or bait above it."
+     }
+    }
+   ]
+  },
+  {
+   "id": "lake_marion-2026-11-02-m039",
+   "lat": 33.525292,
+   "lon": -80.215068,
+   "kind": "low_wood",
+   "reads": [
+    {
+     "at": "2026-11-02T16:34:51-05:00",
+     "top_ft": 25.0,
+     "bottom_ft": 26.8,
+     "level_ft": 74.39,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "picture": "m039",
+     "below_full_pool_ft": 2.41,
+     "level_at": "2026-11-02T16:30:00-05:00",
+     "read_by": [
+      "claude_api",
+      "desktop"
+     ],
+     "desktop": "agree",
+     "claude_api": {
+      "kind": "low_wood",
+      "top_ft": 25.0,
+      "confidence": "low",
+      "why": "ClearVu shows a solid post joined to the bed at about -0.3 s that tops out near 25 ft, under 2 ft above the 26.8 ft bed; the speckled column beside it, reaching about 24 ft, and the CHIRP arches up to about 23 ft look like fish or bait over the wood, but if that column is a limb the answer would instead be wood topping near 24 ft."
+     }
+    }
+   ]
+  },
+  {
+   "id": "lake_marion-2026-11-02-m041",
+   "lat": 33.538757,
+   "lon": -80.220705,
+   "kind": "wood",
+   "reads": [
+    {
+     "at": "2026-11-02T16:50:35-05:00",
+     "top_ft": 20.6,
+     "bottom_ft": 23.8,
+     "level_ft": 74.38,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "picture": "m041",
+     "below_full_pool_ft": 2.42,
+     "level_at": "2026-11-02T16:45:00-05:00",
+     "read_by": [
+      "claude_api",
+      "desktop"
+     ],
+     "desktop": "agree",
+     "claude_api": {
+      "kind": "wood",
+      "top_ft": 20.6,
+      "confidence": "high",
+      "why": "ClearVu shows a solid vertical trunk joined to the bed at about +1 s, rising from about 23.8 ft to 20.6 ft, which matches the tall CHIRP blob there; the other CHIRP blobs show only as detached specks or nothing on ClearVu, so they are fish."
+     }
+    }
+   ]
+  },
+  {
+   "id": "lake_marion-2026-11-02-m042",
+   "lat": 33.539157,
+   "lon": -80.220768,
+   "kind": "low_wood",
+   "reads": [
+    {
+     "at": "2026-11-02T16:50:56-05:00",
+     "top_ft": 22.0,
+     "bottom_ft": 23.6,
+     "level_ft": 74.38,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "picture": "m042",
+     "below_full_pool_ft": 2.42,
+     "level_at": "2026-11-02T16:45:00-05:00",
+     "read_by": [
+      "claude_api",
+      "desktop"
+     ],
+     "desktop": "agree",
+     "claude_api": {
+      "kind": "low_wood",
+      "top_ft": 22.0,
+      "confidence": "medium",
+      "why": "ClearVu shows one solid upright shape joined to the bed at 0 s, rising only about 1.6 ft to 22.0 ft, matching the CHIRP blob there; the other CHIRP blobs and the dotted column near +3.5 s have no solid ClearVu shape beneath them."
+     }
+    }
+   ]
+  },
+  {
+   "id": "lake_marion-2026-11-02-m043",
+   "lat": 33.540231,
+   "lon": -80.220564,
+   "kind": "wood",
+   "reads": [
+    {
+     "at": "2026-11-02T16:51:54-05:00",
+     "top_ft": 21.4,
+     "bottom_ft": 23.4,
+     "level_ft": 74.38,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "picture": "m043",
+     "below_full_pool_ft": 2.42,
+     "level_at": "2026-11-02T16:45:00-05:00",
+     "read_by": [
+      "claude_api",
+      "desktop"
+     ],
+     "desktop": "agree",
+     "claude_api": {
+      "kind": "wood",
+      "top_ft": 21.4,
+      "confidence": "medium",
+      "why": "ClearVu shows a thin solid vertical trunk joined to the bed near 0 s, rising to about 21.4 ft from a 23.4 ft bed (about 2 ft), with scattered specks above it that are likely fish or bait, while the CHIRP blob near -9 s has no joined shape in ClearVu."
+     }
+    }
+   ]
+  },
+  {
+   "id": "lake_marion-2026-11-02-m044",
+   "lat": 33.544747,
+   "lon": -80.219708,
+   "kind": "wood",
+   "reads": [
+    {
+     "at": "2026-11-02T16:56:01-05:00",
+     "top_ft": 19.0,
+     "bottom_ft": 21.0,
+     "level_ft": 74.38,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "picture": "m044",
+     "below_full_pool_ft": 2.42,
+     "level_at": "2026-11-02T17:00:00-05:00",
+     "read_by": [
+      "claude_api",
+      "desktop"
+     ],
+     "desktop": "agree",
+     "claude_api": {
+      "kind": "wood",
+      "top_ft": 19.0,
+      "confidence": "medium",
+      "why": "ClearVu shows a thin, solid vertical trunk joined to the bed near -0.4 s, rising from about 21 ft to 19 ft and matching the CHIRP blob at 0 s, while the other marks are separate fish or bait specks."
+     }
+    }
+   ]
+  },
+  {
+   "id": "lake_marion-2026-11-02-m045",
+   "lat": 33.5451,
+   "lon": -80.219667,
+   "kind": "low_wood",
+   "reads": [
+    {
+     "at": "2026-11-02T16:56:20-05:00",
+     "top_ft": 19.3,
+     "bottom_ft": 20.7,
+     "level_ft": 74.38,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "picture": "m045",
+     "below_full_pool_ft": 2.42,
+     "level_at": "2026-11-02T17:00:00-05:00",
+     "read_by": [
+      "claude_api",
+      "desktop"
+     ],
+     "desktop": "agree",
+     "claude_api": {
+      "kind": "low_wood",
+      "top_ft": 19.3,
+      "confidence": "medium",
+      "why": "ClearVu shows a thin spike rising from the bed at about +3.8 s to about 19.3 ft, roughly 1.4 ft tall; the mound near -1 s is lower and the CHIRP blob at +6 s has no ClearVu wood under it, so it is likely a fish."
+     }
+    }
+   ]
+  },
+  {
+   "id": "lake_marion-2026-11-02-m046",
+   "lat": 33.563825,
+   "lon": -80.210626,
+   "kind": "low_wood",
+   "reads": [
+    {
+     "at": "2026-11-02T17:16:55-05:00",
+     "top_ft": 11.6,
+     "bottom_ft": 12.2,
+     "level_ft": 74.37,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "picture": "m046",
+     "below_full_pool_ft": 2.43,
+     "level_at": "2026-11-02T17:15:00-05:00",
+     "read_by": [
+      "claude_api",
+      "desktop"
+     ],
+     "desktop": "agree: a fish in the middle; under 1 ft of wood at most",
+     "claude_api": {
+      "kind": "low_wood",
+      "top_ft": 11.6,
+      "confidence": "medium",
+      "why": "The tall CHIRP blob at 0 s has no matching shape in ClearVu, so it is likely fish; ClearVu shows only short snags joined to the bed at about -4.9 s and +3.6 s, each under 1 ft tall."
+     }
+    }
+   ]
+  },
+  {
+   "id": "lake_marion-2026-11-02-m047",
+   "lat": 33.566154,
+   "lon": -80.210405,
+   "kind": "wood",
+   "reads": [
+    {
+     "at": "2026-11-02T17:19:00-05:00",
+     "top_ft": 6.7,
+     "bottom_ft": 12.0,
+     "level_ft": 74.37,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "picture": "m047",
+     "below_full_pool_ft": 2.43,
+     "level_at": "2026-11-02T17:15:00-05:00",
+     "read_by": [
+      "claude_api",
+      "desktop"
+     ],
+     "desktop": "agree",
+     "claude_api": {
+      "kind": "wood",
+      "top_ft": 6.7,
+      "confidence": "medium",
+      "why": "Near +7.7 s ClearVu shows thin forked limb lines rising from the bed at about 12 ft to about 6.7 ft, matching a tall CHIRP blob, so this is a standing tree well over 2 ft high; the smaller wood near 0 s is only about 1 ft tall."
+     }
+    },
+    {
+     "at": "2026-11-02T17:19:00-05:00",
+     "top_ft": 6.5,
+     "bottom_ft": 12.2,
+     "level_ft": 74.37,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "picture": "m048",
+     "below_full_pool_ft": 2.43,
+     "level_at": "2026-11-02T17:15:00-05:00",
+     "read_by": [
+      "claude_api",
+      "desktop"
+     ],
+     "desktop": "agree",
+     "claude_api": {
+      "kind": "wood",
+      "top_ft": 6.5,
+      "confidence": "high",
+      "why": "Near +1 s, ClearVu shows a thin trunk with forking limbs joined to the bed at about 12.2 ft and rising to about 6.5 ft; CHIRP shows a matching solid blob, making it much taller than the small snags near -6.5 s and -2.5 s."
+     }
+    }
+   ]
+  },
+  {
+   "id": "lake_marion-2026-11-02-m049",
+   "lat": 33.568207,
+   "lon": -80.210677,
+   "kind": "unsure",
+   "reads": [
+    {
+     "at": "2026-11-02T17:21:00-05:00",
+     "top_ft": null,
+     "bottom_ft": null,
+     "level_ft": 74.37,
+     "how": "clearvu_under_kayak",
+     "confirmed_by_ryan": false,
+     "picture": "m049",
+     "below_full_pool_ft": 2.43,
+     "level_at": "2026-11-02T17:15:00-05:00",
+     "read_by": [
+      "claude_api"
+     ],
+     "desktop": "differ: a narrow column joined to the bottom, solid on CHIRP, 10 ft up to 5.5 ft: I read a snag, Claude a fish",
+     "claude_api": {
+      "kind": "fish",
+      "top_ft": null,
+      "confidence": "medium",
+      "why": "The tall CHIRP blob near -0.8 s (about 5.4 to 10 ft) shows in ClearVu only as a speckled column that stops near 9.3 ft, short of the 10.2 ft bed, so it reads as a suspended bait or fish column, alongside scattered fish marks, rather than wood."
+     }
+    }
+   ]
+  }
+ ],
+ "_fields": {
+  "kind": "wood (stands 2 ft or more off the bottom), low_wood (under 2 ft), no_height (seen only off to the side by the side-imaging finder; never gone over), unsure (Claude's read and the desktop's differ, or neither could tell; no top)",
+  "reads[].top_ft / bottom_ft": "feet below the surface on the sounder at the time of the read (ClearVu, the kayak over it)",
+  "reads[].read_by": "claude_api = Claude through the Worker's /claude/look; desktop = the desktop Claude session reading the same picture",
+  "reads[].confirmed_by_ryan": "true where Ryan answered for that day's pictures (10/31: 'the ones that look like stumps and trees are stumps and trees')",
+  "reads[].level_ft / below_full_pool_ft": "the lake gauge at the read, where the app has one for this water; null where it has none",
+  "lat / lon": "the kayak's GPS fix when it was over the top (WGS84)"
+ }
+}
