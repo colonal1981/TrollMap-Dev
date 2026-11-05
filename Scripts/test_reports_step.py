@@ -353,6 +353,12 @@ class ReportsStep(unittest.TestCase):
         self.assertEqual([(p[0], p[4]) for p in got], [(['crappie'], 'named'), (['catfish'], 'named')])
         self.assertEqual(C.species_in('Speaking of stripers, the fish are not schooling.'), ['striped bass'])
 
+    def test_a_guides_sign_up_is_not_page_wrapping(self):
+        # AHQ, Lake Murray, 2021-08-25: one paragraph about a benefit tournament refused Murray's whole file on 11/5.
+        self.assertIsNone(K.WRAPPING.search('As most anglers traditionally do you can still sign up the morning of '
+                                            'the tournament, but Stan suggests getting there early.'))
+        self.assertIsNotNone(K.WRAPPING.search('Sign up now for the AHQ Insider.'))
+
     def test_the_check_refuses_what_it_should(self):
         texts = K.source_texts(self.cache); slugs = set(REGISTRY)
         good = self.kept[0]
@@ -365,6 +371,7 @@ class ReportsStep(unittest.TestCase):
         refused(lambda s: s.update(text=s['text'] + ' And they are biting everywhere.'), 'not word for word')
         refused(lambda s: s.update(text='Lake Wateree is at 96.6% of full pool. Exclusive Content... Read more'),
                 'page wrapping')
+        refused(lambda s: s.update(text='Water is clear on the main lake. Sign up for our newsletter today.'), 'page wrapping')
         refused(lambda s: s.update(species=['sturgeon']), 'species')
         refused(lambda s: s.update(water=['lake_nowhere']), 'not in the registry')
         refused(lambda s: s.update(water=[], water_from='named'), 'disagree')

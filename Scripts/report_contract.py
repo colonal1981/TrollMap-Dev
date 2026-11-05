@@ -77,7 +77,11 @@ NORM = lambda t: re.sub(r'\s+', ' ', (t or '').replace('**', '')).strip()
 # A page's wrapping is not a report ("... Read more" ending a teaser; a report's own "(read more in the Charleston
 # report)" is the guide's cross-reference and stays). AHQ's teaser cards were his 8/15 reason for keeping AHQ out of the plan
 # ("it had a bunch of general non fishing report stuff stuck to it"); site footers and menus are the same thing.
-WRAPPING = re.compile(r'exclusive content|(?:\.\.\.|…)\s*read more|read more\s*$|subscribe|ahq insider|members? only|sign up|advertis|newsletter|'
+# "sign up" only as the page says it ("Sign up for our newsletter", "sign up now"): a guide's "you can still sign up the
+# morning of the tournament" (AHQ, Lake Murray, 2021-08-25) is his report, and refusing it refused Murray's whole file.
+WRAPPING = re.compile(r'exclusive content|(?:\.\.\.|…)\s*read more|read more\s*$|subscribe|ahq insider|members? only|'
+                      r'sign up (?:now|today|here|for (?:our|the|a free) (?:newsletter|e-?mail|insider|account)|to (?:receive|get))|'
+                      r'advertis|newsletter|'
                       r'phone numbers \||accessibility|all rights reserved|webmaster@|google custom search|'
                       r'skip to content|purchase a fishing license', re.I)
 
