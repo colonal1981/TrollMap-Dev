@@ -111,7 +111,7 @@ describe('worker auth — headers', () => {
 });
 
 describe('worker auth — every mutating route is gated', () => {
-  const ROUTES = ['/research/save', '/research/delete', '/research/save-normalized'];
+  const ROUTES = ['/research/save', '/research/delete', '/research/save-normalized', '/research/save-reports'];
 
   it('the gate runs before any route matching', () => {
     const gateAt = worker.indexOf('await allowMutation(');
@@ -174,7 +174,7 @@ describe('worker auth — every mutating route is gated', () => {
 describe('worker auth — the client signs what the Worker checks', () => {
   it('every client POST to a gated route sends the token', () => {
     const files = walk(join(ROOT, 'js'));
-    const gated = ['/research/save', '/research/delete', '/research/save-normalized'];
+    const gated = ['/research/save', '/research/delete', '/research/save-normalized', '/research/save-reports'];
     const bare = [];
     for (const f of files) {
       const lines = source(f).split('\n');

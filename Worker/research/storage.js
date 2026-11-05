@@ -361,6 +361,57 @@ async function handleResearchSave(request, env) {
   return new Response(JSON.stringify({ok:true, lakeId: safe, lakeName, version: nextVersion, masterKey: `lakes/${safe}.json`, status: master.metadata.status, bytes: masterJson.length}), {headers: JSON_HEADERS});
 }
 
+// ── A WATER'S FISHING REPORTS, KEPT BESIDE ITS PROFILE ──────────────────────────────────────────
+//
+// Ryan, 2026-11-05: "small sample size build the parsers then wire what is needed into research and
+// see how that goes". Scripts/reports_step.py (`research_lakes.py --reports-only`) reads The Sumter
+// Item, SCDNR's Freshwater Fishing Trends and AHQ's posts for one SC water, checks every statement
+// against Scripts/report_contract.py, and sends the file here. It is kept at
+// lake_packages/<id>/reports.json, the folder /research/save writes the profile's parts to, so the
+// same id resolution finds it and /research/delete removes it with the profile. A profile save
+// writes only its own part files, so it never touches this one. See
+// claude/THE_REPORT_STATEMENT_CONTRACT_2026-11-05.md.
+//
+// THE BYTES ARE NOT READ HERE, ON PURPOSE. This Worker is on the free plan, 10 ms of CPU a request
+// (deterministic.js), and Wateree's file is 2.9 MB of JSON: parsing it would spend more than that.
+// The pipeline has already checked every statement, word for word against its source, and sends
+// the file gzipped. This checks what costs nothing to check (a gzip body, not empty, not huge, a
+// registry slug, a water that has a profile) and stores the bytes as they came, marked gzip so
+// r2Text() and r2Body() unwrap them on the way out.
+//
+// No profile, no save: the reports go beside a profile, and a folder with no profile in it is an
+// object nothing would find.
+const REPORTS_MAX_BYTES = 25 * 1024 * 1024;
+
+async function handleResearchSaveReports(request, env) {
+  const url = new URL(request.url);
+  const lake = String(url.searchParams.get('lake') || '').trim();
+  const water = String(url.searchParams.get('water') || '').trim();
+  const n = Number(url.searchParams.get('statements'));
+  const refuse = (status, error) => new Response(JSON.stringify({ ok:false, error }), { status, headers:JSON_HEADERS });
+  if (!lake) return refuse(400, 'missing lake');
+  if (!/^[a-z0-9_]{1,80}$/.test(water)) return refuse(400, `water must be a registry slug, got ${JSON.stringify(water)}`);
+  if (!Number.isInteger(n) || n < 0) return refuse(400, 'statements must be the number of statements in the file');
+  const buf = await request.arrayBuffer();
+  if (!buf || buf.byteLength === 0) return refuse(400, 'empty body');
+  if (buf.byteLength > REPORTS_MAX_BYTES) return refuse(413, `${buf.byteLength} bytes is more than ${REPORTS_MAX_BYTES}`);
+  const head = new Uint8Array(buf, 0, Math.min(2, buf.byteLength));
+  if (head[0] !== 0x1f || head[1] !== 0x8b) return refuse(400, 'the body must be the reports file gzipped');
+  // The name's own ids first, and the registry's other names for the water only if none of those
+  // holds a profile: the index is the one thing here that would cost CPU to read.
+  const probe = (id) => env.R2_TROLLMAP_CHARTPACKS.head(`lakes/${id}.json`).catch(() => null);
+  const found = await resolveResearchStorageId(lake, probe)
+    || await resolveResearchStorageId(lake, probe, await registryIdentityNames(env, lake));
+  if (!found) return refuse(404, `no research profile for ${lake}: its reports are kept beside its profile, so research the water first`);
+  const key = `lake_packages/${found.id}/reports.json`;
+  const stored = await env.R2_TROLLMAP_CHARTPACKS.put(key, buf, {
+    httpMetadata: { contentType: 'application/json', contentEncoding: 'gzip' },
+    customMetadata: { water, statements: String(n), savedAt: new Date().toISOString() },
+  });
+  return new Response(JSON.stringify({ ok:true, key, lakeId: found.id, water, statements: n,
+    bytes: stored && Number.isFinite(stored.size) ? stored.size : null }), { headers: JSON_HEADERS });
+}
+
 async function handleResearchDelete(request, env) {
   let body;
   try { body = await request.json(); } catch { body = {}; }
@@ -615,4 +666,4 @@ If no thermocline or depth information is found, return found: false and null fo
 // Tiling and ESRI image fetching happens client-side (no worker timeout issues).
 // Worker receives one base64 image + bounds, runs Gemini, returns structures.
 
-export { handleResearchList, handleResearchGet, handleResearchSave, handleResearchDelete, handleEnhancedLakeIntel, handleResearchThermoclineSearch };
+export { handleResearchList, handleResearchGet, handleResearchSave, handleResearchSaveReports, handleResearchDelete, handleEnhancedLakeIntel, handleResearchThermoclineSearch };

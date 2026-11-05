@@ -2714,6 +2714,18 @@ def main():
                          "Seconds and no model calls instead of ~193 s and ~58k tokens. For "
                          "re-merging a profile after the limnology rule changed. Refuses a water "
                          "with no stored profile.")
+    # THE FISHING REPORTS, ITS OWN STEP. Ryan, 2026-11-05: "small sample size build the parsers then wire what is
+    # needed into research and see how that goes". Public pages and the registry, then one Worker call to keep the
+    # file beside the profile (/research/save-reports). No model. See Scripts/reports_step.py and
+    # THE_REPORT_STATEMENT_CONTRACT_2026-11-05.md.
+    ap.add_argument("--reports-only", action="store_true",
+                    help="the fishing reports step alone (Scripts/reports_step.py): fetch what is new, read it, "
+                         "check every statement against report_contract.py, and keep it beside the water's "
+                         "profile (lake_packages/<id>/reports.json). SC waters only. No model is called. The save "
+                         "needs the key, so start it through run_research.ps1; with --dry-run the file stays on "
+                         "this machine and no key is needed.")
+    ap.add_argument("--reports-cache", default=None,
+                    help="the source cache for --reports-only (default: reports_sources beside the registry)")
     ap.add_argument("--group-models", choices=("lite", "flash", "claude"), default="lite",
                     help="which models write the species answers. lite (default): the Lite ladder, "
                          "as always. flash: 3.8, 3.7, 3.6 and 3.5 Flash on every free key first -- "
@@ -2751,6 +2763,16 @@ def main():
                          "model call. Refuses if the profile has been written since")
     ap.add_argument("--verbose", action="store_true")
     a = ap.parse_args()
+    if a.reports_only:
+        # Before the token check: a --dry-run needs no key, and the save checks for it itself and says where it
+        # comes from (reports_step.save_beside_profile).
+        import reports_step
+        argv = [x for n in (a.lake or []) for x in ("--lake", n)] + ["--registry", a.registry]
+        if a.reports_cache:
+            argv += ["--cache", a.reports_cache]
+        if a.dry_run:
+            argv.append("--dry-run")
+        return reports_step.main(argv)
     if not a.report:
         stamp = time.strftime("%Y%m%d_%H%M%S")
         a.report = os.path.join("_reports", f"research_lakes_{stamp}.json")

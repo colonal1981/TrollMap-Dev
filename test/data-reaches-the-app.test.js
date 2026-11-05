@@ -308,6 +308,7 @@ describe('every route in trollmap-worker.js has a caller', () => {
     '/research/save': 'Scripts/research_lakes.py, mirror_research_profiles.py and '
                     + 'prune_shadowed_profiles.py.',
     '/research/save-normalized': 'Scripts/research_lakes.py.',
+    '/research/save-reports': 'Scripts/reports_step.py, run as research_lakes.py --reports-only (2026-11-05).',
   };
 
   const callersOf = (route) => {

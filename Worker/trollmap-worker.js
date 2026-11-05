@@ -23,7 +23,7 @@ import { mergeJournals } from '../js/utils/journal-merge.js';
 import { handleClaudeHealth, handleClaudeAsk, handleClaudeLook } from './claude-api.js';
 import { fetchStateRegulations, getLakeRegulations } from './research/clients.js';
 import { regulationsTable, lakeIndex, resolveRegistryRow } from './registry.js';
-import { handleResearchLimnologyData, refreshStaleLimnology, handleResearchDiscover, handleResearchProxyDownload, handleResearchProxyDownloadBatch, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, registrySpeciesFor, speciesFoodHabits, speciesMeasuredTraits, handleResearchAnalyzeFacts, handleResearchAgent, handleResearchList, handleResearchGet, handleResearchSave, handleResearchRegsDebug, handleResearchDelete, handleEnhancedLakeIntel, RESEARCH_AGENTS, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey } from './worker-research.js';
+import { handleResearchLimnologyData, refreshStaleLimnology, handleResearchDiscover, handleResearchProxyDownload, handleResearchProxyDownloadBatch, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, registrySpeciesFor, speciesFoodHabits, speciesMeasuredTraits, handleResearchAnalyzeFacts, handleResearchAgent, handleResearchList, handleResearchGet, handleResearchSave, handleResearchSaveReports, handleResearchRegsDebug, handleResearchDelete, handleEnhancedLakeIntel, RESEARCH_AGENTS, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey } from './worker-research.js';
 
 
 /**
@@ -50,6 +50,7 @@ const MUTATING_ROUTES = [
   "/research/save",
   "/research/delete",
   "/research/save-normalized",
+  "/research/save-reports",
 ];
 
 /**
@@ -1303,6 +1304,9 @@ var trollmap_worker_default = {
       if (path === "/research/save" && request.method === "POST") {
         return handleResearchSave(request, env);
       }
+      if (path === "/research/save-reports" && request.method === "POST") {
+        return handleResearchSaveReports(request, env);
+      }
       if (path === "/research/delete" && request.method === "POST") {
         return handleResearchDelete(request, env);
       }
@@ -2151,6 +2155,7 @@ var trollmap_worker_default = {
           "/research/list                     \u2014 list all researched lake master profiles",
           "/research/get?lake=...             \u2014 get master profile + package file list + versions",
           "/research/save                     \u2014 save merged profile (master + hybrid package + version)",
+          "/research/save-reports?lake=&water=&statements= \u2014 keep a water's fishing reports beside its profile (gzipped, auth required)",
           "/sync/item/:type/:id               \u2014 push/get/delete a sync item (auth required)",
           "/sync/list-updates?since=<ts>      \u2014 delta list for cross-device sync (auth required)",
           "/contours/:lake/geojson            \u2014 serve/upload vectorized contour GeoJSON",
