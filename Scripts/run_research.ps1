@@ -9,8 +9,17 @@
 # command line or written to disk in the clear. Claude starts runs through this script and never
 # reads the key.
 #
-#   powershell -ExecutionPolicy Bypass -File Scripts\run_research.ps1 -Run '--lake "LAKE JORDAN, NC" --group-models claude' -Detach
+#   powershell -ExecutionPolicy Bypass -File Scripts\run_research.ps1 -Run '--lake \"LAKE JORDAN, NC\" --group-models claude' -Detach
+#   powershell -ExecutionPolicy Bypass -File Scripts\run_research.ps1 -Run '--lake wateree_lake --reports-only' -Detach
 #   powershell -ExecutionPolicy Bypass -File Scripts\run_research.ps1 -Check
+#
+# A NAME WITH SPACES NEEDS \" AROUND IT, OR A REGISTRY SLUG IN ITS PLACE. Typed into PowerShell 5.1,
+# `powershell -File` hands the new process '--lake "Wateree Lake" --reports-only' with its quotes
+# dropped, so -Run got "--lake Wateree" and "Lake --reports-only" was bound to the next parameter in
+# line, -KeyFile, and the run stopped with "No stored key at Lake --reports-only" while the key sat
+# where it always was. Ryan hit it on 2026-11-05. Parameters are named-only now
+# (PositionalBinding = $false), so a stray word stops it with "A positional parameter cannot be found
+# that accepts argument ..." instead of being read as a path.
 #
 #   -Run     the arguments for research_lakes.py, as one string
 #   -Detach  start it in the background and return at once; the output goes to the log it names
@@ -20,14 +29,18 @@
 # share the Gemini keys and the Claude allowance, and a push to main mid-run redeploys the Worker
 # under it.
 
+[CmdletBinding(PositionalBinding = $false)]
 param(
   [string]$Run = '',
   [switch]$Detach,
   [switch]$Check,
   [string]$KeyFile = (Join-Path $env:LOCALAPPDATA 'TrollMap\research_key.dat'),
-  [string]$Root = (Split-Path (Split-Path $PSScriptRoot))
+  [string]$Root = ''
 )
 $ErrorActionPreference = 'Stop'
+# In the body, not the param default: with [CmdletBinding()] PowerShell 5.1 leaves $PSScriptRoot empty while it
+# binds the defaults, and Split-Path refused the empty string (found by test_run_research_args.py, 2026-11-05).
+if (-not $Root) { $Root = Split-Path (Split-Path $PSScriptRoot) }
 
 function Read-Key {
   if (-not (Test-Path $KeyFile)) { throw "No stored key at $KeyFile -- run Scripts\save_research_token.ps1 once first." }
