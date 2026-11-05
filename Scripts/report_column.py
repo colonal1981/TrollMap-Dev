@@ -219,6 +219,17 @@ def walk(text, names, hrx):
             cur[3].append(line)
     return [(s, h, p, '\n'.join(b)) for s, h, p, b in out if s is not None and b]
 
+_ABBR = re.compile(r'(?:\b(?:Capt|Mr|Mrs|Ms|Dr|St|Lt|Jr|Sr|Mt|Ft|No|Gov|Sgt|Col|Rep|Sen)|\b(?:[A-Z]\.)+[A-Z])$')
+
+def first_sentence(t):
+    """Up to the first full stop that ends a sentence: not the one in "Capt. Todd Vick" or "the S.C. DNR". The
+    Item writes "Capt.", and Carolina Sportsman's roundups open on it ("Capt. Todd Vick with Fishin' Freshwater
+    Charters is killing the crappie ..."), which read as a one-word sentence with no fish in it."""
+    for m in re.finditer(r'[.!?](?=\s)', t):
+        if not _ABBR.search(t[:m.start()]):
+            return t[:m.end()]
+    return t
+
 def parts(body):
     """[(species, label as written or None, rating, text, about)] for one water's section."""
     flat = body.replace('**', '')
@@ -242,7 +253,7 @@ def parts(body):
         t = FOOTER.split(re.sub(r'\s+', ' ', para.replace('**', '')).strip())[0].strip()
         if len(t) < 40: continue
         if len(t) < 200 and not re.search(r'[.!?"”’)]\s*$', t): continue      # a photo caption, not a report
-        first = re.split(r'(?<=[.!?])\s', t, maxsplit=1)[0]
+        first = first_sentence(t)
         sp, about = (bold, 'named') if bold else (species_in(first), 'named')
         if not sp and prev:
             # a paragraph that does not open on a fish carries on the one before it ("Brad says that if you are

@@ -16,13 +16,13 @@ import report_contract as K                                   # noqa: E402
 
 REGISTRY = {
     'wateree_lake': {'slug': 'wateree_lake', 'name': 'Wateree Lake', 'state': 'SC', 'states': ['SC'],
-                     'display_name': 'Wateree Lake (Kershaw Co, SC)', 'feature_type': 'lake',
+                     'display_name': 'Wateree Lake (Kershaw Co, SC)', 'feature_type': 'lake', 'area_acres': 11756.3,
                      'legacy_display_names': ['Wateree Lake, SC', 'Lake Wateree', 'Lake Wateree, SC']},
     'wateree_river': {'slug': 'wateree_river', 'name': 'Wateree River', 'state': 'SC', 'states': ['SC'],
                       'display_name': 'Wateree River (Richland Co, SC)', 'feature_type': 'river',
                       'legacy_display_names': ['Wateree River, SC']},
     'lake_murray': {'slug': 'lake_murray', 'name': 'Lake Murray', 'state': 'SC', 'states': ['SC'],
-                    'display_name': 'Lake Murray (Lexington Co, SC)', 'feature_type': 'lake',
+                    'display_name': 'Lake Murray (Lexington Co, SC)', 'feature_type': 'lake', 'area_acres': 47500.0,
                     'legacy_display_names': ['Lake Murray, SC']},
     'lake_russell': {'slug': 'lake_russell', 'name': 'Lake Russell', 'state': 'GA', 'states': ['GA'],
                      'display_name': 'Lake Russell (Habersham Co, GA)', 'feature_type': 'lake',
@@ -41,6 +41,42 @@ POST = ('AHQ INSIDER Lake Wateree (SC) 2023 Week 11 Fishing Report - Updated Mar
         ' Will Hinson with a fat Wateree crappie\n')
 AHQ_URL = 'https://www.anglersheadquarters.com/blogs/ahq-report/ahq-insider-lake-wateree-sc-2023-week-11-fishing-report-updated-march-16'
 TEASER_URL = 'https://www.anglersheadquarters.com/blogs/ahq-report/ahq-insider-lake-wateree-sc-2023-week-12-fishing-report-updated-march-23'
+
+
+CS_FEATURE = ('Guide Chris Heining said that bass fishing on Lake Wateree can be great this month.\n'
+              'Largemouths have already made first move toward shallow water\n'
+              'March brings the promise of spring fishing, and bass fishermen can miss some great fishing if they wait '
+              'too long on Lake Wateree largemouth.\n'
+              '“A lot of the fish are in the 8- to 12-foot depth range,” Heining said. “Docks are super transition '
+              'holding structures.”\n'
+              'Docks and points both hold Lake Wateree bass in March, when fish move shallow. (Photo by Terry Madewell)\n'
+              'Anglers on Lake Murray are doing better on stripers right now, he said, so plan accordingly.\n'
+              'Unlock this page—subscribe now or sign in for instant access!\n'
+              'Bass\nLake Wateree\nMarch 2015')
+CS_ROUNDUP = ('Anglers are catching plenty of quality catfish at Santee.\n'
+              'Hot weather has not halted the hot bite\n'
+              'The weather is hot, but for anglers willing to brave the heat, so is the fishing. Plenty is biting.\n'
+              'Brett Collins is racking up the largemouth bass on Lake Wateree. He is catching them shallow on jigs.\n'
+              'Lake Wateree started off slow for bass this year, but it is giving up some quality largemouth lately.\n'
+              'Lake Murray\n'
+              'Capt. Brad Taylor said the striper fishing has been strong, with fish on the flats in 20 feet.\n'
+              '“They are grouped up, and when you hit them, multiple hookups are common,” Taylor said. “It is good.”')
+CS_FEATURE_URL = 'https://www.carolinasportsman.com/fishing/bass-fishing/dont-wait-to-chase-lake-wateree-bass-this-month/'
+CS_ROUNDUP_URL = 'https://www.carolinasportsman.com/fishing/freshwater-fishing/s-c-freshwater-fishing-report-for-early-june/'
+CS_HUNT_URL = 'https://www.carolinasportsman.com/hunting/deer-hunting/lake-wateree-buck/'
+
+
+def _cs_cache(d):
+    """A cache with one Carolina Sportsman feature about Wateree, one roundup, and a hunting story."""
+    cache = os.path.join(d, 'reports_sources'); os.makedirs(os.path.join(cache, 'cs'))
+    for url, text, pub in ((CS_FEATURE_URL, CS_FEATURE, '2015-03-03T06:38:00+00:00'),
+                           (CS_ROUNDUP_URL, CS_ROUNDUP, '2020-06-05T11:20:19+00:00')):
+        slug = url.rstrip('/').rsplit('/', 1)[1]
+        _write(os.path.join(cache, 'cs', slug + '.json'),
+               {'url': url, 'slug': slug, 'title': slug, 'published': pub, 'chars': len(text), 'text': text})
+    with open(os.path.join(cache, 'cs_articles.txt'), 'w') as fh:
+        fh.write('%s\t2015-03-03\n%s\t2020-06-05\n%s\t2020-01-01\n' % (CS_FEATURE_URL, CS_ROUNDUP_URL, CS_HUNT_URL))
+    return cache
 
 
 def _write(path, obj):
@@ -70,7 +106,7 @@ class ReportsStep(unittest.TestCase):
         cls.res = R.run('wateree_lake', reg, cache, cls.out, dry_run=True, fetch=False, log=lambda *a: None)
         cls.kept = []
         if cls.res.get('kept'):
-            with open(cls.res['kept']) as fh: cls.kept = json.load(fh)['statements']
+            with open(cls.res['kept'], encoding='utf-8') as fh: cls.kept = json.load(fh)['statements']
 
     @classmethod
     def tearDownClass(cls):
@@ -216,7 +252,7 @@ class ReportsStep(unittest.TestCase):
         with open(os.path.join(cache, 'ahq_articles.txt'), 'w') as fh: fh.write(AHQ_URL + '\n' + early + '\n')
         r = R.run('wateree_lake', self.reg, cache, os.path.join(d, 'out'), dry_run=True, fetch=False, log=lambda *a: None)
         self.assertTrue(r['ok'], r.get('error'))
-        with open(r['kept']) as fh: kept = json.load(fh)['statements']
+        with open(r['kept'], encoding='utf-8') as fh: kept = json.load(fh)['statements']
         shutil.rmtree(d, ignore_errors=True)
         self.assertEqual(len(kept), 2)
         self.assertEqual({(s['date'], s['url'], s['copies']) for s in kept}, {('2023-03-02', early, 1)})
@@ -233,7 +269,7 @@ class ReportsStep(unittest.TestCase):
                     'published': day + ' 20:00:00 -0400', 'listed': '', 'chars': len(text), 'text': text})
         r = R.run('wateree_lake', self.reg, cache, os.path.join(d, 'out'), dry_run=True, fetch=False, log=lambda *a: None)
         self.assertTrue(r['ok'], r.get('error'))
-        with open(r['kept']) as fh: kept = json.load(fh)['statements']
+        with open(r['kept'], encoding='utf-8') as fh: kept = json.load(fh)['statements']
         shutil.rmtree(d, ignore_errors=True)
         self.assertEqual([(s['water'], s['date'], s['repeated'], s['copies']) for s in kept],
                          [(['wateree_lake'], '2005-11-05', ['2005-11-12'], 1)])
@@ -253,13 +289,62 @@ class ReportsStep(unittest.TestCase):
                 'published': 'Sat, 07 Aug 2010 20:00:00 -0400', 'listed': '', 'chars': len(text), 'text': text})
         r = R.run('wateree_lake', self.reg, cache, os.path.join(d, 'out'), dry_run=True, fetch=False, log=lambda *a: None)
         self.assertTrue(r['ok'], r.get('error'))
-        with open(r['kept']) as fh: kept = json.load(fh)['statements']
+        with open(r['kept'], encoding='utf-8') as fh: kept = json.load(fh)['statements']
         m = R.run('lake_murray', self.reg, cache, os.path.join(d, 'out'), dry_run=True, fetch=False, log=lambda *a: None)
-        with open(m['kept']) as fh: murray = json.load(fh)['statements']
+        with open(m['kept'], encoding='utf-8') as fh: murray = json.load(fh)['statements']
         shutil.rmtree(d, ignore_errors=True)
         self.assertEqual([s['species'] for s in kept], [['bream']])
         self.assertEqual(sorted(s['species'][0] for s in murray), ['bream', 'catfish'])
         self.assertEqual(r['one_page_two_waters'], 3)
+
+    def test_carolina_sportsman_a_feature_and_a_roundup(self):
+        d = tempfile.mkdtemp(); cache = _cs_cache(d)
+        r = R.run('wateree_lake', self.reg, cache, os.path.join(d, 'out'), dry_run=True, fetch=False, log=lambda *a: None)
+        self.assertTrue(r['ok'], r.get('error'))
+        self.assertEqual(r['cs_posts_listed'], 2, 'the feature and the roundup; not the hunting story')
+        with open(r['kept'], encoding='utf-8') as fh: kept = json.load(fh)['statements']
+        texts = K.source_texts(cache)
+        shutil.rmtree(d, ignore_errors=True)
+        cs = [s for s in kept if s['source'] == 'CS']
+        feat = [s for s in cs if s['url'] == CS_FEATURE_URL]
+        self.assertEqual([s['about'] for s in feat], ['named', 'continued'])
+        self.assertTrue(all(s['water_from'] == 'source page' and s['date'] == '2015-03-03' for s in feat))
+        self.assertEqual(feat[1]['depths'][0]['ft'], [8, 12])
+        self.assertFalse(any('Lake Murray' in s['text'] for s in feat), "that paragraph is Lake Murray's")
+        self.assertFalse(any('Heining said that bass fishing' in s['text'] for s in cs), 'the lead photo caption')
+        self.assertFalse(any('Unlock this page' in s['text'] for s in cs))
+        self.assertFalse(any('Photo by' in s['text'] for s in cs), 'a credited photo caption mid-article')
+        rnd = [s for s in cs if s['url'] == CS_ROUNDUP_URL]
+        self.assertEqual(len(rnd), 1, 'the Wateree paragraph; its caption and the Murray section are not')
+        self.assertEqual((rnd[0]['water_from'], rnd[0]['species']), ('named', ['largemouth bass']))
+        for s in cs: self.assertEqual(K.check(s, set(REGISTRY), texts), [], s['text'][:60])
+
+    def test_carolina_sportsman_roundup_sections_keep_their_own_fish(self):
+        import report_cs as S, report_column as C
+        names = C.registry_names(self.reg)[0]; pn = S.plain_names(names)
+        rec = {'url': CS_ROUNDUP_URL, 'slug': 'x', 'title': 'x', 'published': '2020-06-05T00:00:00', 'text': CS_ROUNDUP}
+        got = [(s['waters'], s['species'], s['about']) for s in S.statements(rec, None, pn, S.name_rx(pn))]
+        self.assertEqual(got, [(['wateree_lake'], ['largemouth bass'], 'named'),
+                               (['lake_murray'], ['striped bass'], 'named'),
+                               (['lake_murray'], ['striped bass'], 'continued')])
+
+    def test_carolina_sportsman_an_address_names_its_water(self):
+        import report_cs as S, report_column as C
+        names = C.registry_names(self.reg)[0]
+        with open(os.path.join(self.reg, 'lake_index.json')) as fh: idx = json.load(fh)
+        sidx = S.slug_index(S.plain_names(names), idx)
+        self.assertEqual(S.waters_of_slug('wateree-stripers-are-hot', sidx), ['wateree_lake'], 'a big lake by its word')
+        self.assertEqual(S.waters_of_slug('wateree-river-stripers', sidx), ['wateree_river'], 'the whole name first')
+        self.assertEqual(S.waters_of_slug('murray-and-wateree-crappie', sidx), [], 'two waters: neither')
+        self.assertTrue(S.wanted(CS_FEATURE_URL)); self.assertFalse(S.wanted(CS_HUNT_URL))
+        self.assertTrue(S.ROUNDUP.search('sc-mid-july-freshwater-fishing-report'))
+
+    def test_capt_is_not_the_end_of_a_sentence(self):
+        import report_column as C
+        self.assertEqual(C.first_sentence('Capt. Todd Vick is killing the crappie. More.'),
+                         'Capt. Todd Vick is killing the crappie.')
+        self.assertEqual(C.parts('Capt. Todd Vick with Fishin Freshwater Charters is killing the crappie on the '
+                                 'river right now. He uses minnows.')[0][4], 'named')
 
     def test_a_ton_of_crappie_is_crappie_and_strips_of_bream_are_bait(self):
         import report_column as C

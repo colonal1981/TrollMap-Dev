@@ -13,9 +13,12 @@ See THE_WHERE_AND_WHEN_MAP_2026-11-03.md and THE_REPORT_STATEMENT_CONTRACT_2026-
                   is kept as one, so it is known and not asked for again.
        scdnr/     SCDNR's Freshwater Fishing Trends page, once a day, with the day it was read (the page states none)
        item/, scdnr_wb/   The Sumter Item (2004-2017) and SCDNR's page in the Internet Archive: a finished backfill
-       cs/, scc/  Carolina Sportsman and Santee Cooper Country: Santee Cooper's, read by the Santee pipeline for now
+       cs/        Carolina Sportsman: the articles whose address names this water, and its "S.C. freshwater fishing report"
+                  roundups, from the site's own post sitemaps (cs_articles.txt), 2.5 s apart (report_cs.py)
+       scc/       Santee Cooper Country: Santee Cooper's, read by the Santee pipeline for now
   2. READ every statement about this water: report_column.py (SCDNR's column and The Item's copy of it, all waters),
-     report_ahq.py (this water's AHQ posts), report_text.py (depths, methods, the sentences). A paragraph in several
+     report_ahq.py (this water's AHQ posts), report_cs.py (its Carolina Sportsman articles and the roundups),
+     report_text.py (depths, methods, the sentences). A paragraph in several
      places is kept once, at its earliest date, with the later dates in `repeated`; the same words said of two
      waters are two statements, except a report a page printed under two lakes by mistake (one_page_two_waters).
   3. CHECK every statement against report_contract.py. A water whose statements break the contract is not kept.
@@ -37,6 +40,7 @@ import report_column as C          # noqa: E402
 import report_ahq as A             # noqa: E402
 import report_text as T            # noqa: E402
 import report_contract as K        # noqa: E402
+import report_cs as S                # noqa: E402
 
 PAUSE_S = 2.5                       # between two requests to the same site
 WORKER = os.environ.get('TROLLMAP_WORKER_URL', 'https://trollmap-worker.colonal1981.workers.dev')   # research_lakes.py's
@@ -75,6 +79,11 @@ def _get(url, timeout=60):
     return urllib.request.urlopen(urllib.request.Request(url, headers=A.UA), timeout=timeout).read().decode('utf-8', 'replace')
 
 
+# A site's list is read once a run, not once a water: the 11/5 batch of eleven waters read AHQ's sitemap eleven
+# times, 14 s each.
+_READ_THIS_RUN = set()
+
+
 def ahq_post_urls(cache, refresh=True, log=print):
     """Every AHQ report post AHQ's own sitemap lists, read fresh once a run and merged into the kept list; the kept
     list alone when the read fails."""
@@ -83,7 +92,8 @@ def ahq_post_urls(cache, refresh=True, log=print):
     if os.path.exists(path):
         with open(path, encoding='utf-8-sig') as fh: kept = [u.strip() for u in fh]
     fresh = []
-    if refresh:
+    if refresh and ('AHQ', path) not in _READ_THIS_RUN:
+        _READ_THIS_RUN.add(('AHQ', path))
         try:
             index = _get(AHQ_SITEMAP)
             # The posts are in sitemap_articles_N.xml; sitemap_blogs_1.xml lists only the blogs themselves.
@@ -101,6 +111,34 @@ def ahq_post_urls(cache, refresh=True, log=print):
     if fresh:
         with open(path, 'w', encoding='utf-8') as f: f.write('\n'.join(urls) + '\n')
     return urls, len(set(fresh) - set(kept))
+
+
+def cs_post_urls(cache, refresh=True, log=print):
+    """Every post Carolina Sportsman's own sitemaps list ([(url, lastmod)]), read fresh once a run and kept in
+    cs_articles.txt; the kept list alone when the read fails."""
+    path = os.path.join(cache, 'cs_articles.txt')
+    kept = []
+    if os.path.exists(path):
+        with open(path, encoding='utf-8-sig') as fh:
+            kept = [tuple((l.rstrip('\n').split('\t') + [''])[:2]) for l in fh if l.strip()]
+    if refresh and ('CS', path) not in _READ_THIS_RUN:
+        _READ_THIS_RUN.add(('CS', path))
+        try:
+            fresh = S.article_urls(get=_get, pause=1.0, log=log)
+            if fresh:
+                new = len({u for u, _ in fresh} - {u for u, _ in kept})
+                with open(path, 'w', encoding='utf-8') as f: f.write(''.join('%s\t%s\n' % x for x in fresh))
+                return fresh, new
+            log('   Carolina Sportsman sitemaps listed no posts: using the kept list of %d' % len(kept))
+        except Exception as e:                                   # noqa: BLE001 -- say it and use the kept list
+            log('   Carolina Sportsman sitemaps not read (%s): using the kept list of %d' % (e, len(kept)))
+    return kept, 0
+
+
+def cs_posts_for(posts, slug, sidx):
+    """This water's articles (its name in the address) and every S.C. freshwater roundup, in the fishing sections."""
+    return [u for u, _ in posts if S.wanted(u)
+            and (S.ROUNDUP.search(S.slug_of(u)) or slug in S.waters_of_slug(S.slug_of(u), sidx))]
 
 
 def ahq_posts_for(urls, slug, widx):
@@ -150,9 +188,10 @@ def _records(folder):
                 yield json.load(fh)
 
 
-def read_statements(slug, cache, idx, names, ahq_urls):
+def read_statements(slug, cache, idx, names, ahq_urls, cs_urls=()):
     """Every statement about this water, in the column (all waters, so a reprint folds into its first copy and a
-    guide's usual fish is learned from everything he said) and in this water's AHQ posts."""
+    guide's usual fish is learned from everything he said), in this water's AHQ posts and in its Carolina Sportsman
+    articles and the S.C. roundups."""
     hrx = C.heading_rx(names)
     kinds = {k: v.get('feature_type') for k, v in idx.items()}
     widx = A.water_index(names, kinds)
@@ -197,6 +236,15 @@ def read_statements(slug, cache, idx, names, ahq_urls):
     for rec in _records(os.path.join(cache, 'ahq')):
         if rec.get('slug') in mine:
             docs['AHQ'] += 1; add(A.statements(rec, widx))
+    if cs_urls:
+        pn = S.plain_names(names); sidx = S.slug_index(pn, idx); rx = S.name_rx(pn)
+        want = {S.slug_of(u) for u in cs_urls}
+        for rec in _records(os.path.join(cache, 'cs')):
+            if rec.get('slug') not in want: continue
+            ws = None if S.ROUNDUP.search(rec['slug']) else S.waters_of_slug(rec['slug'], sidx)
+            if ws is not None and (not ws or S.times_named(rec.get('text'), ws, pn, rx) < S.NAMED_AT_LEAST):
+                docs['CS not about it'] += 1; continue          # its address names the water, its text does not
+            docs['CS'] += 1; add(S.statements(rec, ws, pn, rx))
     C.assign_unheaded(rows)
     C.species_by_captains(rows)
     rows, folded = C.collapse_repeats(rows)
@@ -232,13 +280,20 @@ def run(slug, regdir, cache, out, dry_run=True, fetch=True, limit=0, log=print):
         mine = ahq_posts_for(urls, slug, widx)
         res['ahq_posts_listed'] = len(mine); res['ahq_new_in_sitemap'] = new_listed
         clock.mark('AHQ sitemap')
+        cs_all, cs_new = cs_post_urls(cache, refresh=fetch, log=log)
+        cs_mine = cs_posts_for(cs_all, slug, S.slug_index(S.plain_names(names), idx))
+        res['cs_posts_listed'] = len(cs_mine); res['cs_new_in_sitemap'] = cs_new
+        clock.mark('CS sitemap')
         if fetch:
             got, teas, failed = fetch_missing(mine, os.path.join(cache, 'ahq'), A.fetch_post, log=log, limit=limit)
             res['ahq_fetched'] = got; res['ahq_teasers'] = teas; res['ahq_failed'] = failed
             clock.mark('AHQ fetch')
+            got, _, failed = fetch_missing(cs_mine, os.path.join(cache, 'cs'), S.fetch_article, log=log, limit=limit)
+            res['cs_fetched'] = got; res['cs_failed'] = failed
+            clock.mark('CS fetch')
             res['scdnr_page_read'] = live_page(cache, log=log)
             clock.mark('SCDNR page')
-        rows, docs, folded, two = read_statements(slug, cache, idx, names, mine)
+        rows, docs, folded, two = read_statements(slug, cache, idx, names, mine, cs_mine)
         res['documents_read'] = dict(docs); res['paragraphs_folded'] = folded
         res['one_page_two_waters'] = two
         clock.mark('read')
@@ -311,11 +366,12 @@ def report(res, log=print):
     log('%s %s (%s)' % ('ok  ' if res['ok'] else 'FAIL', res.get('name') or res['water'], res['water']))
     if res.get('skipped'): log('   skipped: ' + res['skipped']); return
     if res.get('error'): log('   ' + res['error'])
-    for k in ('ahq_posts_listed', 'ahq_new_in_sitemap', 'ahq_fetched', 'ahq_teasers', 'scdnr_page_read', 'documents_read',
+    for k in ('ahq_posts_listed', 'ahq_new_in_sitemap', 'ahq_fetched', 'ahq_teasers', 'cs_posts_listed', 'cs_new_in_sitemap',
+              'cs_fetched', 'scdnr_page_read', 'documents_read',
               'paragraphs_folded', 'one_page_two_waters', 'statements', 'broken_n', 'by_source', 'by_year', 'by_species', 'kept', 'saved',
               'bytes', 'bytes_before_gzip'):
         if k in res: log('   %-20s %s' % (k, res[k]))
-    for u, e in (res.get('ahq_failed') or [])[:5]: log('   failed %s: %s' % (u, e))
+    for u, e in ((res.get('ahq_failed') or []) + (res.get('cs_failed') or []))[:5]: log('   failed %s: %s' % (u, e))
     for b in res.get('broken') or []: log('   broken %s' % (b,))
     log('   where the time went: ' + ', '.join('%s %.1f s' % kv for kv in t.items()) + '; total %.1f s' % total)
 

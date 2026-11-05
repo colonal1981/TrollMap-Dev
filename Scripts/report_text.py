@@ -9,7 +9,8 @@ lived in parse_reports.py and the sentence rules in build_reports.py.
 """
 import re
 
-DEPTH = re.compile(r'(\d{1,3})(?:\s*(?:-|–|—|to)\s*(\d{1,3}))?\+?\s*(?:-\s*)?(feet|foot|ft\b)', re.I)
+# "35-45 ft", "35 to 45 feet", and the magazine's "8- to 12-foot depth range" (the first number's hyphen left hanging)
+DEPTH = re.compile(r'(\d{1,3})(?:\s*(?:[-–—]\s*to|-|–|—|to)\s*(\d{1,3}))?\+?\s*(?:-\s*)?(feet|foot|ft\b)', re.I)
 
 def depths(text):
     """Every depth stated, read as water depth ("in 35-45 ft"), fish depth ("at 20 feet", "suspended") or unclear."""
@@ -49,7 +50,7 @@ def kinds_of_water(text):
     return [k for k, rx in KINDS_OF_WATER if re.search(rx, t)]
 
 SENT = re.compile(r'(?<=[.!?])(?=\s*[A-Z])')
-FT = re.compile(r'(\d{1,2})(?:\s*(?:-|to)\s*(\d{1,2}))?(?:\s*plus)?\s*(?:-|\s)?(?:feet|foot|ft\b|\')', re.I)
+FT = re.compile(r'(\d{1,2})(?:\s*(?:-\s*to|-|to)\s*(\d{1,2}))?(?:\s*plus)?\s*(?:-|\s)?(?:feet|foot|ft\b|\')', re.I)
 POS = [('bottom', r'on the bottom|close to the bottom|near the bottom|flat on the bottom|stacked up on the bottom|'
                   r'off the bottom|along the bottom|hugging the bottom|bottom-hugging'),
        ('suspended', r'suspend|middle of (?:the )?water column|higher? in the water column|above the (?:fish|school)|'
