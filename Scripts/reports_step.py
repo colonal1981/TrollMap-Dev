@@ -21,7 +21,8 @@ See THE_WHERE_AND_WHEN_MAP_2026-11-03.md and THE_REPORT_STATEMENT_CONTRACT_2026-
   3. CHECK every statement against report_contract.py. A water whose statements break the contract is not kept.
   4. KEEP: beside the water's research profile, lake_packages/<id>/reports.json, through the Worker's
      /research/save-reports, gzipped. That needs TROLLMAP_SYNC_TOKEN, so start it through Scripts\\run_research.ps1
-     (`-Run '--lake "Wateree Lake" --reports-only'`); the key is never seen or printed. --dry-run writes
+     (`-Run '--lake wateree_lake --reports-only'`: a name with spaces needs \\" around it there, see the script's
+     header); the key is never seen or printed. --dry-run writes
      <out>/<slug>/reports.json on this machine instead and needs no key. Timed on Wateree, 11/5: 13 min the first
      time (the fetch, 2.9 s a post), 22 s after.
 
