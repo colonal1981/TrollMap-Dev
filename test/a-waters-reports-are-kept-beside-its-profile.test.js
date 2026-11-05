@@ -135,3 +135,15 @@ test('the route is gated and dispatched to this handler', () => {
   assert.ok(list.includes('"/research/save-reports"'));
   assert.match(worker, /path === "\/research\/save-reports" && request\.method === "POST"\) \{\s*return handleResearchSaveReports\(request, env\);/);
 });
+
+test('the public chart-pack route does not serve a research package', () => {
+  // Found 11/5: /chartpacks/lake_packages/lake_wateree_sc/reports.json answered 200 with no key, because
+  // chartpackKey("lake_packages", "lake_wateree_sc/reports.json") is exactly the package's R2 key.
+  const worker = readFileSync(new URL('../Worker/trollmap-worker.js', import.meta.url), 'utf8');
+  const route = worker.slice(worker.indexOf('const cpMatch = path.match('));
+  const refuse = route.indexOf('key.startsWith("lake_packages/")');
+  const read = route.indexOf('R2_TROLLMAP_CHARTPACKS.get(');
+  assert.ok(refuse > 0, 'the chart-pack route no longer refuses lake_packages/');
+  assert.ok(refuse < read, 'the refusal must come before the read, or the bytes are fetched first');
+  assert.match(route.slice(refuse, read), /status: 404/);
+});

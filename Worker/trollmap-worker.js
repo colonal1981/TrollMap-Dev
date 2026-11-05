@@ -2074,6 +2074,15 @@ var trollmap_worker_default = {
       if (cpMatch) {
         const [, lakeName, file] = cpMatch;
         const key = chartpackKey(lakeName, file);
+        if (request.method === "GET" && key.startsWith("lake_packages/")) {
+          // A WATER'S RESEARCH PACKAGE IS NOT A CHART PACK, AND THIS ROUTE IS PUBLIC. lake_packages/<id>/ holds the
+          // profile's parts and, since 2026-11-05, reports.json: thousands of AHQ, Carolina Sportsman and Sumter
+          // Item paragraphs word for word, kept for Ryan's own use. Read on 11/5 with no key, through this route,
+          // which is how it was found. Nothing in js/ or Scripts/ reads a package through here: the scripts list
+          // packages (/chartpacks/list, /research/get), and the planner will read the reports through a route that
+          // needs the key. Refused rather than gated, so an address someone has does not start working with a key.
+          return new Response('{"error":"not found"}', { headers: JSON_HEADERS, status: 404 });
+        }
         if (request.method === "GET") {
           // Packs are immutable between uploads, yet this served `no-store`, so Wateree's
           // 9.7 MB of contours and 18.6 MB of depth areas came down again on EVERY load --
