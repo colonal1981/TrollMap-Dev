@@ -28,7 +28,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseScdnrSection, parseSccSite, parseFacebookPost, facebookDate, parseYoutubeFeed,
-         pickYoutube, parseYoutubeScrape, monthsNamed, GUIDE_SOURCES, handleGuideReports }
+         pickYoutube, parseYoutubeScrape, monthsNamed, GUIDE_SOURCES, FACEBOOK_PAGES, handleGuideReports }
   from '../Worker/guide-reports.js';
 import { reportWaterFor, waterRangesIn, isCurrentReport, supersede, reportWaterForPlan }
   from '../js/utils/report-water.js';
@@ -351,13 +351,14 @@ test('askGuideReports never throws and supersedes on the way in', async () => {
 test('the route: the individual guides\' waters, a day\'s copy from KV, and fresh only with the token', async () => {
   // Only the individual guides are listed by water since 2026-10-02; SCDNR, AHQ and the search
   // come by name for every water with a research profile (generalSources()).
+  // Wateree's only entry was Wolfe's Facebook page, which is listed, not read, since 11/6.
   assert.deepEqual(Object.keys(GUIDE_SOURCES).sort(),
-    ['lake_marion', 'lake_moultrie', 'lake_murray', 'wateree_lake']);
+    ['lake_marion', 'lake_moultrie', 'lake_murray']);
   const store = new Map();
   const env = { KV: { get: async (k) => (store.has(k) ? JSON.parse(store.get(k)) : null),
                       put: async (k, v) => store.set(k, v) } };
   const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
-  store.set(`guide:reports:v6:lake_marion:2026-10:${day}`, JSON.stringify({ reports: [{ label: 'kept' }] }));
+  store.set(`guide:reports:v7:lake_marion:2026-10:${day}`, JSON.stringify({ reports: [{ label: 'kept' }] }));
   const get = (q) => handleGuideReports(new Request(`https://w/guide-reports/lake_marion${q}`), env, new URL(`https://w/guide-reports/lake_marion${q}`));
   const hit = await (await get('?date=2026-10-02')).json();
   assert.equal(hit.cached, true);
@@ -386,8 +387,12 @@ const MARION_BUCKET = {
   async head(key) { return /^lakes\/lake_marion/.test(key) ? { key } : null; },
 };
 
-test('a newer post seen only as a preview in search goes in, labelled, and supersedes the older ones', async () => {
+// Until 11/6 this test held the Facebook reader: a newer post seen only as a preview in search went
+// in, labelled, and August's post was read by its URL. Both are gone (Ryan: "lets switch them"),
+// and the same fake now holds that nothing of Facebook's is read or fetched on the way.
+test('Marion\'s guides are read without Facebook: the site and SCDNR, and no facebook.com address is fetched', async () => {
   const real = globalThis.fetch;
+  const fetched = [];
   globalThis.fetch = async (u, init) => {
     const url = String(u);
     if (url.startsWith('https://api.search.tinyfish.ai')) {
@@ -395,6 +400,7 @@ test('a newer post seen only as a preview in search goes in, labelled, and super
     }
     if (url.startsWith('https://api.fetch.tinyfish.ai')) {
       const body = JSON.parse(init.body);
+      fetched.push(...body.urls);
       const page = (x) => (x === 'https://www.dnr.sc.gov/news/freshwater.html' ? { text: SCDNR_MD }
         : x.startsWith('https://www.santeecoopercountry.org/') ? { text: SCC_SITE_MD, page_metadata: SCC_SITE_META }
         : x === AUG_URL ? { text: AUG_MD }
@@ -408,29 +414,19 @@ test('a newer post seen only as a preview in search goes in, labelled, and super
     const { _resetIndexCache } = await import('../Worker/registry.js');
     _resetIndexCache();
     _resetAhqIndex();
-    // Since 2026-10-02 SCDNR comes by name for a water with a research profile, so the bucket holds
-    // Marion's registry row and a profile, and AHQ's blog lists the page that says Santee Cooper is
-    // Marion and Moultrie (the bridge to SCDNR's "Santee Cooper" heading).
     const g = await gatherGuideReports('lake_marion', { TINYFISH_API_KEY: 'k', R2_TROLLMAP_CHARTPACKS: MARION_BUCKET }, '2026-10-02');
     const by = (label) => g.checked.find((c) => c.label === label);
     assert.equal(by('Santee Cooper Country fishing report').ok, true);
-    assert.equal(by('Santee Cooper Country on Facebook').ok, true);
+    assert.equal(by('Santee Cooper Country on Facebook'), undefined, 'not a source any more');
     assert.equal(by('SCDNR Freshwater Fishing Trends').ok, true);
     // Angler's Headquarters: this fake serves its blog but none of its listing pages.
     assert.equal(by("Angler's Headquarters weekly report").ok, false);
     _resetIndexCache();
     _resetAhqIndex();
-    const pv = g.reports.find((r) => r.preview);
-    assert.equal(pv.monthYear, '2026-10');
-    assert.match(pv.label, /search preview only/);
-    assert.equal(g.reports.find((r) => r.url === AUG_URL).published, '2026-08-05');
-    const s = supersede(g.reports);
-    // The preview supersedes nothing; the September page supersedes August's post.
-    assert.deepEqual(s.filter((r) => !r.supersededBy).map((r) => r.kind).sort(), ['facebook', 'page', 'scdnr']);
-    assert.equal(s.find((r) => r.url === AUG_URL).supersededBy, 'Santee Cooper Country fishing report');
-    assert.deepEqual(reportWaterForPlan(s, 'Striped Bass', '2026-10-02').map((w) => w.ft), [[30, 45]]);
-    assert.match(guideReportsBlock({ reports: s, checked: g.checked }, ['Striped Bass'], '2026-10-02'),
-      /NOT DATED: a search preview of a post naming 2026-10/);
+    assert.ok(fetched.length > 0);
+    assert.deepEqual(fetched.filter((x) => /facebook\.com/.test(x)), [], 'no Facebook address is fetched');
+    assert.equal(g.reports.some((r) => r.preview || /facebook\.com/.test(r.url || '')), false);
+    assert.deepEqual([...new Set(supersede(g.reports).filter((r) => !r.supersededBy).map((r) => r.kind))].sort(), ['page', 'scdnr']);
   } finally {
     globalThis.fetch = real;
   }
@@ -453,4 +449,16 @@ test('both planners pass the reports, Smart Plan passes the water to the lanes, 
   assert.match(live(read('Worker/trollmap-worker.js')), /handleGuideReports\(request, env, url\)/);
   assert.deepEqual(monthsNamed('sept and October'), ['September', 'October']);
   assert.deepEqual(monthsNamed('in September. Fish may also move shallower. MAY 2026'), ['September', 'May']);
+});
+
+test('no Facebook post is read: the guides\' pages are listed for him, never fetched (11/6)', () => {
+  // Ryan, 11/6: "i guess just for standardization lets switch them". Facebook's robots.txt
+  // prohibits automated collection; the posts are in the paste card's "Posts to read" instead.
+  for (const [slug, list] of Object.entries(GUIDE_SOURCES)) {
+    for (const s of list) assert.notEqual(s.kind, 'facebook', `${slug} reads a Facebook page`);
+  }
+  assert.deepEqual(Object.keys(FACEBOOK_PAGES).sort(), ['lake_marion', 'lake_moultrie', 'wateree_lake']);
+  const src = read('Worker/guide-reports.js');
+  assert.equal(/async function readFacebook\b/.test(src), false, 'the Facebook reader is gone');
+  assert.equal(/facebook:\s*read/.test(src), false, 'and no reader is registered for the kind');
 });

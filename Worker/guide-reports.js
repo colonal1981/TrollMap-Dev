@@ -24,18 +24,19 @@
  *                                     Corrected 2026-10-01: this said AHQ's pages were paid teasers.
  *   Santee Cooper Country (site)      santeecoopercountry.org/fishing/fishing-reports/, Capt. Joe
  *                                     Dennis and Kyle Austin. Dated by the page's own modified time.
- *   Santee Cooper Country (Facebook)  the same report, usually days before the site.
- *   Wolfe's Guide Service (Facebook)  Capt. Jason Wolfe, a monthly Wateree post. No site reports.
  *   Lake Murray monthly (YouTube)     Capt. Chip Bragg (stripers) and Capt. Chris Blanchette
  *                                     (largemouth), on Blanchette's channel. The channel's feed lists
  *                                     the videos; Firecrawl reads the transcript (1 credit a video,
  *                                     kept forever in KV, because a transcript never changes).
  *
- * FACEBOOK IS READ WITHOUT AN ACCOUNT. A page's feed asks for a login; a single post does not.
- * TinyFish search finds the posts by URL, TinyFish fetch reads them, and both are free. No
- * Facebook login is used, and none should be: that is Ryan's account. A new post takes about a
- * day to reach search by its own URL, and a share of it (the October report was shared by New
- * Country 105.3 The Cat within hours) is read the same way and says whose share it is.
+ * FACEBOOK IS NOT READ (11/6). Santee Cooper Country's posts (the same report as its site, usually
+ * days earlier) and Capt. Jason Wolfe's monthly Wateree post were read here from 10/1, by TinyFish
+ * fetch with no login. Facebook's robots.txt: "Collection of data on Facebook through automated
+ * means is prohibited unless you have express written permission from Facebook". Ryan, 11/6: "i
+ * guess just for standardization lets switch them". So they are listed instead, with the water's
+ * other posts, for him to open and paste (FACEBOOK_PAGES and findPosts() below; the "Posts to
+ * read" list in the paste card, js/modules/pasted-reports.js). His view, for the record: "if you
+ * don't want bots to be able to fetch things then block bots".
  *
  * NOTHING IS SUMMARISED. Every `text` is what the source wrote. Every date says where it came from
  * (`publishedFrom`), and a source that states none says so (`published: null`).
@@ -66,6 +67,8 @@ const SCC_SITE = {
   kind: 'page', label: 'Santee Cooper Country fishing report', guides: SCC_GUIDES,
   url: 'https://www.santeecoopercountry.org/fishing/fishing-reports/',
 };
+// The two guides' Facebook pages. NOT READ (see the head of this file): findPosts() asks a search
+// for their posts by these queries and lists them for Ryan to open.
 const SCC_FB = {
   kind: 'facebook', label: 'Santee Cooper Country on Facebook', guides: SCC_GUIDES,
   author: 'Santee Cooper Country',
@@ -120,10 +123,20 @@ export const ahqOn = (tag, title) => ({
  * longer listed here.
  */
 export const GUIDE_SOURCES = {
-  wateree_lake: [WOLFE_FB],
   lake_murray: [MURRAY_YT],
-  lake_marion: [SCC_SITE, SCC_FB],
-  lake_moultrie: [SCC_SITE, SCC_FB],
+  lake_marion: [SCC_SITE],
+  lake_moultrie: [SCC_SITE],
+};
+
+/**
+ * The guides' Facebook pages, by the water each fishes: listed, never read (11/6). Wolfe's was
+ * Wateree's GUIDE_SOURCES entry and SCC's sat beside its site until then. Foreign keys, declared
+ * in test/hand-written-tables.test.js.
+ */
+export const FACEBOOK_PAGES = {
+  wateree_lake: [WOLFE_FB],
+  lake_marion: [SCC_FB],
+  lake_moultrie: [SCC_FB],
 };
 
 // ── WHO REPORTS ON WHICH WATER, BY NAME, FOR EVERY WATER WITH A RESEARCH PROFILE ─────────────
@@ -266,6 +279,8 @@ export function pickSearchHits(results, tokens, dateStr, nowMs = Date.now(), ski
 }
 
 const AHQ_BLOG = `${AHQ_BASE}/blogs/ahq-report`;
+// Hosts the general search does not read: the first two by name, above; Facebook, Instagram, YouTube
+// and TikTok are not fetched by search at all (Facebook's posts are listed, never read: findPosts()).
 const SEARCHED_ELSEWHERE = ['dnr.sc.gov', 'anglersheadquarters.com', 'facebook.com', 'instagram.com',
   'youtube.com', 'tiktok.com'];
 
@@ -654,56 +669,6 @@ async function readSccSite(src, env) {
   return [{ kind: src.kind, label: src.label, guides: src.guides, url: src.url, ...p }];
 }
 
-const pageOf = (u) => String(u || '').replace(/[?#].*$/, '').replace(/\/+$/, '').toLowerCase();
-const isPostUrl = (u) => /^https:\/\/(www\.|m\.)?facebook\.com\//.test(u)
-  && /\/(posts|photos|videos|permalink)\b/.test(u) && !/\/(groups|fb-answers)\//.test(u);
-
-async function readFacebook(src, env, month, prevMonth) {
-  const queries = [...src.queries(month), ...src.queries(prevMonth)];
-  const found = await Promise.all(queries.map((q) => tinyfishSearch({
-    query: q, include_domains: 'facebook.com',
-    purpose: `Find ${src.author}'s monthly fishing report post on Facebook`,
-  }, env).catch(() => null)));
-  const hits = found.flatMap((r) => (r && r.results) || []);
-  const urls = [...new Set(hits.map((x) => x.url).filter(isPostUrl))]
-    .slice(0, 10);                                     // TinyFish fetch takes ten URLs a call
-  const now = Date.now();
-  const r = urls.length ? await tinyfishFetch({ urls, format: 'markdown', ttl: 0 }, env) : null;
-  const posts = ((r && r.results) || []).map((hit) => {
-    const p = parseFacebookPost(hit.text, src.author, now);
-    return p && /fishing report/i.test(p.text) ? { ...p, url: hit.final_url || hit.url } : null;
-  }).filter(Boolean)
-    .sort((a, b) => String(b.published || '').localeCompare(String(a.published || '')));
-  const out = posts.length ? [{ kind: src.kind, label: src.label, guides: src.guides, ...posts[0] }] : [];
-  // ── A NEWER POST SEARCH CAN SEE AND NOBODY CAN READ YET ─────────────────────────────────────
-  //
-  // Measured the evening of 2026-10-01: the October report, posted that afternoon, came back from
-  // search only as the PAGE, with a preview: "OCTOBER 2026 FISHING REPORT Santee Cooper & Cooper
-  // River STRIPERS Striper season opens October 1st, and anglers should start looking for fish in
-  // 30-45 feet of water along flats and creek areas." The page needs a login and the post had no
-  // URL in search yet, so the newest readable post was August's. The preview is the only copy of
-  // the newest report there is, so it goes in, labelled as a search preview of a post nobody read,
-  // and only when the month it names is newer than the newest post that was read.
-  const page = pageOf(src.url);
-  const previews = hits.filter((x) => pageOf(x.url) === page && /fishing report/i.test(x.snippet || '')
-    && monthYearNamed(x.snippet))
-    .sort((a, b) => String(monthYearNamed(b.snippet)).localeCompare(String(monthYearNamed(a.snippet)))
-      || String(b.snippet).length - String(a.snippet).length);
-  const pv = previews[0];
-  const readMonth = out[0] ? String(out[0].published || '').slice(0, 7) : '';
-  if (pv && monthYearNamed(pv.snippet) > readMonth) {
-    out.push({
-      kind: src.kind, label: `${src.label} -- search preview only, the post itself could not be read yet`,
-      guides: src.guides, url: src.url, published: null, publishedFrom: null, preview: true,
-      monthYear: monthYearNamed(pv.snippet), monthNamed: monthsNamed(pv.snippet)[0] || null,
-      monthsNamed: monthsNamed(pv.snippet), text: String(pv.snippet).trim(),
-    });
-  }
-  if (!out.length) throw new Error(urls.length ? `read ${urls.length} post(s); none was a fishing report by ${src.author}`
-                                               : 'search found no post by URL');
-  return out;
-}
-
 // ── POSTS TO READ: FOUND BY A SEARCH, NEVER OPENED (11/6) ───────────────────────────────────
 //
 // Facebook's robots.txt: "Collection of data on Facebook through automated means is prohibited
@@ -817,7 +782,7 @@ export async function findPosts(slug, env, dateStr) {
   const prevMi = mi === 0 ? 11 : mi - 1;
   const after = `${prevY}-${String(prevMi + 1).padStart(2, '0')}-01`;
   const name = String(row.name || slug).replace(/,\s*[A-Z]{2}(\/[A-Z]{2})*$/, '');
-  const pages = (GUIDE_SOURCES[slug] || []).filter((s) => s.kind === 'facebook');
+  const pages = FACEBOOK_PAGES[slug] || [];
   const queries = [
     ...pages.flatMap((p) => [...p.queries(`${MONTHS[mi]} ${y}`), ...p.queries(`${MONTHS[prevMi]} ${prevY}`)]),
     `"${name}" fishing report`, `"${name}" fishing`,
@@ -952,7 +917,7 @@ async function readAhq(src, env, dateStr) {
   return out;
 }
 
-const READERS = { scdnr: readScdnr, page: readSccSite, facebook: readFacebook, youtube: readYoutube, ahq: readAhq,
+const READERS = { scdnr: readScdnr, page: readSccSite, youtube: readYoutube, ahq: readAhq,
   'scdnr-any': readScdnrAny, 'ahq-any': readAhqAny, search: readSearch };
 
 /** Every listed source for one water, each one's failure said rather than swallowed. */
@@ -961,14 +926,11 @@ export async function gatherGuideReports(slug, env, dateStr) {
   const sources = [...(GUIDE_SOURCES[slug] || []), ...general.sources];
   const d = /^\d{4}-\d{2}-\d{2}$/.test(String(dateStr || '')) ? String(dateStr) : dayEastern();
   const mi = Number(d.slice(5, 7)) - 1;
-  const y = Number(d.slice(0, 4));
   const month = MONTHS[mi];
-  const prev = mi === 0 ? `${MONTHS[11]} ${y - 1}` : `${MONTHS[mi - 1]} ${y}`;
   const settled = await Promise.allSettled(sources.map((s) => {
     const fn = READERS[s.kind];
-    return s.kind === 'facebook' ? fn(s, env, `${month} ${y}`, prev)
-      : s.kind === 'youtube' ? fn(s, env, month)
-        : (s.kind === 'ahq' || s.kind === 'ahq-any' || s.kind === 'search') ? fn(s, env, d) : fn(s, env);
+    return s.kind === 'youtube' ? fn(s, env, month)
+      : (s.kind === 'ahq' || s.kind === 'ahq-any' || s.kind === 'search') ? fn(s, env, d) : fn(s, env);
   }));
   const reports = [];
   const checked = [];
@@ -1014,7 +976,8 @@ export async function handleGuideReports(request, env, url) {
   // v3 the same evening: the quoted search form and the live transcript scrape. v4: "may" is a verb.
   // v5: Angler's Headquarters, the plan's month in each of the last three years.
   // v6, 2026-10-02: SCDNR, AHQ and a search for every water with a research profile.
-  const key = `guide:reports:v6:${slug}:${String(date).slice(0, 7)}:${dayEastern()}`;
+  // v7, 2026-11-06: no Facebook post is read; a day kept by v6 has SCC's and Wolfe's in it.
+  const key = `guide:reports:v7:${slug}:${String(date).slice(0, 7)}:${dayEastern()}`;
   if (env.KV && !fresh) {
     const hit = await env.KV.get(key, 'json');
     if (hit) return json({ ...hit, cached: true });

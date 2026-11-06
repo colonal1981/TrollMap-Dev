@@ -288,10 +288,17 @@ const DECLARED = [
   // says where a person fishes. SCDNR and AHQ were listed here for his five lakes until 2026-10-02
   // and now come by name for every water with a research profile (Ryan: "the individual guide
   // reports can probably stay but we can do general searches for the other major lakes").
-  ['Worker/guide-reports.js', 'GUIDE_SOURCES', 4, 'foreign-key',
-   'where four individual guides publish and the water each fishes: Santee Cooper Country\'s page '
-   + 'and Facebook author (Marion, Moultrie), Wolfe\'s Facebook author (Wateree), the Lake Murray '
-   + 'report channel. Verify by reading: each report carries its source and URL.'],
+  ['Worker/guide-reports.js', 'GUIDE_SOURCES', 3, 'foreign-key',
+   'where the individual guides publish and the water each fishes: Santee Cooper Country\'s page '
+   + '(Marion, Moultrie) and the Lake Murray report channel. Verify by reading: each report '
+   + 'carries its source and URL. Wateree\'s entry, Wolfe\'s Facebook page, moved to '
+   + 'FACEBOOK_PAGES on 11/6.'],
+  // The guides' Facebook pages, LISTED and never read since 2026-11-06 (Facebook's robots.txt;
+  // Ryan: "i guess just for standardization lets switch them"). findPosts() asks a search for
+  // their posts so the paste card can list them for him to open.
+  ['Worker/guide-reports.js', 'FACEBOOK_PAGES', 3, 'foreign-key',
+   'Wolfe\'s Guide Service (Wateree) and Santee Cooper Country (Marion, Moultrie): whose posts the '
+   + '"Posts to read" list asks a search for. Verify by reading: each listed post links to its page.'],
   // The two lakes of the Santee Cooper system, which share one set of reports. A depth of water in
   // one of those reports goes on a lane only on the lake its sentence is about. Ryan, 2026-10-01:
   // "If place names help lock down which lake why wouldn't we use them?" and "go ahead".
