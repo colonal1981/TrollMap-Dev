@@ -30,6 +30,8 @@ SOURCES = {   # key -> (who publishes it, what it is, the states its waters are 
     'GA-WRD': ('Georgia DNR Wildlife Resources Division', 'weekly Georgia Fishing Report blog', {'GA', 'SC'}),
     'BASS': ('B.A.S.S. (Bassmaster)', 'tournament reports and patterns', {'SC', 'GA', 'NC', 'TN'}),
     'MLF': ('Major League Fishing', 'tournament reports and patterns', {'SC', 'GA', 'NC', 'TN'}),
+    # 11/6: what he read himself and pasted into the app (item 44), with his date and his water (report_pasted.py)
+    'PASTED': ('Ryan', 'a report he read and pasted into the app', {'SC', 'GA', 'NC', 'TN'}),
 }
 # SC only, his word of 11/5: "when we run research we are going to have to stick to SC waters unless we plan to find
 # these type of sources for the other 3 states". A source for another state is one more row here, and a reader.
@@ -39,8 +41,8 @@ SPECIES = ['striped bass', 'hybrid striped bass', 'white bass', 'black bass', 'l
 ABOUT = ['labelled', 'named', 'continued', 'mention']
 DATED_BY = ['section heading', 'release', 'release (no year: the one before the capture)', 'release (year corrected)',
             'published', 'month named',
-            'month captured', 'entry date', 'month of the report', 'video date']
-WATER_FROM = ['heading', 'named', 'place named', 'captains', 'system', 'source page', 'none']
+            'month captured', 'entry date', 'month of the report', 'video date', 'his date']
+WATER_FROM = ['heading', 'named', 'place named', 'captains', 'system', 'source page', 'he said', 'none']
 DEPTH_KIND = ['water', 'fish', 'unclear']
 FISH_POSITION = ['bottom', 'suspended', 'top']
 # The lure families a report names (report_text.LURE_WORDS), for every fish. His way is a lure the report trolls, from

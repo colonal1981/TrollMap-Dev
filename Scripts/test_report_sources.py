@@ -8,7 +8,7 @@ Personal use only, not for distribution or resale; not for navigation.
 Georgia DNR's weekly blog, Santee Cooper Country's monthly pages, the tournament reports (Bassmaster, MLF) and the
 Lake Murray video captions. Small texts written here; nothing is fetched.
 """
-import os, sys, unittest
+import json, os, sys, unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import report_contract as K                                     # noqa: E402
@@ -16,6 +16,9 @@ import report_ga as G                                           # noqa: E402
 import report_scc as SC                                         # noqa: E402
 import report_tourney as TN                                     # noqa: E402
 import report_yt as Y                                           # noqa: E402
+import report_pasted as PA                                      # noqa: E402
+import reports_step as R                                        # noqa: E402
+import tempfile                                                 # noqa: E402
 
 GA_POST = '\n'.join([
     '# CENTRAL GEORGIA', '#### RESERVOIR REPORT', 'CLARKS HILL LAKE',
@@ -202,9 +205,71 @@ class MurrayVideos(unittest.TestCase):
         self.assertEqual(Y.month_of({'video_id': 'NTGCpYlNlRs', 'title': 'May Fishing Report'}), '2025-05')
 
 
+class HisPastes(unittest.TestCase):
+    """Item 44's pastes join the water's statements (11/6: "i thought that was already the plan...")."""
+    PASTE = {'id': 'pasted-report-abc', 'kind': 'pasted_report', 'slug': 'lake_marion', 'date': '2026-11-02',
+             'from': 'Santee Cooper Country', 'aboutLake': None,
+             'link': 'https://www.facebook.com/santeecoopercountrysouthcarolina/posts/november-2026-fishing-report/1/',
+             'text': 'STRIPERS\nThe stripers are 30 to 45 feet down along the flats, trolling bucktails early.'}
+
+    def fake(self, items, rows, pages=None):
+        calls = []
+        def get(url, token):
+            calls.append(url); assert token == 'stand-in'
+            if '/sync/list-updates' in url:
+                since = url.split('since=')[1] if 'since=' in url else None
+                return {'items': (pages or {}).get(since, items)}
+            return rows.get(url.rsplit('/', 1)[-1])
+        return get, calls
+
+    def test_listed_skips_removed_and_other_types(self):
+        items = [{'key': 'report/pasted-report-abc', 'lastModified': '1'}, {'key': 'report/gone', 'deleted': True},
+                 {'key': 'plan/p1'}, {'key': 'report/half'}]
+        rows = {'pasted-report-abc': self.PASTE, 'half': {'id': 'half', 'kind': 'pasted_report', 'text': 'x'}}
+        get, calls = self.fake(items, rows)
+        recs = PA.listed('https://w', 'stand-in', get)
+        self.assertEqual([r['id'] for r in recs], ['pasted-report-abc'], 'no date: not a report the plan can weigh')
+        self.assertFalse(any('/plan/' in c or '/gone' in c for c in calls))
+
+    def test_listed_pages_by_last_modified(self):
+        old = PA.PAGE
+        try:
+            PA.PAGE = 2
+            pages = {None: [{'key': 'plan/a', 'lastModified': '1'}, {'key': 'plan/b', 'lastModified': '2'}],
+                     '2': [{'key': 'report/pasted-report-abc', 'lastModified': '3'}]}
+            get, _ = self.fake(None, {'pasted-report-abc': self.PASTE}, pages)
+            self.assertEqual(len(PA.listed('https://w', 'stand-in', get)), 1)
+        finally:
+            PA.PAGE = old
+
+    def test_a_paste_is_read_like_a_report_and_keeps_to_the_contract(self):
+        with tempfile.TemporaryDirectory() as d:
+            ids = PA.keep([self.PASTE], os.path.join(d, 'pasted'))
+            with open(os.path.join(d, 'pasted', ids[0] + '.json'), encoding='utf-8') as fh: rec = json.load(fh)
+            ma = PA.statements(rec, 'lake_marion'); mo = PA.statements(rec, 'lake_moultrie')
+            self.assertTrue(ma and mo, 'Santee Cooper: both lakes, unless he said which')
+            self.assertEqual(PA.statements(rec, 'lake_murray'), [])
+            s = ma[0]
+            self.assertEqual((s['source'], s['date'], s['who'], s['url']), ('PASTED', '2026-11-02', ['Santee Cooper Country'], self.PASTE['link']))
+            self.assertEqual(s['species'], ['striped bass'])
+            texts = K.source_texts(d)
+            c = R.to_contract(s)
+            self.assertEqual(K.check(c, {'lake_marion', 'lake_moultrie'}, texts), [])
+            self.assertIn('bucktail', c['lures'])
+            only = dict(rec, about_lake='lake_moultrie')
+            self.assertEqual(PA.statements(only, 'lake_marion'), [])
+            self.assertTrue(PA.statements(only, 'lake_moultrie'))
+
+    def test_the_step_reads_them_only_with_the_key(self):
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'reports_step.py'), encoding='utf-8') as fh: src = fh.read()
+        self.assertIn("('pasted', 'pasted', lambda r: PA.statements(r, slug))", src)
+        self.assertIn("PA.listed_once(WORKER, token)", src)
+        self.assertIn("no key (a dry run), so his pastes are not read", src)
+
+
 class TheContractKnowsThem(unittest.TestCase):
     def test_sources(self):
-        for k in ('GA-WRD', 'BASS', 'MLF', 'SCC', 'YT-BigFishBlanch'): self.assertIn(k, K.SOURCES)
+        for k in ('GA-WRD', 'BASS', 'MLF', 'SCC', 'YT-BigFishBlanch', 'PASTED'): self.assertIn(k, K.SOURCES)
 
 
 if __name__ == '__main__':

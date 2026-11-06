@@ -48,7 +48,8 @@ import report_places as P            # noqa: E402
 import report_ga as G                # noqa: E402
 import report_scc as SC              # noqa: E402
 import report_tourney as TN          # noqa: E402
-import report_yt as Y                # noqa: E402
+import report_yt as Y
+import report_pasted as PA                # noqa: E402
 
 PAUSE_S = 2.5                       # between two requests to the same site
 # A save that fails on the network, or that the Worker cannot answer (5xx, 429), tries again after these waits.
@@ -292,10 +293,11 @@ def read_statements(slug, cache, idx, names, ahq_urls, cs_urls=(), extra=None):
             docs['CS'] += 1; add(S.statements(rec, ws, pn, rx))
     extra = extra or {}
     for key, sub, reader in (('ga', 'ga', lambda r: G.statements(r, {slug})), ('scc', 'scc', lambda r: SC.statements(r, slug)),
-                             ('tourney', 'tourney', lambda r: TN.statements(r, slug)), ('yt', 'yt', lambda r: Y.statements(r, slug))):
+                             ('tourney', 'tourney', lambda r: TN.statements(r, slug)), ('yt', 'yt', lambda r: Y.statements(r, slug)),
+                             ('pasted', 'pasted', lambda r: PA.statements(r, slug))):
         if key != 'yt' and key not in extra: continue
-        want = None if key == 'yt' else {(SC.slug_of(u[0]) if key == 'scc' else TN.slug_of(u) if key == 'tourney'
-                                          else G.slug_of(u)) for u in extra[key]}
+        want = None if key == 'yt' else set(extra[key]) if key == 'pasted' else {
+            (SC.slug_of(u[0]) if key == 'scc' else TN.slug_of(u) if key == 'tourney' else G.slug_of(u)) for u in extra[key]}
         for rec in _records(os.path.join(cache, sub)):
             if want is not None and rec.get('slug') not in want: continue
             st = reader(rec)
@@ -365,6 +367,17 @@ def run(slug, regdir, cache, out, dry_run=True, fetch=True, limit=0, log=print):
         tn, _ = _listed(cache, 'tourney_articles.txt', 'tournaments',
                         lambda log: TN.article_urls(log=log, mlf_all=first), fetch, log, merge=True)
         extra['tourney'] = [u for u, _ in tn if slug in TN.waters_of(u)]
+        # HIS OWN PASTES (item 44), read with the key the save already needs (report_pasted.py). Never fatal: a water
+        # is read without them, and the result says why.
+        token = os.environ.get('TROLLMAP_SYNC_TOKEN', '')
+        if token:
+            try:
+                extra['pasted'] = PA.keep(PA.listed_once(WORKER, token), os.path.join(cache, 'pasted'))
+            except Exception as e:                                   # noqa: BLE001
+                res['pasted_error'] = re.sub(r'\s+', ' ', str(e))[:200]
+                log('   pastes: could not be read (%s); read without them' % res['pasted_error'])
+        else:
+            res['pasted_error'] = 'no key (a dry run), so his pastes are not read'
         res['new_sources_listed'] = {k: len(v) for k, v in extra.items()}
         if fetch:
             got = {}
