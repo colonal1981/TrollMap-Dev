@@ -25,11 +25,12 @@
  * effort: none is sent unless the request names one, so Opus answers at its own default, as the
  * CLI did.
  *
- * ONE REQUEST, NOT A STREAM. A request here gets 10 ms of CPU on the free plan; waiting on the
- * answer costs none, and reading a stream of thinking events, one parse each, would. Opus 5.5
- * answered his plans in 122-141 s on the bridge (APP_CHANGE_REQUESTS.md item 52); Anthropic advises
- * streaming past about ten minutes. A request that fails here costs a plan nothing: the app asks
- * the bridge next.
+ * A PLAN IS STREAMED THROUGH, UNREAD; A PHOTO IS ONE REQUEST. A request here gets 10 ms of CPU on the
+ * free plan; waiting on the answer costs none, and reading a stream of thinking events, one parse
+ * each, would. So the Worker never parses one: a plan's stream is handed to the page as it comes
+ * (askClaudeStream(), since 11/6, when a long plan's one request was cut off at 125 s with HTTP 524),
+ * and the page reads it. Opus 5.5 answered his plans in 122-141 s on the bridge (APP_CHANGE_REQUESTS.md
+ * item 52). A request that fails here costs a plan nothing: the app asks the bridge next.
  *
  * WHO MAY CALL IT. The two routes that spend are behind the same gate as the routes that change
  * stored state (SPENDING_ROUTES in trollmap-worker.js). That gate is the sync token, which ships in
@@ -79,27 +80,55 @@ export function refusalOf(status, body) {
   };
 }
 
-/** One Messages call. {ok:true, data, seconds} or {ok:false, status, error, creditOut}. */
-export async function askClaude(env, { system, content, effort }, { fetchImpl = fetch, now = Date.now } = {}) {
+/** The Messages body, or the refusal before any is sent: {body} or {fail}. */
+async function messageBody(env, { system, content, effort }, fetchImpl) {
   if (!env || !env.ANTHROPIC_API_KEY) {
-    return { ok: false, status: 503, error: 'the Worker has no ANTHROPIC_API_KEY', creditOut: false, noKey: true };
+    return { fail: { ok: false, status: 503, error: 'the Worker has no ANTHROPIC_API_KEY', creditOut: false, noKey: true } };
   }
-  const t0 = now();
   let max;
   try {
     max = await maxOutputTokens(env, CLAUDE_MODEL, fetchImpl);
   } catch (e) {
     const why = e.body ? refusalOf(e.upstream, e.body) : { error: e.message, creditOut: false };
-    return { ok: false, status: 502, ...why };
+    return { fail: { ok: false, status: 502, ...why } };
   }
-  const body = {
+  return { body: {
     model: CLAUDE_MODEL,
     max_tokens: max,
     ...(typeof system === 'string' && system ? { system } : {}),
     messages: [{ role: 'user', content }],
     // The API judges the value; the planner's re-ask is the one caller that names one ("low").
     ...(typeof effort === 'string' && effort ? { output_config: { effort } } : {}),
-  };
+  } };
+}
+
+/**
+ * ONE MESSAGES CALL, STREAMED STRAIGHT THROUGH. {ok:true, body} (the API's own event stream, unread) or the refusal.
+ *
+ * His Moultrie day of 11/6, laid in the reports' areas, sent Opus a 234,000-character prompt (twenty legs); the one
+ * request with nothing coming back for two minutes was cut off at 125 s with HTTP 524 and the plan went to Gemini.
+ * The plan before it had taken 134 s and come back. A stream sends the answer as it is written, so nothing sits idle
+ * long enough to be cut. The Worker hands the stream on without reading it, which costs it no CPU (the reason given
+ * above for one request); the page reads it (claude-bridge.js).
+ */
+export async function askClaudeStream(env, { system, content, effort }, { fetchImpl = fetch } = {}) {
+  const m = await messageBody(env, { system, content, effort }, fetchImpl);
+  if (m.fail) return m.fail;
+  const r = await fetchImpl(`${API}/v1/messages`, { method: 'POST', headers: headersFor(env),
+                                                   body: JSON.stringify({ ...m.body, stream: true }) });
+  if (!r.ok || !r.body) {
+    const data = await r.json().catch(() => null);
+    return { ok: false, status: 502, ...refusalOf(r.status, data) };
+  }
+  return { ok: true, body: r.body };
+}
+
+/** One Messages call. {ok:true, data, seconds} or {ok:false, status, error, creditOut}. */
+export async function askClaude(env, { system, content, effort }, { fetchImpl = fetch, now = Date.now } = {}) {
+  const t0 = now();
+  const m = await messageBody(env, { system, content, effort }, fetchImpl);
+  if (m.fail) return m.fail;
+  const body = m.body;
   const r = await fetchImpl(`${API}/v1/messages`, { method: 'POST', headers: headersFor(env),
                                                    body: JSON.stringify(body) });
   const data = await r.json().catch(() => null);
@@ -135,8 +164,15 @@ export function handleClaudeHealth(env) {
 export async function handleClaudeAsk(request, env, o = {}) {
   let req;
   try { req = await request.json(); } catch { return reply(400, { error: 'the body is not JSON' }); }
-  const { system, user, effort } = req || {};
+  const { system, user, effort, stream } = req || {};
   if (typeof user !== 'string' || !user.trim()) return reply(400, { error: 'no user prompt' });
+  // A PAGE THAT READS A STREAM ASKS FOR ONE (`stream: true`), and gets the API's events as they are written.
+  if (stream === true) {
+    const s = await askClaudeStream(env, { system, content: [{ type: 'text', text: `${ASK}\n\n${user}` }], effort }, o);
+    if (!s.ok) return reply(s.status, { error: s.error, creditOut: s.creditOut, ...(s.noKey ? { noKey: true } : {}) });
+    return new Response(s.body, { status: 200, headers: { ...CORS, 'Content-Type': 'text/event-stream; charset=utf-8',
+                                                          'Cache-Control': 'no-cache', 'X-Claude-Model-Asked': CLAUDE_MODEL } });
+  }
   const r = await askClaude(env, { system, content: [{ type: 'text', text: `${ASK}\n\n${user}` }], effort }, o);
   if (!r.ok) return reply(r.status, { error: r.error, creditOut: r.creditOut, ...(r.noKey ? { noKey: true } : {}) });
   return reply(200, toOpenAi(r.data, r.seconds, effort));

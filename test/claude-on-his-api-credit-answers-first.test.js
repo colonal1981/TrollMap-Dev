@@ -79,7 +79,8 @@ test('1. a plan goes to the Worker\'s Claude first, with the gate\'s header, and
   assert.equal(calls.length, 1, 'the bridge is not asked when the Worker answers');
   assert.equal(calls[0].url, `${CLAUDE_API_URL}/claude/ask`);
   assert.ok('X-Sync-Token' in calls[0].init.headers, 'the gate\'s header goes with it');
-  assert.deepEqual(JSON.parse(calls[0].init.body), { system: 'sys', user: 'plan the day' });
+  // asked as a stream (11/6: a long plan's one request was cut off at 125 s); a Worker that answers in one piece is read
+  assert.deepEqual(JSON.parse(calls[0].init.body), { system: 'sys', user: 'plan the day', stream: true });
   assert.match(said[0], /Asking Claude through the Worker/);
 });
 
@@ -87,7 +88,7 @@ test('1. the re-ask\'s effort goes to the Worker as the bridge sends it', async 
   const { fetchImpl, calls } = routes({ api: json(200, API_BODY), pc: PC_UP });
   const said = [];
   await claudeFirstAsker(gemini(), { fetchImpl, say: (m) => said.push(m) })({ ...REQ, effort: 'low' });
-  assert.deepEqual(JSON.parse(calls[0].init.body), { system: 'sys', user: 'plan the day', effort: 'low' });
+  assert.deepEqual(JSON.parse(calls[0].init.body), { system: 'sys', user: 'plan the day', effort: 'low', stream: true });
   assert.match(said[0], /\(low effort\)/);
 });
 
@@ -274,4 +275,76 @@ test('5. the two routes that spend are behind the gate', () => {
   // The gate's one line also counts GATED_READS since 11/6 (/research/reports, his reports file).
   assert.match(w, /let mutating = MUTATING_ROUTES\.includes\(path\) \|\| SPENDING_ROUTES\.includes\(path\)[^;\n]*;/);
   for (const r of ['/claude/health', '/claude/ask', '/claude/look']) assert.ok(w.includes(`path === "${r}"`), r);
+});
+
+// ── A PLAN IS STREAMED (11/6) ──────────────────────────────────────────────────────────────────────────────────────
+// His Moultrie area day sent Opus a 234,000-character prompt; the plan's one request, idle while Opus thought and
+// wrote, was cut off at 125 s with HTTP 524 ("Claude through the Worker failed: Claude API 524: HTTP 524") and the
+// plan went to Gemini. The plan before it had taken 134 s and come back. Now the Worker asks for a stream and hands it
+// on unread; the page reads it.
+const ev = (type, data) => `event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`;
+const SSE = [
+  ev('message_start', { message: { model: 'claude-opus-5-5', usage: { input_tokens: 80000, cache_read_input_tokens: 941, output_tokens: 1 } } }),
+  ev('content_block_start', { index: 0, content_block: { type: 'thinking', thinking: '' } }),
+  ev('content_block_delta', { index: 0, delta: { type: 'thinking_delta', thinking: 'the dam first...' } }),
+  ev('content_block_stop', { index: 0 }),
+  ev('ping', {}),
+  ev('content_block_start', { index: 1, content_block: { type: 'text', text: '' } }),
+  ev('content_block_delta', { index: 1, delta: { type: 'text_delta', text: '{"legs":' } }),
+  ev('content_block_delta', { index: 1, delta: { type: 'text_delta', text: '[]}' } }),
+  ev('content_block_stop', { index: 1 }),
+  ev('message_delta', { delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 13021 } }),
+  ev('message_stop', {}),
+].join('');
+const sse = (body, status = 200) => ({ ok: status === 200, status, headers: { get: (k) => (/content-type/i.test(k) ? 'text/event-stream; charset=utf-8' : null) },
+  text: async () => body, json: async () => { throw new Error('not json'); }, body });
+
+test('6. the Worker asks for a stream and hands the API\'s events on unread', async () => {
+  const stream = new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode(SSE)); c.close(); } });
+  const { fetchImpl, calls } = anthropic({ ok: true, status: 200, body: stream, json: async () => { throw new Error('a stream'); } });
+  const r = await handleClaudeAsk(post({ system: 'sys', user: 'PLAN', stream: true }), ENV, { fetchImpl });
+  assert.equal(r.status, 200);
+  assert.match(r.headers.get('content-type'), /text\/event-stream/);
+  const sent = JSON.parse(calls.find((c) => c.url.endsWith('/v1/messages')).init.body);
+  assert.equal(sent.stream, true);
+  assert.equal(sent.model, 'claude-opus-5-5');
+  assert.equal(await r.text(), SSE, 'the events as the API sent them');
+  // a refusal before the stream starts is the same JSON as before
+  const spent = { type: 'error', error: { type: 'invalid_request_error', message: 'Your credit balance is too low to access the Anthropic API.' } };
+  const x = anthropic(json(400, spent));
+  const rr = await handleClaudeAsk(post({ user: 'u', stream: true }), ENV, { fetchImpl: x.fetchImpl });
+  assert.equal(rr.status, 502);
+  assert.equal((await rr.json()).creditOut, true);
+  const src2 = src('Worker/claude-api.js');
+  assert.doesNotMatch(src2.slice(src2.indexOf('export async function askClaudeStream'), src2.indexOf('/** One Messages call.')),
+    /getReader|JSON\.parse/, 'the Worker never reads the stream');
+});
+
+test('6. the page reads the stream: the text and not the thinking, the tokens, and who wrote it', async () => {
+  const { fetchImpl } = routes({ api: sse(SSE), pc: PC_UP });
+  const g = gemini();
+  const out = await claudeFirstAsker(g, { fetchImpl })(REQ);
+  assert.equal(out.content, '{"legs":[]}');
+  assert.equal(out.meta.provider, 'claude (API)');
+  assert.equal(out.meta.model, 'claude-opus-5-5');
+  assert.equal(out.meta.promptTokens, 80941);
+  assert.equal(out.meta.completionTokens, 13021);
+  assert.equal(out.meta.finishReason, 'stop');
+  assert.equal(g.calls, 0);
+});
+
+test('6. an error in the stream, or a stream cut short, goes on to the bridge and says why', async () => {
+  const overloaded = SSE.split('event: content_block_start')[0] + ev('error', { error: { type: 'overloaded_error', message: 'Overloaded' } });
+  const a = routes({ api: sse(overloaded), pc: PC_UP });
+  const out = await claudeFirstAsker(gemini(), { fetchImpl: a.fetchImpl })(REQ);
+  assert.equal(out.meta.provider, 'claude (this PC)');
+  assert.match(out.meta.claudeApi, /Claude API stream: overloaded_error: Overloaded/);
+  const cut = SSE.slice(0, SSE.indexOf('event: message_delta'));
+  const b = routes({ api: sse(cut), pc: PC_UP });
+  const out2 = await claudeFirstAsker(gemini(), { fetchImpl: b.fetchImpl })(REQ);
+  assert.match(out2.meta.claudeApi, /ended before the answer did/);
+  // a cut-off answer (max_tokens) reads as one
+  const { answerFromStream } = await import('../js/modules/claude-bridge.js');
+  const long = SSE.replace('"stop_reason":"end_turn"', '"stop_reason":"max_tokens"');
+  assert.equal(answerFromStream(long).choices[0].finish_reason, 'length');
 });

@@ -100,6 +100,74 @@ async function apiPost(worker, route, body, fetchImpl) {
                       { creditOut: !!(data && data.creditOut), noKey: !!(data && data.noKey) });
 }
 
+/**
+ * THE API'S EVENT STREAM, READ INTO THE ANSWER THE WORKER'S ONE REQUEST GAVE (toOpenAi() in Worker/claude-api.js):
+ * the text blocks only, never the thinking; the tokens; why it stopped. Throws on an error event, and on a stream that
+ * ends before the answer did. Pure.
+ *
+ * His 11/6 Moultrie area day sent Opus a 234,000-character prompt, and the plan's one request, with nothing coming
+ * back while Opus thought and wrote, was cut off at 125 s with HTTP 524; the plan went to Gemini. A stream is never
+ * idle that long.
+ */
+export function answerFromStream(sse, { seconds = null, effort = null } = {}) {
+  let text = '', model = null, stop = null, done = false, input = 0, output = 0;
+  for (const block of String(sse || '').split(/\r?\n\r?\n/)) {
+    const lines = block.split(/\r?\n/);
+    const ev = (lines.find((l) => l.startsWith('event:')) || '').slice(6).trim();
+    const raw = lines.filter((l) => l.startsWith('data:')).map((l) => l.slice(5).trim()).join('\n');
+    if (!raw) continue;
+    let d;
+    try { d = JSON.parse(raw); } catch { continue; }
+    const type = d.type || ev;
+    if (type === 'error') {
+      const msg = (d.error && d.error.message) || 'the stream sent an error';
+      throw Object.assign(new Error(`Claude API stream: ${(d.error && d.error.type) || 'error'}: ${msg}`),
+                          { creditOut: /credit balance is too low/i.test(msg) || (d.error && d.error.type) === 'billing_error' });
+    }
+    if (type === 'message_start' && d.message) {
+      model = d.message.model || model;
+      const u = d.message.usage || {};
+      input = ['input_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens'].reduce((a, k) => a + (Number(u[k]) || 0), 0);
+      output = Number(u.output_tokens) || output;
+    } else if (type === 'content_block_delta' && d.delta && d.delta.type === 'text_delta') {
+      text += d.delta.text || '';
+    } else if (type === 'message_delta') {
+      if (d.delta && d.delta.stop_reason) stop = d.delta.stop_reason;
+      if (d.usage && Number(d.usage.output_tokens) >= 0) output = Number(d.usage.output_tokens);
+    } else if (type === 'message_stop') {
+      done = true;
+    }
+  }
+  if (!done) throw new Error('the stream from Claude ended before the answer did');
+  return {
+    choices: [{ index: 0, finish_reason: stop === 'max_tokens' ? 'length' : 'stop', message: { role: 'assistant', content: text } }],
+    model: model || null,
+    usage: { prompt_tokens: input, completion_tokens: output, total_tokens: input + output },
+    _trollmap: { provider: 'claude (API)', model: model || null, seconds, effort, stopReason: stop, streamed: true },
+  };
+}
+
+/**
+ * A plan from the Worker's Claude, streamed (askClaudeStream() there): {data, text}, or throws as apiPost() does. A
+ * Worker that answers in one piece (an error, or one not yet redeployed) is read the old way.
+ */
+async function apiAskStreamed(worker, body, fetchImpl) {
+  const t0 = Date.now();
+  const r = await fetchImpl(`${worker}/claude/ask`, { method: 'POST', headers: workerHeaders(),
+                                                     body: JSON.stringify({ ...body, stream: true }) });
+  const type = (r.headers && typeof r.headers.get === 'function' && r.headers.get('content-type')) || '';
+  const raw = await r.text();
+  if (r.ok && /event-stream/i.test(type)) {
+    const data = answerFromStream(raw, { seconds: Math.round((Date.now() - t0) / 100) / 10, effort: body.effort || null });
+    return { data, text: JSON.stringify(data) };
+  }
+  let data = null;
+  try { data = JSON.parse(raw); } catch { data = null; }
+  if (r.ok && data && !data.error) return { data, text: raw };
+  throw Object.assign(new Error((data && data.error) || `HTTP ${r.status}`),
+                      { creditOut: !!(data && data.creditOut), noKey: !!(data && data.noKey) });
+}
+
 const apiWhyOf = (e) => (e.creditOut ? `this month's API credit is spent (${e.message})`
   : `Claude through the Worker failed: ${e.message}`);
 
@@ -124,8 +192,8 @@ export function claudeFirstAsker(fallback, o = {}) {
     if (apiUrl) {
       say(`Asking Claude through the Worker${req.effort ? ` (${req.effort} effort)` : ''}…`);
       try {
-        const { data, text } = await apiPost(apiUrl, '/claude/ask', { system: req.system, user: req.user,
-                                                            ...(req.effort ? { effort: req.effort } : {}) }, fetchImpl);
+        const { data, text } = await apiAskStreamed(apiUrl, { system: req.system, user: req.user,
+                                                              ...(req.effort ? { effort: req.effort } : {}) }, fetchImpl);
         const out = readAnswer(data, text, 'claude (API)');
         if (out.content) { say(ANSWER_STEP); return out; }
         apiWhy = 'Claude through the Worker answered with nothing in it';
