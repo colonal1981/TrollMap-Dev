@@ -1677,6 +1677,7 @@ export function layAreaOption(i) {
     p.runId = `${T.r2Key || 'water'}#${leg.name}`;
     if (leg.run) p.run = leg.run;
     if (leg.area) p.area = leg.area;
+    if (leg.upBefore) p.upBefore = true;
   });
   const keys = pieces.map((p) => p.key);
   T.pieces = [...pieces, ...found];
@@ -1713,7 +1714,8 @@ export function areaDaySaid(day, i, { rampName = '', species = '' } = {}) {
     + `${rep.waterN ? ` (${rep.waterN} depth${rep.waterN === 1 ? '' : 's'} stated)` : ''}, each out one side and back the other, `
     + 'each on new water before any is gone round again; stay on one where they bite. '
     + (day.fishFt ? `The reports put the fish ${day.fishFt[0] === day.fishFt[1] ? `about ${day.fishFt[0]}` : `${day.fishFt[0]}–${day.fishFt[1]}`} ft down. ` : '')
-    + `A run is trolled at ${RUN_MPH} mph with two deep divers that clear its water, lines up out of the cove. `
+    + `A run is trolled at ${RUN_MPH} mph with two deep divers that clear its water, lines up out of the cove; so is a move `
+    + 'from one loop to the next, over water they clear, and one that cannot avoid shallower water is lines up from its start. '
     + 'Your catches did not choose any of this.'
     + (day.left.length ? ` Left out: ${day.left.map((a) => `${a.name}, ${a.left}`).join('; ')}.` : '')
     + (day.coveCrossesShore ? ` The way out of ${rampName || 'the ramp'} runs past charted docks and shore lines, so it is drawn on the depth chart alone — steer it by eye.` : '');

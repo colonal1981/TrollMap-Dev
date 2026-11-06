@@ -1483,7 +1483,10 @@ export function loopSteps(loop, pieces, o = {}) {
   // Moultrie dam day that was 20-24 ft on every back leg over 50+ ft of water: the A-rig lifted to 15-19 ft and the
   // DD3 taken off for 1.5 km. Measured along the join instead; and a join over water shallower than the pieces either
   // side of it less his steering is run with the lines up, so it lifts nothing.
+  // A MOVE BETWEEN AN AREA'S LOOPS THE DIVERS CANNOT CLEAR (plan-areas.js, `upBefore` on the piece after it) is run with
+  // the lines up from its start, as the plan says before he launches -- not a change of baits on the water.
   const joinOf = (a, b, prevP, nextP) => {
+    if (nextP && nextP.upBefore) return { kind: 'run', shallowestFt: null, movedUp: true };
     if (!o.depthAt) return { kind: 'troll', shallowestFt: nextP.holdsFt };
     const ft = densify([a, b], 20).map((c) => o.depthAt(c)).filter((v) => v != null && Number.isFinite(Number(v))).map(Number);
     if (!ft.length) return { kind: 'troll', shallowestFt: nextP.holdsFt };

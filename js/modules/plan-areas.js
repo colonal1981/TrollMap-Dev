@@ -60,6 +60,13 @@ export const MAX_LOOPS = 6;
 const START_APART_M = 700;
 /** Water within this of a loop already chosen is not new water. */
 const COVER_M = 150;
+/**
+ * A move between loops shorter than this by water is a join: trolled on at the loop's speed with what is out (or
+ * lines up over a shoal, loopSteps()). The same 800 m as a run (MIN_RUN_TROLLED_M): less is not worth changing baits.
+ */
+export const MIN_MOVE_M = 800;
+/** A move with the divers may go this much farther than the shortest way by water to stay over water they clear. */
+const MOVE_DETOUR = 2;
 /** His run speed, with two deep divers out. */
 export const RUN_MPH = 3.0;
 /** How many rods go out on a run. */
@@ -416,8 +423,126 @@ export function layAreas(o) {
     return { lineFt: c.lineFt, legs, m, start, end, minutes: Math.round(minutesFor(m, TROLL_MPH)),
              structure: (lap.score && lap.score.structure) || 0 };
   };
-  // Between loops, and to and from where the run comes in: trolled, by water about a quarter longer than the crow flies.
-  const hopMin = (a, b) => minutesFor(1.25 * metresBetween(a, b), TROLL_MPH);
+  // ── THE MOVES BETWEEN LOOPS: AT 3 MPH WITH THE TWO DIVERS, OVER WATER THEY CLEAR ─────────────────────────────────
+  // Ryan, 11/6: "as long as the app has me travelling at 3mph with double crankbaits in the water then the transit time
+  // is still fishing time". And of being told on the water to pull them over a shoal: "adding more things to the fish
+  // finder map is not going to help me". So a move is routed over water the area's two divers clear, around a shoal
+  // rather than over it; one that cannot avoid shallow water is run with the lines up from its start, and the plan he
+  // reads before he launches says which. A move under MIN_MOVE_M is a join (loopSteps()).
+  /** The area's two divers: the run's, or where there is no run, the pair that reaches the fish's depth over its water. */
+  const movePairFor = (area) => {
+    if (area.run && area.run.rods && area.run.rods.length) return { rods: area.run.rods, needFt: area.run.needFt };
+    const ok = cranks.filter((c) => c.maxMph == null || c.maxMph >= RUN_MPH);
+    const pairs = [];
+    for (const cap of [...new Set(ok.map((c) => c.max))]) {
+      const pair = ok.filter((c) => c.max <= cap).slice(0, RUN_RODS);
+      const needFt = Math.max(...pair.map((r) => r.max)) + steer;
+      if (pair.length && needFt <= lo && !pairs.some((q) => q.rods.map((r) => r.name).join() === pair.map((r) => r.name).join())) {
+        pairs.push({ rods: pair, needFt });
+      }
+    }
+    const cover = (q) => {
+      if (!fishFt) return 0;
+      const a = Math.min(...q.rods.map((r) => r.min)), b = Math.max(...q.rods.map((r) => r.max));
+      return Math.max(0, Math.min(b, fishFt[1]) - Math.max(a, fishFt[0]));
+    };
+    pairs.sort((x, y) => cover(y) - cover(x) || y.needFt - x.needFt);
+    return pairs[0] || null;
+  };
+  /** Any open water costs the same: the shortest way by water, for a move with the lines up. */
+  let flatCost = null;
+  const flat = () => {
+    if (!flatCost) {
+      flatCost = new Float64Array(n());
+      for (let k = 0; k < flatCost.length; k++) { const d = G.d[k]; flatCost[k] = !Number.isFinite(d) || d <= 0 ? Infinity : 1; }
+    }
+    return flatCost;
+  };
+  const nearOpen = (cost, pt) => {
+    const c = G.cellOf(pt);
+    if (c < 0) return -1;
+    if (cost[c] < Infinity) return c;
+    const i0 = c % G.w, j0 = (c - i0) / G.w;
+    let best = -1, bd = Infinity;
+    for (let dj = -4; dj <= 4; dj++) for (let di = -4; di <= 4; di++) {
+      const i = i0 + di, j = j0 + dj;
+      if (i < 0 || j < 0 || i >= G.w || j >= G.h) continue;
+      const k = j * G.w + i;
+      if (cost[k] < Infinity && Math.hypot(di, dj) < bd) { bd = Math.hypot(di, dj); best = k; }
+    }
+    return best;
+  };
+  /** The way a->b on `cost`, straightened: {coords, m, floorFt} (floor: the shallowest water held 80 m on end). */
+  const wayOn = (cost, a, b) => {
+    // Straight across where every bit of the straight line costs the least there is: no search.
+    const st = densify([a, b], cellM / 2);
+    if (st.every((p) => { const c = G.cellOf(p); return c >= 0 && cost[c] === 1; })) {
+      const pr = profile(G, [a, b]);
+      let floor = Infinity;
+      for (let k = 0; k < pr.depths.length; k++) {
+        const x = pr.depths[k], y = k ? pr.depths[k - 1] : x;
+        if (Number.isFinite(x) && Number.isFinite(y)) floor = Math.min(floor, Math.max(x, y));
+      }
+      return { coords: [a, b], m: Math.round(metresBetween(a, b)), found: true,
+               floorFt: Number.isFinite(floor) ? Math.round(floor * 10) / 10 : null };
+    }
+    const sa = nearOpen(cost, a), sb = nearOpen(cost, b);
+    let path = null;
+    if (sa >= 0 && sb >= 0) path = sa === sb ? [sa] : pathTo(shortestFrom(G, cost, sa, { dst: sb }).prev, sa, sb);
+    const coords = path && path.length > 1 ? straighten(G, cost, path).map(G.lonLat) : [a, b];
+    coords[0] = a; coords[coords.length - 1] = b;
+    const pr = profile(G, coords);
+    let floor = Infinity;
+    for (let k = 0; k < pr.depths.length; k++) {
+      const x = pr.depths[k], y = k ? pr.depths[k - 1] : x;
+      if (Number.isFinite(x) && Number.isFinite(y)) floor = Math.min(floor, Math.max(x, y));
+    }
+    return { coords, m: Math.round(pr.cum[pr.cum.length - 1] || metresBetween(a, b)), found: !!path,
+             floorFt: Number.isFinite(floor) ? Math.round(floor * 10) / 10 : null };
+  };
+  /**
+   * move(fromPoint, toPoint) for one area: {kind: 'join'|'divers'|'up', coords, m, minutes, floorFt}. A join is under
+   * MIN_MOVE_M by water. A move with the divers keeps to water at least their need (rating + steer) the whole way, no
+   * more than MOVE_DETOUR times the shortest way; any other is lines up, the shortest way.
+   */
+  const moverFor = (area) => {
+    const need = area.pair ? area.pair.needFt : Infinity;
+    let cost = null;
+    const diverCost = () => {
+      if (!cost) {
+        cost = new Float64Array(n());
+        for (let k = 0; k < cost.length; k++) {
+          const d = G.d[k];
+          cost[k] = !Number.isFinite(d) || d <= 0 ? Infinity : d >= need ? 1 : 1 + 6 * ((need - d) / steer);
+        }
+      }
+      return cost;
+    };
+    const memo = new Map();
+    return (a, b) => {
+      const key = `${a[0].toFixed(6)},${a[1].toFixed(6)}>${b[0].toFixed(6)},${b[1].toFixed(6)}`;
+      if (memo.has(key)) return memo.get(key);
+      const crow = metresBetween(a, b);
+      let out;
+      if (crow < MIN_MOVE_M / 1.3) out = { kind: 'join', m: Math.round(crow * 1.15), minutes: minutesFor(crow * 1.15, TROLL_MPH) };
+      else {
+        const short = wayOn(flat(), a, b);
+        if (short.m < MIN_MOVE_M) out = { kind: 'join', m: short.m, minutes: minutesFor(short.m, TROLL_MPH) };
+        else {
+          const dv = area.pair ? wayOn(diverCost(), a, b) : null;
+          if (dv && dv.found && dv.floorFt != null && dv.floorFt >= need && dv.m <= MOVE_DETOUR * short.m) {
+            out = { kind: 'divers', coords: dv.coords, m: dv.m, minutes: minutesFor(dv.m, RUN_MPH), floorFt: dv.floorFt,
+                    rods: area.pair.rods, needFt: need };
+          } else {
+            out = { kind: 'up', coords: short.coords, m: short.m, minutes: minutesFor(short.m, TRANSIT_MPH), floorFt: short.floorFt,
+                    shallowFt: dv ? dv.floorFt : short.floorFt };
+          }
+        }
+      }
+      memo.set(key, out);
+      return out;
+    };
+  };
 
   // ── EACH AREA ───────────────────────────────────────────────────────────────────────────────
   const areas = [];
@@ -452,6 +577,8 @@ export function layAreas(o) {
     area.runMin = Math.round(runMinutes(area.run));
     area.laps = chooseLoops(loopCandidates(area, E), E).map(loopOf).filter(Boolean);
     if (!area.laps.length) { left.push({ ...area, left: `no loop on the ${lineSet.join(', ')} ft lines fits inside it` }); return; }
+    area.pair = movePairFor(area);
+    area.move = moverFor(area);
     area.marks = (o.marks || []).filter((m) => m && Array.isArray(m.at) && metresBetween(m.at, p.at) <= R
       && (!fin(m.depthFt) || (Number(m.depthFt) >= lo - 2 * steer && Number(m.depthFt) <= hi + steer)));
     area.E = E;
@@ -466,18 +593,19 @@ export function layAreas(o) {
     return `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`;
   };
   /**
-   * Whole loops of an area in `min`: each in turn, then back the way they came (the last one again first), so the troll
-   * from one to the next stays short; with the trolled hops between them and back to where the run comes in. A loop
-   * that does not fit is passed for the nearest that does. {laps, usedMin, leftMin, distinct, hopMin}.
+   * Whole loops of an area in `min`: each in turn, then back the way they came (the last one again first), so the move
+   * from one to the next stays short; with the moves between them and back to where the run comes in (area.move). A
+   * loop that does not fit is passed for the nearest that does.
+   * {laps, moves (the move before each loop, then the move home), usedMin, leftMin, distinct, hopMin, diversMin, upMin}.
    */
   const lapsIn = (area, min) => {
     const loops = area.laps, nL = loops.length, E = area.entry;
-    const seq = [];
-    let t = 0, hops = 0, at = -1;
+    const seq = [], moves = [];
+    let t = 0, at = -1;
     const from = (a) => (a < 0 ? E : loops[a].end);
-    const hop = (a, j) => hopMin(from(a), loops[j].start);
-    const home = (j) => hopMin(loops[j].end, E);
-    const fits = (j) => t + hop(at, j) + loops[j].minutes + home(j) <= min;
+    const hop = (a, j) => area.move(from(a), loops[j].start);
+    const home = (j) => area.move(loops[j].end, E);
+    const fits = (j) => t + hop(at, j).minutes + loops[j].minutes + home(j).minutes <= min;
     // 0, 1, ... n-1, n-1, ... 0, 0, 1, ...
     const turnOrder = nL === 1 ? [0] : [...Array(nL).keys(), ...[...Array(nL).keys()].reverse()];
     for (let k = 0; k < 400; k++) {
@@ -485,15 +613,18 @@ export function layAreas(o) {
       if (!fits(j)) {
         const ok = [...Array(nL).keys()].filter(fits);
         if (!ok.length) break;
-        j = ok.sort((x, y) => hop(at, x) - hop(at, y))[0];
+        j = ok.sort((x, y) => hop(at, x).minutes - hop(at, y).minutes)[0];
       }
-      const h = hop(at, j);
-      t += h + loops[j].minutes; hops += h;
-      seq.push(loops[j]);
+      const mv = hop(at, j);
+      t += mv.minutes + loops[j].minutes;
+      moves.push(mv); seq.push(loops[j]);
       at = j;
     }
-    if (seq.length) { const h = home(at); t += h; hops += h; }
-    return { laps: seq, usedMin: Math.round(t), leftMin: Math.round(min - t), distinct: new Set(seq).size, hopMin: Math.round(hops) };
+    if (seq.length) { const mv = home(at); t += mv.minutes; moves.push(mv); }
+    const sum = (kind) => Math.round(moves.filter((x) => x.kind === kind).reduce((a, x) => a + x.minutes, 0));
+    return { laps: seq, moves, usedMin: Math.round(t), leftMin: Math.round(min - t), distinct: new Set(seq).size,
+             hopMin: Math.round(moves.reduce((a, x) => a + x.minutes, 0)), diversMin: sum('divers'), upMin: sum('up'),
+             joinMin: sum('join') };
   };
   const options = [];
   const optionOf = (parts, label) => {
@@ -520,7 +651,8 @@ export function layAreas(o) {
         const L = lapsIn(p.area, p.min);
         if (!L.laps.length) ok = false;
         steps.push({ kind: 'area', at: clock(t), min: L.usedMin, area: p.area.key, laps: L.laps.length, distinct: L.distinct,
-                     hopMin: L.hopMin, leftMin: L.leftMin, lapList: L.laps });
+                     hopMin: L.hopMin, diversMin: L.diversMin, upMin: L.upMin, rods: p.area.pair ? p.area.pair.rods : [],
+                     leftMin: L.leftMin, lapList: L.laps, moveList: L.moves });
         t += L.usedMin + L.leftMin;
       }
     }
@@ -563,7 +695,7 @@ export function layAreas(o) {
     }
   }
   return {
-    areas: areas.map(({ E, ...a }) => a), left, options, lineFt: lineA, lines: [...new Set(areas.flatMap((a) => a.laps.map((l) => l.lineFt)))].sort((a, b) => a - b),
+    areas: areas.map(({ E, move, ...a }) => a), left, options, lineFt: lineA, lines: [...new Set(areas.flatMap((a) => a.laps.map((l) => l.lineFt)))].sort((a, b) => a - b),
     waterFt: [lo, hi], fishFt, radiusM: R, budgetMin: Math.round(budgetMin), coveCrossesShore, ramp,
   };
 }
@@ -579,11 +711,14 @@ export function optionLoop(day, i) {
   const byKey = new Map(day.areas.map((a) => [a.key, a]));
   const legs = [];
   let lap = 0;
+  let pendingUp = false;
   const runLeg = (r, name, reversed, to) => {
     if (!r || !r.trolledM || !r.trolledCoords) return;
     const c = reversed ? r.trolledCoords.slice().reverse() : r.trolledCoords.slice();
     legs.push({ coords: c, lengthM: Math.round(lineM(c)), petal: -1, half: 'run', name,
-                run: { mph: RUN_MPH, rods: r.rods.map((x) => x.name), floorFt: r.floorFt, needFt: r.needFt, to: to || null } });
+                run: { mph: RUN_MPH, rods: r.rods.map((x) => x.name), floorFt: r.floorFt, needFt: r.needFt, to: to || null },
+                ...(pendingUp ? { upBefore: true } : {}) });
+    pendingUp = false;
   };
   let areaNo = 0;
   for (const p of op.parts) {
@@ -594,13 +729,30 @@ export function optionLoop(day, i) {
     }
     areaNo++;
     const step = op.steps.find((s) => s.kind === 'area' && s.area === p.area.key);
-    for (const L of (step && step.lapList) || []) {
+    // A MOVE AT 3 MPH WITH THE DIVERS IS A RUN LEG OF ITS OWN; one with the lines up leaves a gap the next piece marks.
+    let upNext = false, mv = 0;
+    const after = op.parts[op.parts.indexOf(p) + 1];
+    const moveLeg = (m, last) => {
+      if (!m || m.kind === 'join') return;
+      if (m.kind === 'up') { upNext = true; return; }
+      mv++;
+      const to = !last ? 'the next loop' : after && after.between ? 'the run across' : p.area.near ? 'the way in to the ramp' : 'the run home';
+      legs.push({ coords: m.coords, lengthM: m.m, petal: -1, half: 'run', name: `area${areaNo}-move${mv}`, area: p.area.key,
+                  run: { mph: RUN_MPH, rods: m.rods.map((x) => x.name), floorFt: m.floorFt, needFt: m.needFt, to, move: true } });
+    };
+    const laps = (step && step.lapList) || [], moves = (step && step.moveList) || [];
+    laps.forEach((L, x) => {
+      moveLeg(moves[x], false);
       lap++;
-      for (const l of L.legs) {
+      L.legs.forEach((l, y) => {
         legs.push({ coords: l.coords, lengthM: l.lengthM, petal: lap - 1, half: l.half, lineFt: L.lineFt, edgeFt: l.edgeFt,
-                    deepestNearbyFt: l.deepestNearbyFt, name: `area${areaNo}-lap${lap}-${l.half}`, area: p.area.key });
-      }
-    }
+                    deepestNearbyFt: l.deepestNearbyFt, name: `area${areaNo}-lap${lap}-${l.half}`, area: p.area.key,
+                    ...(y === 0 && upNext ? { upBefore: true } : {}) });
+      });
+      upNext = false;
+    });
+    moveLeg(moves[laps.length], true);
+    if (upNext) pendingUp = true;
   }
   const first = op.parts[0] && op.parts[0].run;
   const trolledM = legs.reduce((a, l) => a + l.lengthM, 0);
@@ -638,8 +790,9 @@ export function optionLines(day, op) {
       const a = byKey.get(s.area) || {};
       return `${at}${a.name}: ${s.laps} loop${s.laps === 1 ? '' : 's'}`
         + `${s.distinct && s.distinct < s.laps ? ` (${s.distinct} different, then round again)` : s.laps > 1 ? ', each a different one' : ''}, `
-        + `${hm(s.min - (s.hopMin || 0))} on them`
-        + `${s.hopMin >= 5 ? ` and ${hm(s.hopMin)} trolling from one to the next` : ''}`
+        + `${hm(s.min - (s.diversMin || 0) - (s.upMin || 0))} on them`
+        + `${s.diversMin >= 5 ? `, ${hm(s.diversMin)} moving between them at ${RUN_MPH} mph with ${(s.rods || []).map((r) => r.name).join(' and ')}` : ''}`
+        + `${s.upMin >= 3 ? `, ${hm(s.upMin)} moving with the lines up where the water between is too shallow for them` : ''}`
         + (s.leftMin >= 5 ? `; ${hm(s.leftMin)} more is yours (less than a loop)` : '');
     }
     return `${at}at the ramp`;

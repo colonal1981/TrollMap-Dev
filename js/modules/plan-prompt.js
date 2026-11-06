@@ -1454,15 +1454,19 @@ export function areaDayBlock(candidates) {
   const baits = [...new Set(runs.flatMap((c) => c.theRun.baits || []))];
   return `
 THE DAY IS SPENT IN AN AREA THE FISHING REPORTS NAME, NOT TURNED AT IT. The legs above are, in order, the run out to
-the area, laps inside it, and the run home (a day in two areas has a run across between them).
-- A LEG CARRYING \`theRun\` IS A RUN. It is trolled at \`theRun.mph\` with exactly the two baits it names
+the area, the loops inside it with the moves between them, and the run home (a day in two areas has a run across
+between them).
+- A LEG CARRYING \`theRun\` IS A RUN: the run out, across or home, or a move from one loop to the next (legs named
+  \`areaN-moveK\`). It is trolled at \`theRun.mph\` with exactly the two baits it names
   (${baits.map(promptSafeTackleName).join(', ')}), which the app chose to clear the water the run holds
   (\`theRun.floorFt\`) and to sit near the depth the reports put the fish. Rig those two on two of the six rods (they
   tie direct, so leader rods), deploy them on every run, return \`speedMph\` as \`theRun.mph\`, and stop nowhere on a
-  run. The app holds that speed and that pair whatever you return.
-- THE LAP LEGS ARE THE SAME WATER GONE ROUND AGAIN, on two depth lines in turn: legs named \`lapN-out\` and
-  \`lapN-back\`. That is the day: he stays in the area while it produces. Rig each lap for the hour it is fished in
-  and say in its \`why\` what that hour changes; a structure listed again on a later lap carries \`passedBefore\`.
+  run. The app holds that speed and that pair whatever you return. A move between loops the two baits could not
+  clear has no leg: it is run with the lines up from its start, and the plan says so.
+- THE LAP LEGS ARE LOOPS INSIDE THE AREA: legs named \`areaN-lapK-out\` and \`areaN-lapK-back\`, each loop on new
+  water before any is gone round again. That is the day: he stays in the area while it produces. Rig each lap for the
+  hour it is fished in and say in its \`why\` what that hour changes; a structure listed again on a later lap carries
+  \`passedBefore\`.
 - THE SPEED ON A LAP IS THE SPEED THAT HOLDS THE BAITS AT THE DEPTH YOU WANT THEM, and nothing else. Faster runs a
   weighted bait shallower and slower runs it deeper. NEVER RAISE IT TO FIT THE DISTANCE INTO THE TIME: the app laid
   whole laps to fit the day at ${TROLL_MPH} mph, and where a slower speed runs past the return time, the plan says

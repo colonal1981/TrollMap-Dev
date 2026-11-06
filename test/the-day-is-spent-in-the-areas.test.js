@@ -13,7 +13,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { layAreas, optionLoop, optionLines, runDivers, runCrankbaits, RUN_MPH, AREA_R_M } from '../js/modules/plan-areas.js';
+import { layAreas, optionLoop, optionLines, runDivers, runCrankbaits, RUN_MPH, AREA_R_M, MIN_MOVE_M } from '../js/modules/plan-areas.js';
+import { loopSteps } from '../js/modules/plan-troll-loop.js';
 import { TACKLE_INVENTORY } from '../js/data/tackle-inventory.js';
 import { LURE_KNOWLEDGE, CRANK_MAX_MPH, depthWindow, leadForDepth } from '../js/data/lure-knowledge.js';
 import { planArgsFrom, areaDayBlock } from '../js/modules/plan-prompt.js';
@@ -100,8 +101,8 @@ test('an area is 1.5 miles round the place, and its day is different loops befor
   }
   assert.equal(step.distinct, seen.size);
   assert.ok(step.distinct >= Math.min(3, far.laps.length));
-  // and the trolls between loops are said
-  assert.match(optionLines(DAY, op).join('\n'), /on them( and \d.* trolling from one to the next)?/);
+  // and the moves between loops are said: at 3 mph with the area's two divers
+  assert.match(optionLines(DAY, op).join('\n'), /on them, \d.* moving between them at 3 mph with DD3 Crankbait \(20-25ft\) and DD2/);
 });
 
 test('the options: each area all day and both, every minute of the window accounted for, no filler loop', () => {
@@ -131,14 +132,71 @@ test('an option is laid as the loop the app builds from: run out, laps, run home
   assert.equal(loop.mode, 'areas');
   assert.equal(loop.legs[0].name, 'run-out');
   assert.equal(loop.legs[loop.legs.length - 1].name, 'run-home');
-  assert.ok(loop.legs.slice(1, -1).every((l) => /^area1-lap\d+-(out|back)$/.test(l.name)));
-  for (const l of [loop.legs[0], loop.legs[loop.legs.length - 1]]) {
+  assert.ok(loop.legs.slice(1, -1).every((l) => /^area1-(lap\d+-(out|back)|move\d+)$/.test(l.name)), loop.legs.map((l) => l.name).join());
+  const moves = loop.legs.filter((l) => /-move\d+$/.test(l.name));
+  assert.ok(moves.length >= 1, 'a move between loops is a leg of its own');
+  for (const l of [loop.legs[0], loop.legs[loop.legs.length - 1], ...moves]) {
     assert.equal(l.run.mph, 3);
     assert.equal(l.run.rods.length, 2);
+  }
+  for (const l of moves) {
+    assert.ok(l.lengthM >= MIN_MOVE_M && l.run.floorFt >= l.run.needFt, `${l.name}: ${l.lengthM} m over ${l.run.floorFt} ft`);
+    assert.equal(l.half, 'run');
   }
   // the laps go round the two lines in turn
   const lines = loop.legs.filter((l) => l.half === 'out').map((l) => l.lineFt);
   assert.ok(new Set(lines).size === 2, lines.join());
+});
+
+// "as long as the app has me travelling at 3mph with double crankbaits in the water then the transit time is still
+// fishing time"; and of a cue on the water to pull them: "adding more things to the fish finder map is not going to help
+// me" (11/6). Two deep pockets with a 10 ft bar across the whole lake between them.
+const poly = (outer, holes, ft) => ({ type: 'Feature', properties: { depth_max_ft: ft },
+  geometry: { type: 'Polygon', coordinates: [ring(outer), ...holes.map((h) => ring(h).reverse())] } });
+const BAR = (() => {
+  const OUT = [-80.0, 33.2, -79.98, 33.242];
+  const S20 = [-79.998, 33.2015, -79.982, 33.2185], N20 = [-79.998, 33.2215, -79.982, 33.2405];
+  const S35 = [-79.996, 33.203, -79.984, 33.217], N35 = [-79.996, 33.223, -79.984, 33.239];
+  const S45 = [-79.993, 33.206, -79.987, 33.214], N45 = [-79.993, 33.226, -79.987, 33.236];
+  return [poly(OUT, [S20, N20], 10), poly(S20, [S35], 20), poly(N20, [N35], 20), poly(S35, [S45], 35), poly(N35, [N45], 35),
+          poly(S45, [], 45), poly(N45, [], 45)];
+})();
+const BAR_DAY = layAreas({ ramp: RAMP, daFeatures: BAR, places: [{ at: [-79.99, 33.22], name: 'The Bar', n: 5, why: 'x' }],
+                           waterFt: [30, 43], fishFt: [20, 23], windowMin: 540, stopMin: 0, cranks: CRANKS, launchTime: '06:00' });
+
+test('a move between loops goes with the divers only over water they clear; over the bar it is lines up, said on the plan', () => {
+  assert.ok(!BAR_DAY.error, BAR_DAY.error);
+  const op = BAR_DAY.options[0];
+  const step = op.steps.find((x) => x.kind === 'area');
+  const kinds = step.moveList.map((m) => m.kind);
+  assert.ok(kinds.includes('divers') && kinds.includes('up'), kinds.join());
+  for (const m of step.moveList) {
+    if (m.kind === 'divers') assert.ok(m.floorFt >= m.needFt && Math.abs(m.minutes - m.m / (3 * 1609.344 / 60)) < 1, `${m.m} m over ${m.floorFt}`);
+    if (m.kind === 'up') assert.ok(m.floorFt < 30 && m.m >= MIN_MOVE_M, `${m.m} m over ${m.floorFt}`);
+    if (m.kind === 'join') assert.ok(m.m < MIN_MOVE_M);
+  }
+  // every minute: the loops, the moves, what is his
+  const onLoops = step.lapList.reduce((a, l) => a + l.minutes, 0);
+  const moving = step.moveList.reduce((a, m) => a + m.minutes, 0);
+  assert.ok(Math.abs(onLoops + moving - step.min) <= 2, `${onLoops} + ${moving} vs ${step.min}`);
+  const said = optionLines(BAR_DAY, op).join('\n');
+  assert.match(said, /moving between them at 3 mph with DD3 Crankbait \(20-25ft\) and DD2 Crankbait \(16-20ft\)/);
+  assert.match(said, /moving with the lines up where the water between is too shallow for them/);
+  // the loop after a lines-up move says so, and the join to it is run with the lines up -- nothing on the water
+  const loop = optionLoop(BAR_DAY, 0);
+  const pieces = loop.legs.map((l, k) => ({ key: `L${k + 1}`, coords: l.coords, lengthM: l.lengthM, holdsFt: 35,
+                                             ...(l.upBefore ? { upBefore: true } : {}) }));
+  const ups = pieces.filter((p) => p.upBefore);
+  assert.equal(ups.length, kinds.filter((k) => k === 'up').length);
+  const steps = loopSteps(loop, pieces, {});
+  for (const p of ups) {
+    const i = steps.findIndex((x) => x.kind === 'piece' && x.key === p.key);
+    assert.equal(steps[i - 1].kind, 'run', `the move to ${p.key} is lines up`);
+  }
+  // and no move leg crosses the bar
+  for (const l of loop.legs.filter((x) => /-move\d+$/.test(x.name))) {
+    assert.ok(l.coords.every((c) => c[1] < 33.2185 || c[1] > 33.2215), `${l.name} stays off the bar`);
+  }
 });
 
 test('the price of a day counts a run at its own 3 mph', () => {
@@ -170,7 +228,9 @@ test('the plan holds a run at its speed and puts its two divers out, whatever th
 test('the model is told what a run and a lap are, and never to change the speed to fit the day', () => {
   assert.equal(areaDayBlock([{ runId: 'x' }]), '');
   const b = areaDayBlock([{ runId: 'w#run-out', theRun: { mph: 3, baits: ['DD3 Crankbait (20-25ft)', 'DD2 Crankbait (16-20ft)'] } }]);
-  assert.match(b, /A LEG CARRYING `theRun` IS A RUN/);
+  assert.match(b, /A LEG CARRYING `theRun` IS A RUN: the run out, across or home, or a move from one loop to the next/);
+  assert.match(b, /`areaN-moveK`/);
+  assert.match(b, /has no leg: it is run with the lines up from its start, and the plan says so/);
   assert.match(b, /NEVER RAISE IT TO FIT THE DISTANCE INTO THE TIME/);
   const pp = read('../js/modules/plan-prompt.js');
   assert.match(pp, /\$\{areaDayBlock\(candidates\)\}/);
