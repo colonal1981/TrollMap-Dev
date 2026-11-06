@@ -25,8 +25,14 @@
  *   - THE OPTIONS are each area all day and, where two areas fit, both: the nearer first, then the run across, then
  *     home from the farther.
  *
- * My choices inside it, not his: the area is everything within 3/4 mile of the place (said on the sample, his to
- * change); the run prefers water at the reports' depth and goes shallower only where it must; of the pairs of divers
+ * Then, the same evening: "lets try the bigger area so that i am not doing 10 laps right in front of the dam... i might
+ * go crazy". The area is 1.5 miles round the place, and the day in it is different loops on new water before any is
+ * gone round again (loopCandidates(), chooseLoops(), lapsIn()).
+ *
+ * My choices inside it, not his: 1.5 miles (his "bigger"; 3/4 mile before); a loop turns no more than 1,700 m round its
+ * line from its start, and its way out keeps to its line for three quarters of it; the lines are the middle of the
+ * reports' water and a steering band either side inside it; starts 700 m apart, a loop each way from one; the nearest
+ * loop with half its water new next; back the way they came once all are fished; the run prefers water at the reports' depth and goes shallower only where it must; of the pairs of divers
  * that reach the fish's depth and keep 85% of the most of the run any pair could troll, the nearest the fish, then the
  * deeper; a run under 800 m trolled is run with the lines up; "both" splits the time in the areas in half, in whole laps.
  *
@@ -38,8 +44,22 @@ import { TROLL_MPH, TRANSIT_MPH } from './plan-water.js';
 import { HAND_STEER_BAND_FT } from './plan-tracks.js';
 import { LURE_KNOWLEDGE } from '../data/lure-knowledge.js';
 
-/** An area is the water within this of the place a report names: 3/4 mile. */
-export const AREA_R_M = 1200;
+/**
+ * An area is the water within this of the place a report names: 1.5 miles. It was 3/4 mile, and in front of Pinopolis
+ * Dam that held 48 acres of the reports' 30-43 ft water, a strip along the dam side of the basin: a day of ten laps on
+ * the same two loops. Ryan, 11/6: "lets try the bigger area so that i am not doing 10 laps right in front of the
+ * dam... i might go crazy", after "I dont know how close to the dam the guides call by the dam... i think we might be
+ * being a little too literal". At 1.5 miles it is 280 acres, the west shelf across the basin with it.
+ */
+export const AREA_R_M = 2414;
+/** A loop's way out is at least this long: the 600 m the app holds a pass to. */
+export const LAP_MIN_OUT_M = 600;
+/** The most different loops looked for in one area. */
+export const MAX_LOOPS = 6;
+/** Where loops may start on a line, at least this far apart. */
+const START_APART_M = 700;
+/** Water within this of a loop already chosen is not new water. */
+const COVER_M = 150;
 /** His run speed, with two deep divers out. */
 export const RUN_MPH = 3.0;
 /** How many rods go out on a run. */
@@ -181,7 +201,8 @@ export function layAreas(o) {
   const budgetMin = Math.max(0, (Number(o.windowMin) || 0) - (Number(o.stopMin) || 0));
   const [lo, hi] = water[0] <= water[1] ? water : [water[1], water[0]];
   const lineA = Math.round((lo + hi) / 2);
-  const lineB = lineA + steer <= hi + 1 ? lineA + steer : lineA - steer >= lo - 1 ? lineA - steer : null;
+  // The lines a loop may ride: the middle of the reports' water, then a steering band deeper and shallower inside it.
+  const lineSet = [lineA, lineA + steer, lineA - steer].filter((ln, i) => i === 0 || (ln >= lo - 1 && ln <= hi + 1 && ln > 0));
 
   // ── ONE GRID FOR THE RAMP AND EVERY AREA ─────────────────────────────────────────────────────
   const pad = R + 1500;
@@ -271,48 +292,132 @@ export function layAreas(o) {
     }
     return c;
   };
-  // A LAP IS NOT THE WHOLE AREA. "why is that loop is so long does it need to be that long": the lap turns at the
-  // farthest water on its line no more than LAP_OUT_M round it from where it starts, so a lap is about an hour.
-  const farOnLine = (lineFt, at, from) => {
-    const cost = lineCostIn(lineFt, at);
-    if (!(cost[from] < Infinity)) return null;
-    const t = shortestFrom(G, cost, from);
-    let T = -1, bl = 0;
-    for (let k = 0; k < t.len.length; k++) {
-      if (t.len[k] < Infinity && t.len[k] <= LAP_OUT_M && Math.abs(G.d[k] - lineFt) <= steer && t.len[k] > bl) { bl = t.len[k]; T = k; }
+  // ── THE LOOPS IN AN AREA: NEW WATER BEFORE ANY IS GONE ROUND AGAIN ──────────────────────────────────────────────
+  // Ryan, 11/6, of ten laps on the same two loops in front of the dam: "i think for trolling by the dam we could find
+  // some more loops instead of just repeating the same exact ones". So the loops are looked for across the area's water:
+  // on each line, from starts spread over it, each turning at the farthest water on its line no more than LAP_OUT_M
+  // round from its start (about an hour's loop: "why is that loop is so long"). Of those, the one with the most water no
+  // chosen loop covers is taken, then the next, while at least half of one is new; they are fished in turn, nearest
+  // first from where the run comes in, and only then gone round again.
+  const loopCandidates = (area, E) => {
+    const out = [];
+    const ci = G.cellOf(area.at);
+    const r = Math.ceil(R / cellM), pi = ci % G.w, pj = (ci - pi) / G.w;
+    const ei = E % G.w, ej = (E - ei) / G.w;
+    for (const L of lineSet) {
+      const cost = lineCostIn(L, area.at);
+      const cells = [];
+      for (let dj = -r; dj <= r; dj++) for (let di = -r; di <= r; di++) {
+        const i = pi + di, j = pj + dj;
+        if (i < 0 || j < 0 || i >= G.w || j >= G.h) continue;
+        const k = j * G.w + i;
+        if (cost[k] < Infinity && Math.abs(G.d[k] - L) <= steer) cells.push(k);
+      }
+      if (!cells.length) continue;
+      // The first start is the water on this line nearest where the run comes in; the rest as far from every start
+      // already taken as the line goes, no nearer one another than START_APART_M.
+      const ij = (k) => [k % G.w, Math.floor(k / G.w)];
+      let s0 = cells[0], b0 = Infinity;
+      for (const k of cells) { const [i, j] = ij(k); const dd = Math.hypot(i - ei, j - ej); if (dd < b0) { b0 = dd; s0 = k; } }
+      const starts = [s0];
+      const minD = cells.map((k) => { const [i, j] = ij(k), [a, b] = ij(s0); return Math.hypot(i - a, j - b); });
+      while (starts.length < 5) {
+        let bi = -1, bd = 0;
+        for (let x = 0; x < cells.length; x++) if (minD[x] > bd) { bd = minD[x]; bi = x; }
+        if (bi < 0 || bd * cellM < START_APART_M) break;
+        const S = cells[bi];
+        starts.push(S);
+        const [a, b] = ij(S);
+        for (let x = 0; x < cells.length; x++) { const [i, j] = ij(cells[x]); const dd = Math.hypot(i - a, j - b); if (dd < minD[x]) minD[x] = dd; }
+      }
+      // From each start a loop each way along its line, where it goes two ways: the second turns at the farthest water
+      // whose way out leaves the start more than a right angle from the first's, so the two are fished one after the
+      // other from the same place with no troll between them.
+      for (const S of starts) {
+        const t = shortestFrom(G, cost, S);
+        const [si, sj] = ij(S);
+        const reach = cells.filter((k) => t.len[k] < Infinity && t.len[k] <= LAP_OUT_M);
+        // each cell's ancestor about 200 m out from the start: the way its path leaves
+        const anc = new Map();
+        for (const k of reach.slice().sort((a, b) => t.len[a] - t.len[b])) {
+          const pv = t.prev[k];
+          anc.set(k, t.len[k] <= 200 || pv < 0 || !anc.has(pv) ? k : anc.get(pv));
+        }
+        const bearing = (k) => { const a = anc.get(k); const [i, j] = ij(a); return Math.atan2(j - sj, i - si); };
+        let T = -1, bl = 0;
+        for (const k of reach) if (t.len[k] > bl) { bl = t.len[k]; T = k; }
+        if (T < 0 || bl < LAP_MIN_OUT_M) continue;
+        // A way out that leaves its line for long is a run across deep water, not a loop on the line.
+        const onLine = (path) => path && path.filter((k) => Math.abs(G.d[k] - L) <= steer).length >= 0.75 * path.length;
+        const pathA = pathTo(t.prev, S, T);
+        if (onLine(pathA)) out.push({ lineFt: L, S, T, alongM: bl, path: pathA });
+        const ba = bearing(T);
+        let T2 = -1, b2 = 0;
+        for (const k of reach) {
+          if (t.len[k] <= b2 || t.len[k] < LAP_MIN_OUT_M) continue;
+          let d = Math.abs(bearing(k) - ba); if (d > Math.PI) d = 2 * Math.PI - d;
+          if (d > Math.PI / 2) { b2 = t.len[k]; T2 = k; }
+        }
+        const pathB = T2 >= 0 ? pathTo(t.prev, S, T2) : null;
+        if (onLine(pathB)) out.push({ lineFt: L, S, T: T2, alongM: b2, path: pathB });
+      }
     }
-    return T >= 0 ? { T, alongM: bl } : null;
+    return out;
   };
-  /** One lap from the entry, round the line to its far end in the area and back the other side (trollLoop()). */
-  const lapOf = (lineFt, area, E) => {
-    // the nearest cell on this line to the entry, inside the area
-    let from = -1, bd = Infinity;
-    const ei = E % G.w, ej = (E - ei) / G.w, r = Math.ceil(R / cellM);
-    for (let dj = -r; dj <= r; dj++) for (let di = -r; di <= r; di++) {
-      const i = ei + di, j = ej + dj;
-      if (i < 0 || j < 0 || i >= G.w || j >= G.h) continue;
-      const k = j * G.w + i;
-      if (!(Math.abs(G.d[k] - lineFt) <= steer) || !inCircle(k, area.at)) continue;
-      const dd = Math.hypot(di, dj);
-      if (dd < bd) { bd = dd; from = k; }
+  // In turn from where the run comes in: the nearest start with at least half its water new, then the nearest to that,
+  // so the trolls between loops stay short.
+  const chooseLoops = (cands, E) => {
+    const covered = new Uint8Array(n());
+    const rad = Math.ceil(COVER_M / cellM);
+    const cover = (path) => {
+      for (const c of path) {
+        const i = c % G.w, j = (c - i) / G.w;
+        for (let dj = -rad; dj <= rad; dj++) for (let di = -rad; di <= rad; di++) {
+          if (di * di + dj * dj > rad * rad) continue;
+          const i2 = i + di, j2 = j + dj;
+          if (i2 >= 0 && j2 >= 0 && i2 < G.w && j2 < G.h) covered[j2 * G.w + i2] = 1;
+        }
+      }
+    };
+    const chosen = [];
+    const left = cands.slice();
+    let at = G.lonLat(E);
+    while (chosen.length < MAX_LOOPS && left.length) {
+      let best = -1, bd = Infinity;
+      left.forEach((c, x) => {
+        const fresh = c.path.reduce((a, k) => a + (covered[k] ? 0 : 1), 0);
+        if (fresh < 0.5 * c.path.length) return;
+        const d = metresBetween(at, G.lonLat(c.S));
+        if (d < bd) { bd = d; best = x; }
+      });
+      if (best < 0) break;
+      const c = left.splice(best, 1)[0];
+      chosen.push(c);
+      cover(c.path);
+      at = G.lonLat(c.S);
     }
-    if (from < 0) return null;
-    const far = farOnLine(lineFt, area.at, from);
-    if (!far || far.alongM < 300) return null;
+    return chosen;
+  };
+  /** One loop from its start round its line to the turn and back the other side (trollLoop()). */
+  const loopOf = (c) => {
     const lap = trollLoop({
-      ramp: G.lonLat(E), daFeatures: o.daFeatures, koFeatures: o.koFeatures, shoreFeatures: coveCrossesShore ? [] : o.shoreFeatures,
-      offsetFt: o.offsetFt, lineFt, lineFrom: 'reports', lineRangeFt: [lo, hi], steerFt: steer,
-      windowMin: Math.ceil((3 * far.alongM + 2 * bd * cellM) / mPerMin) + 10, stopMin: 0,
-      via: [G.lonLat(far.T)], contourOnly: true, maxPetals: 1, catches: [], marks: o.marks || [], cellM,
+      ramp: G.lonLat(c.S), daFeatures: o.daFeatures, koFeatures: o.koFeatures, shoreFeatures: coveCrossesShore ? [] : o.shoreFeatures,
+      offsetFt: o.offsetFt, lineFt: c.lineFt, lineFrom: 'reports', lineRangeFt: [lo, hi], steerFt: steer,
+      windowMin: Math.ceil((3 * c.alongM) / mPerMin) + 10, stopMin: 0,
+      via: [G.lonLat(c.T)], contourOnly: true, maxPetals: 1, catches: [], marks: o.marks || [], cellM,
     });
     if (!lap || lap.error || !(lap.legs || []).length) return null;
     const legs = lap.legs.filter((l) => (l.coords || []).length > 1);
+    if (!legs.length) return null;
     const m = legs.reduce((a, l) => a + l.lengthM, 0);
-    // the bit from where the run came in to where the lap's lines go in, and back, is trolled too
-    const joinM = lap.coveM || 0;
-    return { lineFt, legs, m, joinM, joinCoords: lap.cove || null, minutes: Math.round(minutesFor(m + 2 * joinM, TROLL_MPH)),
+    // A loop that had to go a long way round to get back is not the hour's loop it was asked for.
+    if (m > 2.6 * c.alongM + 400) return null;
+    const start = legs[0].coords[0], end = legs[legs.length - 1].coords[legs[legs.length - 1].coords.length - 1];
+    return { lineFt: c.lineFt, legs, m, start, end, minutes: Math.round(minutesFor(m, TROLL_MPH)),
              structure: (lap.score && lap.score.structure) || 0 };
   };
+  // Between loops, and to and from where the run comes in: trolled, by water about a quarter longer than the crow flies.
+  const hopMin = (a, b) => minutesFor(1.25 * metresBetween(a, b), TROLL_MPH);
 
   // ── EACH AREA ───────────────────────────────────────────────────────────────────────────────
   const areas = [];
@@ -345,8 +450,8 @@ export function layAreas(o) {
       area.run = { ...area.run, upCoords: area.run.coords, upM: area.run.lengthM, trolledCoords: null, trolledM: 0, rods: [] };
     }
     area.runMin = Math.round(runMinutes(area.run));
-    area.laps = [lineA, lineB].filter((ln) => ln != null).map((ln) => lapOf(ln, area, E)).filter(Boolean);
-    if (!area.laps.length) { left.push({ ...area, left: `no lap on the ${lineA} ft line fits inside it` }); return; }
+    area.laps = chooseLoops(loopCandidates(area, E), E).map(loopOf).filter(Boolean);
+    if (!area.laps.length) { left.push({ ...area, left: `no loop on the ${lineSet.join(', ')} ft lines fits inside it` }); return; }
     area.marks = (o.marks || []).filter((m) => m && Array.isArray(m.at) && metresBetween(m.at, p.at) <= R
       && (!fin(m.depthFt) || (Number(m.depthFt) >= lo - 2 * steer && Number(m.depthFt) <= hi + steer)));
     area.E = E;
@@ -360,22 +465,35 @@ export function layAreas(o) {
     const t = (Number(m0[1]) * 60 + Number(m0[2]) + Math.round(min)) % 1440;
     return `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`;
   };
-  /** Whole laps of an area in `min`, the two lines in turn: [{lap, minutes}], and what is left. */
-  // The two lines in turn, then whichever still fits; started on whichever line leaves the least over.
+  /**
+   * Whole loops of an area in `min`: each in turn, then back the way they came (the last one again first), so the troll
+   * from one to the next stays short; with the trolled hops between them and back to where the run comes in. A loop
+   * that does not fit is passed for the nearest that does. {laps, usedMin, leftMin, distinct, hopMin}.
+   */
   const lapsIn = (area, min) => {
-    let best = null;
-    for (let s0 = 0; s0 < area.laps.length; s0++) {
-      const out = [];
-      let t = 0;
-      for (let k = 0; k < 200; k++) {
-        let lap = area.laps[(s0 + k) % area.laps.length];
-        if (t + lap.minutes > min) lap = area.laps.find((l) => t + l.minutes <= min);
-        if (!lap) break;
-        out.push(lap); t += lap.minutes;
+    const loops = area.laps, nL = loops.length, E = area.entry;
+    const seq = [];
+    let t = 0, hops = 0, at = -1;
+    const from = (a) => (a < 0 ? E : loops[a].end);
+    const hop = (a, j) => hopMin(from(a), loops[j].start);
+    const home = (j) => hopMin(loops[j].end, E);
+    const fits = (j) => t + hop(at, j) + loops[j].minutes + home(j) <= min;
+    // 0, 1, ... n-1, n-1, ... 0, 0, 1, ...
+    const turnOrder = nL === 1 ? [0] : [...Array(nL).keys(), ...[...Array(nL).keys()].reverse()];
+    for (let k = 0; k < 400; k++) {
+      let j = turnOrder[k % turnOrder.length];
+      if (!fits(j)) {
+        const ok = [...Array(nL).keys()].filter(fits);
+        if (!ok.length) break;
+        j = ok.sort((x, y) => hop(at, x) - hop(at, y))[0];
       }
-      if (!best || t > best.t) best = { out, t };
+      const h = hop(at, j);
+      t += h + loops[j].minutes; hops += h;
+      seq.push(loops[j]);
+      at = j;
     }
-    return { laps: best.out, usedMin: Math.round(best.t), leftMin: Math.round(min - best.t) };
+    if (seq.length) { const h = home(at); t += h; hops += h; }
+    return { laps: seq, usedMin: Math.round(t), leftMin: Math.round(min - t), distinct: new Set(seq).size, hopMin: Math.round(hops) };
   };
   const options = [];
   const optionOf = (parts, label) => {
@@ -401,7 +519,8 @@ export function layAreas(o) {
       } else {
         const L = lapsIn(p.area, p.min);
         if (!L.laps.length) ok = false;
-        steps.push({ kind: 'area', at: clock(t), min: L.usedMin, area: p.area.key, laps: L.laps.length, leftMin: L.leftMin, lapList: L.laps });
+        steps.push({ kind: 'area', at: clock(t), min: L.usedMin, area: p.area.key, laps: L.laps.length, distinct: L.distinct,
+                     hopMin: L.hopMin, leftMin: L.leftMin, lapList: L.laps });
         t += L.usedMin + L.leftMin;
       }
     }
@@ -444,7 +563,7 @@ export function layAreas(o) {
     }
   }
   return {
-    areas: areas.map(({ E, ...a }) => a), left, options, lineFt: lineA, lines: [lineA, lineB].filter((x) => x != null),
+    areas: areas.map(({ E, ...a }) => a), left, options, lineFt: lineA, lines: [...new Set(areas.flatMap((a) => a.laps.map((l) => l.lineFt)))].sort((a, b) => a - b),
     waterFt: [lo, hi], fishFt, radiusM: R, budgetMin: Math.round(budgetMin), coveCrossesShore, ramp,
   };
 }
@@ -517,8 +636,11 @@ export function optionLines(day, op) {
     }
     if (s.kind === 'area') {
       const a = byKey.get(s.area) || {};
-      return `${at}${a.name}: ${s.laps} lap${s.laps === 1 ? '' : 's'}, ${hm(s.min)}`
-        + (s.leftMin >= 5 ? `; ${hm(s.leftMin)} more is yours (less than a lap)` : '');
+      return `${at}${a.name}: ${s.laps} loop${s.laps === 1 ? '' : 's'}`
+        + `${s.distinct && s.distinct < s.laps ? ` (${s.distinct} different, then round again)` : s.laps > 1 ? ', each a different one' : ''}, `
+        + `${hm(s.min - (s.hopMin || 0))} on them`
+        + `${s.hopMin >= 5 ? ` and ${hm(s.hopMin)} trolling from one to the next` : ''}`
+        + (s.leftMin >= 5 ? `; ${hm(s.leftMin)} more is yours (less than a loop)` : '');
     }
     return `${at}at the ramp`;
   });

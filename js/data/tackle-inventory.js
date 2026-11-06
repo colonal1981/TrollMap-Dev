@@ -113,8 +113,10 @@ const AS_BOUGHT = [
     type:'underspin', trollable:true, castable:true, weightOz:0.375 },
 
   // ── Spoons (Preserving spoon_3quarter, Adding Jigging/Diamond Spoon) ──────
+  // THE SPOON TIED BEHIND THE 2 OZ WEIGHT NOW. Ryan, 2026-11-06: "right now the spoon i have tied to the 2oz weight is
+  // the smaller 4 inch spoon that is 3/4oz". A plan that wants another spoon says it is a re-tie (spoonRig()).
   { id:'spoon_3quarter', name:'Nichols Lake Fork Flutter Spoon 3/4oz',
-    type:'flutter_spoon', trollable:true, castable:true, weightOz:0.75 },
+    type:'flutter_spoon', trollable:true, castable:true, weightOz:0.75, lengthIn:4, riggedOn:'troll_weight_2oz' },
 
   { id:'spoon_casting_dr_fish', name:'Dr.Fish Diamond Jig / Jigging Spoon 1oz',
     type:'spoon_casting', trollable:true, castable:true, weightOz:1.0 },
@@ -528,6 +530,9 @@ export const TROLLING_WEIGHTS_OWNED_OZ = TACKLE_INVENTORY
   .filter((l) => l.type === 'trolling_weight' && l.weightOz > 0)
   .map((l) => l.weightOz)
   .sort((a, b) => a - b);
+
+/** The spoon tied behind the rigged weight now, or null. */
+export const RIGGED_SPOON = TACKLE_INVENTORY.find((l) => l.type === 'flutter_spoon' && l.riggedOn) || null;
 
 export const RIGGED_TROLLING_WEIGHT_OZ =
   (TACKLE_INVENTORY.find((l) => l.type === 'trolling_weight' && l.rigged)

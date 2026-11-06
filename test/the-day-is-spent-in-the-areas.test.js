@@ -71,13 +71,37 @@ test('each place is an area, measured by water from the ramp; the near one has n
   const far = DAY.areas.find((a) => a.name === 'Far Flats'), near = DAY.areas.find((a) => a.name === 'Near Point');
   assert.ok(far && near);
   assert.ok(near.near, 'the near point is lines in by the ramp');
-  assert.ok(!far.near && far.run.trolledM > 3000, `far run ${far.run.trolledM} m`);
+  assert.ok(!far.near && far.run.trolledM > 2000, `far run ${far.run.trolledM} m`);
   assert.deepEqual(far.run.rods.map((r) => r.type).sort(), ['crankbait_dd2', 'crankbait_dd3']);
   assert.ok(far.acres > 0 && near.acres > 0);
   for (const a of DAY.areas) {
     assert.ok(a.laps.length >= 1);
-    for (const l of a.laps) assert.ok(l.minutes > 10 && l.minutes <= 80, `${a.name} lap ${l.lineFt}: ${l.minutes} min`);
+    for (const l of a.laps) assert.ok(l.minutes > 10 && l.minutes <= 90, `${a.name} loop ${l.lineFt}: ${l.minutes} min`);
   }
+});
+
+// "i think for trolling by the dam we could find some more loops instead of just repeating the same exact ones", and
+// "lets try the bigger area so that i am not doing 10 laps right in front of the dam... i might go crazy" (11/6).
+test('an area is 1.5 miles round the place, and its day is different loops before any is gone round again', () => {
+  assert.equal(AREA_R_M, 2414);
+  const far = DAY.areas.find((a) => a.name === 'Far Flats');
+  assert.ok(far.laps.length >= 3, `${far.laps.length} loops`);
+  // no two loops the same water
+  const keyOf = (l) => `${l.lineFt}|${l.start.map((v) => v.toFixed(4))}|${l.legs[0].coords[l.legs[0].coords.length - 1].map((v) => v.toFixed(4))}`;
+  assert.equal(new Set(far.laps.map(keyOf)).size, far.laps.length);
+  const op = DAY.options.find((o) => o.label === 'Far Flats all day');
+  const step = op.steps.find((x) => x.kind === 'area');
+  const seen = new Set();
+  let repeated = false;
+  for (const l of step.lapList) {
+    if (seen.has(l)) repeated = true;
+    else assert.ok(!repeated, 'a new loop after one was gone round again');
+    seen.add(l);
+  }
+  assert.equal(step.distinct, seen.size);
+  assert.ok(step.distinct >= Math.min(3, far.laps.length));
+  // and the trolls between loops are said
+  assert.match(optionLines(DAY, op).join('\n'), /on them( and \d.* trolling from one to the next)?/);
 });
 
 test('the options: each area all day and both, every minute of the window accounted for, no filler loop', () => {
@@ -229,4 +253,24 @@ test('an area day builds: the run at 3 mph with its divers, the laps at the mode
   // the two divers are the pair on the run, the model's pair on the lap
   assert.deepEqual(runOut.deploy, { port: 'R1', starboard: 'R2' });
   assert.deepEqual(lap.deploy, { port: 'R5', starboard: 'R6' });
+});
+
+// THE WATER UNDER A JOIN IS THE JOIN'S. His 11/8 dam day (rerun, 11/6): every back leg was given the next piece's
+// shallowest wander water, 20-24 ft, as its floor through a 122 m join, over 50+ ft of water; the A-rig was lifted to
+// 15-19 ft and the DD3 taken off for 1.5 km.
+test('a join between pieces is measured on its own water, and one over shallow water is run with the lines up', async () => {
+  const { loopSteps } = await import('../js/modules/plan-troll-loop.js');
+  const piece = (key, coords, holdsFt, sustainedMinFt) => ({ key, runId: key, coords, lengthM: 1500, holdsFt,
+    water: { line: { sustainedMinFt } } });
+  const a = piece('L1', [[-80, 33.2], [-80, 33.21]], 22, 45);
+  const b = piece('L2', [[-80.002, 33.21], [-80.002, 33.2]], 20, 50);
+  const loop = { ramp: [-80, 33.199] };
+  const deep = loopSteps(loop, [a, b], { depthAt: () => 48 });
+  const join = deep.find((st, i) => i > 0 && st.kind !== 'piece');
+  assert.equal(join.kind, 'troll');
+  assert.equal(join.shallowestFt, 48, 'its own water, not the next piece\'s 20');
+  const shoal = loopSteps(loop, [a, b], { depthAt: (p) => (p[0] < -80.001 && p[0] > -80.0015 ? 18 : 48) });
+  assert.equal(shoal.find((st, i) => i > 0 && st.kind !== 'piece').kind, 'run', 'lines up over the shoal');
+  // without the chart, as before
+  assert.equal(loopSteps(loop, [a, b]).find((st, i) => i > 0 && st.kind !== 'piece').shallowestFt, 20);
 });

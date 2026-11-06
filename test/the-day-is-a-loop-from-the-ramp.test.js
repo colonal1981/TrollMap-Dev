@@ -172,7 +172,8 @@ test('7. Troll it for me lays the loop without freezing the page; Plan it as one
   // since 10/4 it also takes the turns he clicks on the main map (loop-on-map.js)
   assert.match(ui, /export async function trollForMe\(opts = \{\}\)/);
   assert.match(ui, /loop = await trollLoopAsync\(/);
-  assert.match(ui, /T\.trollSteps = loopSteps\(loop, pieces\);/);
+  // (with the chart, so a join is measured on its own water: 11/6)
+  assert.match(ui, /T\.trollSteps = loopSteps\(loop, pieces, \{ depthAt: T\.depthAt \}\);/);
   assert.match(ui, /await trollForMe\(\);/);
   assert.doesNotMatch(ui, /day = trollDay\(/);
 });

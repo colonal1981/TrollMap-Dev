@@ -1474,13 +1474,32 @@ export function loopPieces(loop, o) {
  * The troll's steps for planFromWater({ troll }): out of the cove from the ramp, then each leg
  * starting exactly where the last one ended -- so nothing is run between them.
  */
-export function loopSteps(loop, pieces) {
+export function loopSteps(loop, pieces, o = {}) {
   const steps = [];
   let at = loop.ramp;
+  // THE WATER UNDER THE JOIN ITSELF, where the chart is given (o.depthAt). The join between two pieces was said to hold
+  // the next piece's `holdsFt` -- the shallowest water within his wander anywhere along that piece -- and the plan
+  // takes a join's floor as the floor of the whole leg it runs on from (one bait covers the whole pass). On his 11/8
+  // Moultrie dam day that was 20-24 ft on every back leg over 50+ ft of water: the A-rig lifted to 15-19 ft and the
+  // DD3 taken off for 1.5 km. Measured along the join instead; and a join over water shallower than the pieces either
+  // side of it less his steering is run with the lines up, so it lifts nothing.
+  const joinOf = (a, b, prevP, nextP) => {
+    if (!o.depthAt) return { kind: 'troll', shallowestFt: nextP.holdsFt };
+    const ft = densify([a, b], 20).map((c) => o.depthAt(c)).filter((v) => v != null && Number.isFinite(Number(v))).map(Number);
+    if (!ft.length) return { kind: 'troll', shallowestFt: nextP.holdsFt };
+    let low = Infinity;
+    for (let k = 0; k < ft.length; k++) low = Math.min(low, k ? Math.max(ft[k - 1], ft[k]) : ft[k]);
+    const sideOf = (p) => { const v = p && p.water && p.water.line && Number(p.water.line.sustainedMinFt); return Number.isFinite(v) ? v : null; };
+    const either = [sideOf(prevP), sideOf(nextP)].filter((v) => v != null);
+    const steer = o.steerFt || HAND_STEER_BAND_FT;
+    const lift = either.length && low < Math.min(...either) - steer;
+    return { kind: lift ? 'run' : 'troll', shallowestFt: Math.round(low * 10) / 10 };
+  };
   pieces.forEach((p, i) => {
     const from = p.coords[0];
-    steps.push({ kind: i === 0 ? 'run' : 'troll', from: at, to: from, m: Math.round(metresBetween(at, from)),
-                 shallowestFt: i === 0 ? null : p.holdsFt });
+    const j = i === 0 ? null : joinOf(at, from, pieces[i - 1], p);
+    steps.push({ kind: i === 0 ? 'run' : j.kind, from: at, to: from, m: Math.round(metresBetween(at, from)),
+                 shallowestFt: i === 0 ? null : j.shallowestFt });
     steps.push({ kind: 'piece', key: p.key, runId: p.runId, holdsFt: p.holdsFt, m: p.lengthM, reversed: false, coords: p.coords });
     at = p.coords[p.coords.length - 1];
   });

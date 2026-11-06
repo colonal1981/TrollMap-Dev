@@ -529,6 +529,14 @@ function setBar(o) {
   S.barEl.innerHTML = head + body;
 }
 
+/** "45-70 min" over an area's loops. */
+function loopRange(loops) {
+  const m = (loops || []).map((l) => l.minutes);
+  if (!m.length) return '';
+  const lo = Math.min(...m), hi = Math.max(...m);
+  return lo === hi ? hm(lo) : `${lo}–${hi} min`;
+}
+
 /** The bar for a day in the reports' areas: the areas, the ways to spend the day (one is chosen), and its clock. */
 function areasBar(loop, snap) {
   const day = loop.day;
@@ -536,7 +544,8 @@ function areasBar(loop, snap) {
   const areas = day.areas.map((a) => `<div style="margin-top:3px"><b style="color:#ffe082">${esc(a.name)}</b>: `
     + `${plural(a.n, 'report')}${day.reports && day.reports.anyFish ? ' (any fish)' : ''} · `
     + `${a.near ? 'by the ramp' : `${mi(a.run.lengthM)} by water, ${hm(a.runMin)} at ${RUN_MPH} mph`}`
-    + ` · ${a.acres} acres of ${day.waterFt[0]}–${day.waterFt[1]} ft · a lap ${a.laps.map((l) => hm(l.minutes)).join(' or ')}`
+    + ` · ${a.acres} acres of ${day.waterFt[0]}–${day.waterFt[1]} ft`
+    + ` · ${plural(a.laps.length, 'different loop')}, ${loopRange(a.laps)} each`
     + `${a.tooFar ? ' · <span style="color:#ff8a80">too far for this window</span>' : ''}</div>`).join('');
   const opts = day.options.map((op, i) => {
     const on = i === loop.option;
@@ -549,8 +558,9 @@ function areasBar(loop, snap) {
   const clock = optionLines(day, op).map((l) => `<div style="margin-top:2px">${esc(l)}</div>`).join('');
   const run = (op.steps.find((s) => s.kind === 'run') || {});
   return `<div style="margin-top:6px;color:#ffb300"><b>Laid by the fishing reports</b>: the areas they name for your ${sp} `
-      + `within 3 weeks of this date, in any year from 2008. The day is spent in an area, in laps on the `
-      + `${day.lines.map((l) => `${l} ft`).join(' and ')} line${day.lines.length > 1 ? 's' : ''}, not turned at it.</div>`
+      + `within 3 weeks of this date, in any year from 2008. The day is spent in an area, in different loops on the `
+      + `${day.lines.map((l) => `${l} ft`).join(', ')} line${day.lines.length > 1 ? 's' : ''} before any is gone round again, `
+      + 'not turned at it.</div>'
     + areas
     + `<div style="margin-top:8px;color:#9fb3c3">Pick a way to spend the day:</div>${opts}`
     + `<div style="margin-top:6px;color:#c9d6df">${clock}</div>`

@@ -198,12 +198,19 @@ export function rodsAtLaunch(p) {
     const lure = row ? str(row.lure)
       : (f.change && f.change.from) || str(lo && lo.lure) || str(castRow && castRow.lure);
     const color = row ? str(row.color) : str(lo && lo.color);
-    const weight = row ? [
+    let weight = row ? [
       row.arigWeight ? `Frame: ${str(row.arigWeight)}` : '',
       row.inlineWeight ? `Weight: ${str(row.inlineWeight)} inline` : '',
       row.jigWeight ? `Head: ${str(row.jigWeight)}` : '',
       row.trailerSize ? `Trailer: ${str(row.trailerSize)}` : '',
     ].filter(Boolean).join(' · ') : str(castRow && castRow.jigheadWeight);
+    // A SPOON SAYS ITS RIG HERE EVEN WHEN IT IS ONLY THE BACKUP (spoonRig() in plan-prompt.js). Ryan, 11/6: "nothing in
+    // the html i am looking at says that the spoon is supposed to be tied to a weight and if so what weight".
+    if (lo && lo.rigSaid && lure === str(lo.lure)) {
+      const said = str(lo.rigSaid);
+      weight = row && row.inlineWeight ? `${weight} · ${said.replace(/^behind the [^,]*inline weight on the swivel snap, /, 'on the swivel snap, ')}`
+        : `${said.charAt(0).toUpperCase()}${said.slice(1)}`;
+    }
     const rig = str(lo && lo.rig) || ROD_RIG[id] || '';
     const mine = uses.get(id) || [];
     const used = mine.length > 0 || changes.some((c) => c.rodId === id);

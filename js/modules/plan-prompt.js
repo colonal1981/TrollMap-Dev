@@ -61,8 +61,8 @@ import { CHART_LEVELS, chartLevelFor, measuredDays } from '../data/chart-levels.
 import { compassOf } from '../utils/compass.js';
 import { isNum, num } from '../utils/num.js';
 import { depthWindow, jigheadRangeOz, trollableBaits, describeBait, LURE_KNOWLEDGE,
-         gpsWindowFor } from '../data/lure-knowledge.js';
-import { RIGGED_TROLLING_WEIGHT_OZ, JIGHEADS_OWNED_OZ } from '../data/tackle-inventory.js';
+         gpsWindowFor, leadForDepth, requiresInlineWeight } from '../data/lure-knowledge.js';
+import { RIGGED_TROLLING_WEIGHT_OZ, JIGHEADS_OWNED_OZ, TROLLING_WEIGHTS_OWNED_OZ, TACKLE_INVENTORY, RIGGED_SPOON } from '../data/tackle-inventory.js';
 import { ozLabel } from '../utils/oz.js';
 import { promptSafeTackleName } from '../utils/tackle-name.js';
 import { FISHING_STYLE } from '../data/fishing-style-profile.js';
@@ -2356,6 +2356,10 @@ export function buildPlanRequest(o) {
                : l.leadIsLimit ? `, ${l.leadFt} ft of lead, the most he runs`
                                : `, ${l.leadFt} ft of lead at its deepest`) : ''}`
       + `${l.inlineWeightOz ? ` behind the ${l.inlineWeightOz}oz inline weight` : ''}`
+      // WHICH SPOON IS TIED BEHIND THE WEIGHT NOW (Ryan, 11/6): the other one is a re-tie at the truck.
+      + `${RIGGED_SPOON && l.inlineWeightOz && requiresInlineWeight(l.type)
+            ? (l.name === RIGGED_SPOON.name ? ' (this is the spoon tied behind his weight now)'
+               : ' (not tied on now: his weight has the other spoon behind it, so this one is a re-tie at the truck)') : ''}`
       + `${l.jigheadOz ? ` on a ${ozLabel(l.jigheadOz)} head` : ''}`
       + `${describeBait(l.type) ? ` — ${describeBait(l.type)}` : ''}`
       // AND WHAT TO HOLD ON THE GPS TO GET IT THERE, on a river. See riverSpeedNote().
@@ -3199,13 +3203,58 @@ export function parsePlanResponse(text) {
  * @param {function} connOf     lureName => 'snap' | 'tie' | 'either' | null
  * @returns {{rods: object[], map: object, problems: string[]}}
  */
-export function seatRods(rods, connOf, firstOf = null) {
+/** Whether the bait by this name fishes only behind an inline trolling weight (a flutter spoon). */
+export function needsInlineWeightByName(name) {
+  const hit = TACKLE_INVENTORY.find((l) => l.name === name);
+  return !!hit && requiresInlineWeight(hit.type);
+}
+
+/**
+ * HOW A SPOON IS RIGGED: the inline weight it goes behind, and whether that is what is tied on now.
+ *
+ * The weight is the one rigged (RIGGED_TROLLING_WEIGHT_OZ, his 2 oz) unless the depth the plan wants the spoon at needs
+ * more than his 120 ft of line at 2 mph with it; then the lightest in his box that gets there. The spoon tied behind the
+ * rigged weight now is RIGGED_SPOON (Ryan, 11/6: "the spoon i have tied to the 2oz weight is the smaller 4 inch spoon
+ * that is 3/4oz"); any other spoon, or another weight, is a re-tie at the truck, and is said.
+ * {weightOz, said, retie}.
+ */
+export function spoonRig(rod) {
+  const lure = TACKLE_INVENTORY.find((l) => l.name === rod.lure) || null;
+  const rigged = Number(RIGGED_TROLLING_WEIGHT_OZ) > 0 ? Number(RIGGED_TROLLING_WEIGHT_OZ) : null;
+  const owned = [...(TROLLING_WEIGHTS_OWNED_OZ || [])].sort((a, b) => a - b);
+  const order = rigged ? [rigged, ...owned.filter((w) => w !== rigged && w > rigged), ...owned.filter((w) => w < rigged)] : owned;
+  const runs = Array.isArray(rod.runsDepthFt) && rod.runsDepthFt.length === 2 && rod.runsDepthFt.every((v) => isNum(v))
+    ? (Number(rod.runsDepthFt[0]) + Number(rod.runsDepthFt[1])) / 2 : null;
+  const maxLead = FISHING_STYLE.rigging?.maxLeadFt ?? 120;
+  let weightOz = order[0] ?? null;
+  if (lure && runs != null) {
+    const w = order.find((x) => { const lead = leadForDepth({ ...lure, inlineWeightOz: x }, runs, TROLL_MPH); return lead > 0 && lead <= maxLead; });
+    if (w != null) weightOz = w;
+  }
+  const isRiggedSpoon = !!(RIGGED_SPOON && RIGGED_SPOON.name === rod.lure);
+  const w = weightOz != null ? ozLabel(weightOz) : 'an inline';
+  const said = `behind the ${w} inline weight on the swivel snap, 5 ft fluoro leader to the spoon (no-slip loop knot)`
+    + (isRiggedSpoon && weightOz === rigged ? ' — as it is tied now' : '');
+  const spoonNow = RIGGED_SPOON ? `${RIGGED_SPOON.lengthIn ? `${RIGGED_SPOON.lengthIn}" ` : ''}${ozLabel(RIGGED_SPOON.weightOz)} spoon` : 'other spoon';
+  let retie = null;
+  if (!isRiggedSpoon && RIGGED_SPOON) {
+    retie = `${rod.id} is the ${rod.lure}: the ${rigged != null ? ozLabel(rigged) : ''} weight has the ${spoonNow} tied behind it `
+      + `now, so this is a re-tie at the truck — the ${rod.lure} on a 5 ft fluoro leader behind the ${w} weight`;
+  } else if (weightOz !== rigged && rigged != null) {
+    retie = `${rod.id}: the ${rod.lure} needs the ${w} weight to reach ${Math.round(runs)} ft on ${maxLead} ft of line at `
+      + `${TROLL_MPH} mph; the ${ozLabel(rigged)} is the one tied on, so swap the weight at the truck`;
+  }
+  return { weightOz, said, retie };
+}
+
+export function seatRods(rods, connOf, firstOf = null, weightOf = null) {
   const problems = [];
   // Only rods the plan actually rigs get seated. The rest keep whatever is already on them and
   // are not the plan's business.
   const need = (rods || []).filter((r) => r && r.lure).map((r) => {
     const c = connOf ? connOf(r.lure) : null;
-    return { rod: r, tie: c === 'tie', first: c !== 'tie' && !!(firstOf && firstOf(r.lure)) };
+    return { rod: r, tie: c === 'tie', first: c !== 'tie' && !!(firstOf && firstOf(r.lure)),
+             weight: c !== 'tie' && !!(weightOf && weightOf(r.lure)) };
   });
 
   const ties = need.filter((n) => n.tie).length;
@@ -3227,14 +3276,21 @@ export function seatRods(rods, connOf, firstOf = null) {
   // AND AN A-RIG TAKES A SNAP ROD BEFORE ANY OTHER SNAP BAIT (SNAP_FIRST in lure-knowledge.js). Ryan, 2026-11-06:
   // "i also do not tie an a-rig to a leader... i use the swivel snap for the a-rig". His Moultrie card had the swimbait
   // and the spoon on the snaps and the A-rig tied to a leader, because they came first in the model's list.
-  const order = [...need.filter((n) => n.tie), ...need.filter((n) => n.first),
-                 ...need.filter((n) => !n.tie && !n.first)];
+  // AND A SPOON BEFORE ANY OTHER SNAP BAIT BUT THE A-RIG: its inline weight is what rides the snap. Ryan, 9/14: "the
+  // weight attaches to one of the swivel snap rods then has a 5ft fluoro leader with the spoon tied on". His 11/8 card
+  // had Claude's spoon on R6 and the app moved it to a leader rod to put a cast bucktail on the snap. Then the trolled
+  // snap baits, then the cast ones: a cast rod is picked up at a stop, and a jig ties on fine.
+  const rank = (n) => (n.tie ? 0 : n.first ? 1 : n.weight ? 2 : n.rod.role === 'cast' ? 4 : 3);
+  const order = need.slice().sort((a, b) => rank(a) - rank(b));
   for (const n of order) {
     const pool = n.tie ? [freeFluoro] : [freeSnap, freeFluoro];
     n.seat = (pool.find((p) => p.length) || []).shift() || null;
     if (n.first && n.seat && ROD_RIG[n.seat] !== 'snap') {
       problems.push(`${n.rod.lure} is on a leader rod (${n.seat}): there are more A-rigs than snap rods, and he `
                   + 'runs an A-rig on a swivel snap');
+    } else if (n.weight && n.seat && ROD_RIG[n.seat] !== 'snap') {
+      problems.push(`${n.rod.lure} is on a leader rod (${n.seat}): its inline weight rides a swivel snap, and both `
+                  + 'snap rods are taken');
     }
   }
 
@@ -3329,8 +3385,17 @@ export function planArgsFrom(res, candidates, ctx = {}) {
         ? r.runsDepthFt.map(Number) : null,
     };
   });
-  const seat = seatRods(claimed, ctx.connectionOf, ctx.snapFirstOf);
+  const seat = seatRods(claimed, ctx.connectionOf, ctx.snapFirstOf, ctx.weightOf || needsInlineWeightByName);
   problems.push(...seat.problems);
+  // A SPOON SAYS HOW IT IS RIGGED, WHETHER OR NOT IT EVER GOES IN THE WATER. Ryan, 11/6: "nothing in the html i am looking
+  // at says that the spoon is supposed to be tied to a weight and if so what weight... if it is required to be on a
+  // weight something needs to tell me what size weight and spoon... the app tackle box has my trolling weights listed".
+  seat.rods = seat.rods.map((r) => {
+    if (r.staged || !needsInlineWeightByName(r.lure)) return r;
+    const rig = spoonRig(r);
+    if (rig.retie) problems.push(rig.retie);
+    return { ...r, inlineWeightOz: rig.weightOz, rigSaid: rig.said };
+  });
   const moved = Object.keys(seat.map);
   // TWO DIFFERENT REASONS, AND ONLY ONE OF THEM NEEDS HIM. Change request 18: the note said "so
   // every lure is on a rod that can carry it" on plans where every bait already could. When a
