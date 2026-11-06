@@ -758,12 +758,17 @@ export function pickPosts(results, { tokens = [], pages = [], nowMs = Date.now()
     if (!known && !want.some((t) => words.has(t))) continue;
     if (!/fish|report|bite|striper|bass|crappie|catfish|bream|perch/i.test(said)) continue;
     seen.add(key);
-    const when = searchDay(r.date, nowMs);
+    const said_on = r.date || r.published_date || null;
+    const when = searchDay(said_on, nowMs);
+    // Measured live 11/6: the search's API gives most Facebook posts no date at all. A report names its
+    // month ("November 2026 FISHING REPORT"), and that month is the next best thing, said as a month.
+    const named = when ? null : monthYearNamed(said);
     out.push({
       url, page: known ? known.author : postPage(url), source: known ? known.label : null,
       title: String(r.title || '').replace(/\s+/g, ' ').trim(),
       preview: String(r.snippet || '').replace(/\s+/g, ' ').trim().slice(0, 240),
-      when: when ? when.date : null, whenApprox: when ? when.approx : null, whenSaid: r.date || null,
+      when: when ? when.date : named, whenApprox: when ? when.approx : (named ? true : null),
+      whenSaid: said_on || (named ? `the post names ${MONTHS[Number(named.slice(5)) - 1]} ${named.slice(0, 4)}` : null),
     });
   }
   return out.sort((a, b) => (a.when && b.when ? b.when.localeCompare(a.when) : a.when ? -1 : b.when ? 1 : 0));
@@ -793,8 +798,9 @@ export async function findPosts(slug, env, dateStr) {
   }, env).then((r) => ({ q, r }), (e) => ({ q, error: String((e && e.message) || e) }))));
   const tokens = nameTokens(rowNames(row));
   if (slug === 'lake_marion' || slug === 'lake_moultrie') { tokens.add('santee'); tokens.add('cooper'); }
+  // A post dated, or naming a month, before last month is an old report: left off the list.
   const posts = pickPosts(found.flatMap((x) => (x.r && x.r.results) || []), { tokens, pages })
-    .filter((p) => !p.when || p.when >= after);
+    .filter((p) => !p.when || p.when >= after.slice(0, p.when.length));
   const failed = found.filter((x) => x.error);
   return { slug, date: d, after, posts, searched: found.map((x) => x.q),
            ...(failed.length ? { failed: failed.map((x) => `${x.q}: ${x.error}`) } : {}) };
@@ -1001,7 +1007,8 @@ async function handleFindPosts(request, env, url, slug) {
   const fresh = url.searchParams.get('fresh') === '1';
   if (fresh && !await isAuthorized(request, env)) return json({ error: 'unauthorized' }, 401);
   const date = url.searchParams.get('date') || dayEastern();
-  const key = `guide:posts:v1:${slug}:${String(date).slice(0, 7)}:${dayEastern()}`;
+  // v2, 11/6: a post with no date carries the month it names.
+  const key = `guide:posts:v2:${slug}:${String(date).slice(0, 7)}:${dayEastern()}`;
   if (env.KV && !fresh) {
     const hit = await env.KV.get(key, 'json');
     if (hit) return json({ ...hit, cached: true });

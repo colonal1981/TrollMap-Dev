@@ -205,7 +205,8 @@ export function wirePasteBox({ slugOf, dateOf, worker } = {}) {
     el.innerHTML = left.map((p, i) => `
       <div style="border-top:1px solid var(--border,#1e2a3a);padding:6px 0;font-size:12px">
         <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline">
-          <b>${p.when ? `${esc(p.when)}${p.whenApprox ? ' (about)' : ''}` : 'no date in the search'} · ${esc(p.page)}</b>
+          <b>${!p.when ? 'no date in the search' : p.when.length === 7 ? esc(p.whenSaid || p.when)
+            : `${esc(p.when)}${p.whenApprox ? ' (about)' : ''}`} · ${esc(p.page)}</b>
           <span style="display:flex;gap:6px;flex-shrink:0">
             <a href="${esc(p.url)}" target="_blank" rel="noopener noreferrer" style="font-size:11px">Open</a>
             <button type="button" class="small ghost" data-use="${i}" style="font-size:11px">Paste this one</button>

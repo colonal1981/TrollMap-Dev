@@ -86,6 +86,16 @@ test('a guide\'s page counts by the post\'s address, never by what the search\'s
   assert.equal(posts[0].page, "Wolfe's Guide Service LLC");
 });
 
+test('a post the search gives no date is dated by the month it names, said as a month', () => {
+  // measured live 11/6: the search's API gave none of Santee Cooper Country's posts a date
+  const hits = [{ title: 'Santee Cooper Country', snippet: 'Santee Cooper Country. 2d. November 2026 FISHING REPORT Thanks, as always',
+    url: 'https://www.facebook.com/santeecoopercountrysouthcarolina/posts/november-2026-fishing-report/1631606482318127/' }];
+  const [p] = pickPosts(hits, { tokens: new Set(['marion']), pages: [SCC_PAGE], nowMs: NOW });
+  assert.equal(p.when, '2026-11');
+  assert.equal(p.whenApprox, true);
+  assert.equal(p.whenSaid, 'the post names November 2026');
+});
+
 test('the day a search names, and whose post it is', () => {
   assert.deepEqual(searchDay('4 days ago', NOW), { date: '2026-11-02', approx: false });
   assert.deepEqual(searchDay('1 month ago', NOW), { date: '2026-10-07', approx: true });
