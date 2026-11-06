@@ -57,6 +57,72 @@ class Georgia(unittest.TestCase):
         self.assertFalse(G.POST.search('https://georgiawildlife.blog/2026/02/27/turkey-season-opens/'))
 
 
+class GeorgiaEveryForm(unittest.TestCase):
+    """Every form the blog has used for a lake's part, 2014-2026, and where each part ends (the 11/6 re-save refused
+    Thurmond, Hartwell and Russell: their parts ran on into Oconee, Sinclair, Lanier and the PFAs, and a statement
+    joined across a dropped link line was not word for word)."""
+    rec = lambda self, text, d='2020-07-17': {'url': 'https://georgiawildlife.blog/x/', 'published': d, 'title': 'T', 'text': text}
+
+    def words(self, text, slug, d='2020-07-17'):
+        r = self.rec(text, d)
+        st = G.statements(r, {slug})
+        for s in st: self.assertIn(K.NORM(s['text']), K.NORM(text), 'word for word')
+        return st
+
+    def test_2015_a_paragraph_a_water(self):
+        t = '\n'.join([' Clarks Hill Lake (down 4.3 feet, clear, high 80s) –Bass fishing is fair and the fish are widely '
+                       'scattered all over the lake on points.',
+                       ' Jackson Lake (down 2.3 feet, clear, high 80s) – Bass fishing is fair on worms and jigs on the trees.',
+                       ' McDuffie PFA – Largemouth Bass: Fair due to hot weather – All legal Bass must be 14 inches.',
+                       ' Striped Bass: Poor due to hot water temperatures – Striped Bass are located only in Bridge and Clubhouse.',
+                       ' Additional Information: http://www.georgiawildlife.org/PFA/McDuffie ',
+                       ' Lake Oconee (full, light stain up rivers, 88-93 degrees) – Bass fishing is poor.',
+                       ' Lake Russell (full, clear, high 80s) –Bass fishing is fair but the heat pushes the bass deeper.',
+                       ' Lake Sinclair (full, stained up river, 89 degrees) – “Bass fishing is fair, an early and late bite.',
+                       ' West Point Lake (down 2.9 feet, clear, low 90s) – “Bass fishing is fair. It’s not a great bite.'])
+        th = self.words(t, 'j_strom_thurmond_reservoir', '2015-08-27')
+        self.assertEqual(len(th), 1); self.assertNotIn('Bridge', th[0]['text']); self.assertEqual(th[0]['water_temp_f_said'], 88)
+        ru = self.words(t, 'richard_b_russell_lake', '2015-08-27')
+        self.assertEqual(len(ru), 1); self.assertNotIn('Sinclair', ru[0]['text'])
+
+    def test_2017_a_long_heading_and_2021_a_lake_twice(self):
+        t = '\n'.join(['#### CLARKS HILL IS DOWN 8.7 FEET, 70’S ', ' Bass fishing is good. The upriver fish are biting in '
+                       'the creek mouths on a gold Bang a Lure.',
+                       '#### LAKE OCONEE IS FULL, THE LAKE IS CLEAR ON THE SOUTH END STAINED TO MUDDY UP THE LAKE AND RIVER ',
+                       ' Striper fishing is very strong early in the morning on the pump back at the dam on spoons.',
+                       ' LAKE RUSSELL IS DOWN .32 FEET, 60’S ', ' Bass : Bass fishing is good. Lots of fish are shallow on '
+                       'soft plastics in the spawning pockets.', ' LAKE ALLATOONA IS 2.1 FEET OVER FULL & 60S Bass : Bass '
+                       'fishing is good. The dock bite is picking up on spots.', ' LAKE RUSSELL IS DOWN .32 FEET, 60’S ',
+                       ' Bass fishing is good. Lots of fish are shallow on soft plastics in the spawning pockets.'])
+        th = self.words(t, 'j_strom_thurmond_reservoir')
+        self.assertEqual(len(th), 1); self.assertNotIn('pump back', th[0]['text']); self.assertEqual(th[0]['water_temp_f_said'], 75)
+        ru = self.words(t, 'richard_b_russell_lake')
+        self.assertFalse(any('dock bite' in s['text'] for s in ru))
+        self.assertEqual({s['water_temp_f_said'] for s in ru}, {65}, 'the short heading still gives the temperature')
+
+    def test_2020_status_lines_and_2023_reports_and_extras(self):
+        t = '\n'.join([' Lake Hartwell is full, 80s, and clear: ',
+                       ' Stripers : Guide Preston Harden reports, “July means looking deeper and farther down the lake for '
+                       'stripers and hybrids.”',
+                       ' Burton is full pool, high 70s, and clear: ',
+                       ' Trout : Wes Carlton reports, “The trout bite has been steady all week trolling deep divers.”',
+                       ' Lake Hartwell Bass Report : (This report courtesy of Ken Sturdivant, www.southernfishing.com ) : '
+                       'Bass fishing is good. The fish can be found in main lake pockets and ditches.',
+                       ' Hartwell Extras: Check out the Hartwell 2023 Fishing Forecast . ',
+                       ' Largemouth numbers were good throughout Lake Chatuge.',
+                       ' Chatuge Sampling Report ( This report courtesy of fisheries biologist Hunter Roop ): The crew '
+                       'sampled the lake this week and found good numbers of bass.',
+                       ' Lake Lanier Bass Report 1 ( This report courtesy of Captain Mack ): Bass Fishing is very good '
+                       'on flukes around the points.',
+                       ' Lanier Stripers ( This report courtesy of Buck Cannon ): Lake Lanier stripers are deep.'])
+        st = self.words(t, 'hartwell_lake')
+        said = ' '.join(s['text'] for s in st)
+        self.assertIn('Preston Harden', said); self.assertIn('main lake pockets', said)
+        for no in ('trout bite', 'Chatuge', 'flukes', 'Lanier', 'southernfishing'): self.assertNotIn(no, said)
+        self.assertTrue(any(s['text'].startswith('Bass fishing is good. The fish can be found') for s in st),
+                        'the words after the link, without its ") :"')
+
+
 class SanteeCooperCountry(unittest.TestCase):
     def test_the_month_with_and_without_a_year(self):
         self.assertEqual(SC.month_of({'slug': 'fishing-reports-dec25'}), '2025-12')

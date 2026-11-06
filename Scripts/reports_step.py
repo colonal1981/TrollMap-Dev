@@ -211,7 +211,7 @@ def _listed(cache, name, key, lister, refresh, log, merge=False):
     return kept, 0
 
 
-GA_WATERS = {s for s, _ in G.WATERS}
+GA_WATERS = {w[0] for w in G.WATERS}
 
 
 def live_page(cache, log=print):
