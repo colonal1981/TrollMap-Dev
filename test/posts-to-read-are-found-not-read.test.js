@@ -86,6 +86,17 @@ test('a guide\'s page counts by the post\'s address, never by what the search\'s
   assert.equal(posts[0].page, "Wolfe's Guide Service LLC");
 });
 
+test('a post is listed on its own words, its title and its address, never on the search\'s preview', () => {
+  // measured live 11/6 on Wateree: an Oklahoma crappie video, listed on what its preview said
+  const hits = [
+    { title: 'Ft. Gibson Lake Fishing: Crappie Catch and Sonar Mapping', snippet: 'Fishing reports from Lake Wateree and Ft. Gibson.',
+      url: 'https://www.facebook.com/berkeley.reed/videos/123456789/' },
+    { title: 'Lake wateree dam , no keepers . Catch and release !', snippet: 'Wateree Lake fishing spots for pan fish',
+      url: 'https://www.facebook.com/fisherman.russ/posts/lake-wateree-dam-no-keepers-catch-and-release-/1113509848230284/' },
+  ];
+  assert.deepEqual(pickPosts(hits, { tokens: new Set(['wateree']), nowMs: NOW }).map((p) => p.page), ['fisherman russ']);
+});
+
 test('a post the search gives no date is dated by the month it names, said as a month', () => {
   // measured live 11/6: the search's API gave none of Santee Cooper Country's posts a date
   const hits = [{ title: 'Santee Cooper Country', snippet: 'Santee Cooper Country. 2d. November 2026 FISHING REPORT Thanks, as always',

@@ -748,13 +748,17 @@ export function pickPosts(results, { tokens = [], pages = [], nowMs = Date.now()
     if (!FB_POST.test(url)) continue;
     const key = postKey(url);
     if (seen.has(key)) continue;
-    const said = `${(r && r.title) || ''} ${(r && r.snippet) || ''}`;
+    // THE POST'S OWN WORDS ONLY: its title and its address (Facebook writes a post's first words into
+    // it, "/posts/november-2026-fishing-report-thanks-..."). Never the search's preview, which the
+    // search writes: measured live 11/6, a crappie video on Ft. Gibson Lake, Oklahoma, and a reel of
+    // ladyfish were listed for Wateree on what their previews said.
+    const said = `${(r && r.title) || ''} ${url.replace(/^https?:\/\/[^/]+\//, '').replace(/[^a-z0-9]+/gi, ' ')}`;
     // A guide's page by the post's ADDRESS (or a title that is the page's own name), never by the
     // search's preview: measured 11/6, a reel of ladyfish came back with "Wolfe's Guide Service LLC"
     // in a preview the search wrote.
     const known = pages.find((p) => pageHandles(p.url).includes(handleOf(url))
       || (p.author && lettersOf(r && r.title) === lettersOf(p.author)));
-    const words = wordsOf(`${said} ${url.replace(/[^a-z]+/gi, ' ')}`);
+    const words = wordsOf(said);
     if (!known && !want.some((t) => words.has(t))) continue;
     if (!/fish|report|bite|striper|bass|crappie|catfish|bream|perch/i.test(said)) continue;
     seen.add(key);
@@ -1007,8 +1011,8 @@ async function handleFindPosts(request, env, url, slug) {
   const fresh = url.searchParams.get('fresh') === '1';
   if (fresh && !await isAuthorized(request, env)) return json({ error: 'unauthorized' }, 401);
   const date = url.searchParams.get('date') || dayEastern();
-  // v2, 11/6: a post with no date carries the month it names.
-  const key = `guide:posts:v2:${slug}:${String(date).slice(0, 7)}:${dayEastern()}`;
+  // v2, 11/6: a post with no date carries the month it names. v3: read by the post's own words only.
+  const key = `guide:posts:v3:${slug}:${String(date).slice(0, 7)}:${dayEastern()}`;
   if (env.KV && !fresh) {
     const hit = await env.KV.get(key, 'json');
     if (hit) return json({ ...hit, cached: true });
