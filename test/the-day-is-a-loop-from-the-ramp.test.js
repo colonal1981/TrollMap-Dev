@@ -245,8 +245,10 @@ test('10. the line is the depth with the most of his catches inside his band, th
   assert.equal(loopLine({}), null);
   // Troll it for me hands the loop his catches with the chart under each and the research's or the
   // band's line for when none within reach says one; the loop decides from the ones within reach.
+  // SINCE 11/6, where the water's fishing reports name places for this time of year, their water comes first and his
+  // catches choose nothing (Ryan: "i am telling the app where to tell me to fish instead of the app telling me").
   const ui = read('js/modules/plan-water-ui.js');
-  assert.match(ui, /const fallback = loopLine\(\{ waterFt: guide, band, holding: T\.holding, steerFt: steer \}\);/);
+  assert.match(ui, /let fallback = loopLine\(\{ waterFt: repWater \|\| guide, band, holding: T\.holding, steerFt: steer \}\);/);
   assert.match(ui, /return \{ at, date: c\.date \|\| null, time: c\.time \|\| null,/);
   assert.doesNotMatch(ui, /const \{ lineFt, floorFt \} = line;/);
   assert.doesNotMatch(ui, /never over water under/);

@@ -201,6 +201,105 @@ export function placesThisWeek(tw) {
   }).sort((a, b) => b.n - a.n || a.name.localeCompare(b.name));
 }
 
+const M_PER_DEG = 111320;
+/** Metres between two [lon, lat], as the crow flies. */
+export function crowM(a, b) {
+  const kx = M_PER_DEG * Math.cos(((a[1] + b[1]) / 2) * Math.PI / 180);
+  return Math.hypot((a[0] - b[0]) * kx, (a[1] - b[1]) * M_PER_DEG);
+}
+
+/**
+ * WHERE THE REPORTS SAY TO FISH, as turns for the day's loops (plan-water-ui.js trollForMe). Ryan, 11/6: "the entire
+ * point of this was to fix the fact that the app has no idea what actual water use unless i have catches", and "even
+ * with catches i dont like it... because i am telling the app where to tell me to fish instead of the app telling me".
+ *
+ * The places the reports name within three weeks of the day in any year from 2008 (placesThisWeek), counted for his
+ * fish -- or, where no report names a place for it, for any fish, said so. Only those within `reachM` of the ramp as
+ * the crow flies (the loop then measures by water and says which it cannot reach). Most-named first, at least `apartM`
+ * apart, at most `max` (a day is at most four loops). The depth is the water those reports put his fish over, this
+ * time of year, lake-wide. Pure.
+ */
+// THE WATER IS LONGER THAN THE CROW: a loop out to a place and back runs round points and up the channel. Measured 11/6
+// on Murray from the Dreher Island tournament ramp: Buffalo Creek is 7 km as the crow flies and its loop trolled 22.8 km.
+export const WATER_OVER_CROW = 1.6;
+
+export function turnsFromReports(tw, species, { ramp = null, reachM = Infinity, budgetM = null, max = 4, apartM = 1000 } = {}) {
+  // A DAY THAT FITS (11/6, the same Murray try): every turn is a loop out from the ramp and back, so the turns taken
+  // must fit the day between them, not each on its own. The first Murray day took one loop to Buffalo Creek, 428
+  // minutes of a 360-minute day, and reached none of the other three.
+  const dayM = Number.isFinite(budgetM) ? budgetM : 2 * reachM;
+  const places = placesThisWeek(tw);
+  const want = reportFish(species);
+  const forFish = (p, all) => p.fish.filter((f) => all || want.has(f.fish));
+  const pick = (all) => {
+    const ranked = places.map((p) => ({ p, fish: forFish(p, all) }))
+      .map((x) => ({ ...x, n: x.fish.reduce((a, f) => a + f.n, 0) }))
+      .filter((x) => x.n > 0 && (!ramp || crowM(ramp, [x.p.lon, x.p.lat]) <= reachM))
+      .sort((a, b) => b.n - a.n || b.p.n - a.p.n || a.p.name.localeCompare(b.p.name));
+    const out = [];
+    let used = 0;
+    for (const x of ranked) {
+      if (out.length >= max) break;
+      if (out.some((y) => crowM([y.p.lon, y.p.lat], [x.p.lon, x.p.lat]) < apartM)) continue;
+      const cost = ramp ? 2 * crowM(ramp, [x.p.lon, x.p.lat]) * WATER_OVER_CROW : 0;
+      if (ramp && used + cost > dayM) continue;
+      used += cost;
+      out.push(x);
+    }
+    return out;
+  };
+  // a fish he picked that no report names (Bowfin), or one with no place near: the places for any fish, said so
+  const asked = [].concat(species || []).filter(Boolean).length > 0;
+  let anyFish = false;
+  let chosen = want.size ? pick(false) : [];
+  if (!chosen.length) { chosen = pick(true); anyFish = chosen.length > 0 && asked; }
+  const fishSet = anyFish || !want.size ? null : want;
+  const S = summarize(tw, fishSet);
+  const turns = chosen.map(({ p, fish, n }) => {
+    const said = fish.map((f) => {
+      const bits = [f.position.length ? `${f.position.slice(0, 2).map(([w, k]) => `${w} ${k}`).join(', ')}` : '',
+        f.lures.filter((l) => l.trolled).slice(0, 2).map((l) => `${l.lure} trolled ${l.trolled}`).join(', '),
+        f.times.length ? f.times.slice(0, 2).map(([w, k]) => `${w} ${k}`).join(', ') : ''].filter(Boolean);
+      return `${f.name} ${f.n}${bits.length ? ` (${bits.join('; ')})` : ''}`;
+    }).join('; ');
+    return { at: [p.lon, p.lat], name: p.name, n, total: p.n, years: p.years, far: p.far, approx: p.approx,
+             why: `${p.name}: ${n} report${n === 1 ? '' : 's'} within ${tw.days} days of this date (${p.years})`
+               + `${said ? ` — ${said}` : ''}${p.far ? '. The chart prints this name in more than one spot' : ''}` };
+  });
+  return { turns, anyFish, waterFt: S.waterDepth ? [S.waterDepth.lo, S.waterDepth.hi] : null,
+           waterN: S.waterDepth ? S.waterDepth.n : 0, places: places.length };
+}
+
+/**
+ * WHICH RAMP, BY THE REPORTS (item 78, "the ramp is chosen with it"; Ryan, 11/6: "how does this help me figure out which
+ * ramp i should actually launch from"). Every landing on the water his ramp launches onto, scored by the reports that
+ * name places for his fish this time of year within a day's reach of it (turnsFromReports from each). Best first. The
+ * ramp he picked is marked; `better` is the best one when it has clearly more than his (at least two reports more, and
+ * a half again as many), else null. A heads-up with its reason, never a block. Pure.
+ */
+export function rampsByReports(tw, species, landings, { reachM = Infinity, budgetM = null, current = null, nearM = 150 } = {}) {
+  const seen = [];
+  const rows = (landings || []).filter((l) => l && Number.isFinite(Number(l.lon)) && Number.isFinite(Number(l.lat)))
+    // one row a landing: a list can carry the same ramp more than once
+    .filter((l) => { const at = [Number(l.lon), Number(l.lat)]; if (seen.some((a) => crowM(a, at) < 50)) return false; seen.push(at); return true; })
+    .map((l) => {
+      const at = [Number(l.lon), Number(l.lat)];
+      const r = turnsFromReports(tw, species, { ramp: at, reachM, budgetM });
+      return { name: l.name || l.label || 'a landing', at, score: r.turns.reduce((a, t) => a + t.n, 0),
+               spots: r.turns.map((t) => ({ name: t.name, n: t.n })), anyFish: r.anyFish,
+               isCurrent: !!(current && crowM(current, at) <= nearM) };
+    })
+    .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
+  let mine = rows.find((r) => r.isCurrent) || null;
+  if (!mine && current) {
+    const r = turnsFromReports(tw, species, { ramp: current, reachM, budgetM });
+    mine = { name: 'your ramp', at: current, score: r.turns.reduce((a, t) => a + t.n, 0), spots: r.turns.map((t) => ({ name: t.name, n: t.n })), isCurrent: true };
+  }
+  const top = rows.find((r) => !r.isCurrent);
+  const better = top && mine && top.score >= mine.score + 2 && top.score >= mine.score * 1.5 ? top : null;
+  return { rows, mine, better };
+}
+
 /** One fish's lines. `full` adds the reports' own words; a fish he did not pick gets the facts only. */
 function fishLines(tw, f, full, quotes = 6) {
   const S = summarize(tw, new Set([f]));

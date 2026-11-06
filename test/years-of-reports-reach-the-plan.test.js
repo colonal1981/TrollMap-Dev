@@ -28,7 +28,7 @@ import { gzipSync } from 'node:zlib';
 import { handleResearchReports } from '../Worker/research/storage.js';
 import { inWindow, pickThisWeek, reportFish, thisWeekBlock, forSaving, askThisWeek } from '../js/modules/reports-this-week.js';
 import { askGuideReports, guideReportsBlock, savedGuide } from '../js/modules/guide-reports.js';
-import { placesThisWeek, srcName } from '../js/modules/reports-this-week.js';
+import { placesThisWeek, srcName, turnsFromReports, rampsByReports, crowM } from '../js/modules/reports-this-week.js';
 import { spotHtml, pinRadiusPx } from '../js/modules/report-spots-layer.js';
 
 // ── the Worker's door ────────────────────────────────────────────────────────────────────────────
@@ -313,4 +313,56 @@ test('the button is on the map\'s layer panel and the module is loaded', () => {
   const mod = readFileSync(new URL('../js/modules/report-spots-layer.js', import.meta.url), 'utf8');
   assert.match(mod, /askThisWeek\(\{ worker: CF_WORKER_URL, slug, date \}\)/, 'the same read as the plan');
   assert.match(mod, /pick a lake/, 'greyed and said, never silent, with no water picked');
+});
+
+// ── the reports choose the water, and the ramp ──────────────────────────────────────────────────
+
+// Five places on a made-up lake: two near the north ramp, three near the south one, a stripers' report each.
+const P = { A: [-81.40, 34.10], B: [-81.38, 34.10], A2: [-81.4005, 34.1003], C: [-81.40, 34.00], D: [-81.38, 34.00] };
+const at = (name, n, species = ['striped bass'], extra = {}) => Array.from({ length: n }, (_, i) => st({
+  date: `${2010 + i}-11-1${i % 9}`, species, text: `${name} report ${i}.`, places: [{ name, lon: P[name][0], lat: P[name][1] }],
+  depths: [{ ft: [25, 35], kind: 'water' }], ...extra }));
+const LAKE = [...at('A', 5), ...at('A2', 4), ...at('B', 2), ...at('C', 6), ...at('D', 6), ...at('B', 3, ['crappie'])];
+
+test('the reports choose where the loops turn: most-named for his fish, within reach, apart', () => {
+  const tw = pickThisWeek(LAKE, '2026-11-14');
+  const north = turnsFromReports(tw, ['Striped Bass'], { ramp: [-81.39, 34.11], reachM: 5000 });
+  assert.deepEqual(north.turns.map((t) => [t.name, t.n]), [['A', 5], ['B', 2]],
+    'A2 is 40 m from A: one turn; C and D are 11 km off, past half the day');
+  assert.match(north.turns[0].why, /^A: 5 reports within 21 days of this date \(2010-2014\) — Stripers 5/);
+  assert.deepEqual(north.waterFt, [30, 30], 'the water those reports put his fish over');
+  assert.equal(north.anyFish, false);
+  const crappie = turnsFromReports(tw, ['Crappie'], { ramp: [-81.39, 34.11], reachM: 5000 });
+  assert.deepEqual(crappie.turns.map((t) => t.name), ['B']);
+  const bowfin = turnsFromReports(tw, ['Bowfin'], { ramp: [-81.39, 34.11], reachM: 5000 });
+  assert.equal(bowfin.anyFish, true, 'no report names one: the places for any fish, said so');
+  assert.deepEqual(bowfin.turns.map((t) => t.name), ['A', 'B']);
+  assert.deepEqual(turnsFromReports(tw, ['Striped Bass'], { ramp: [-80, 33], reachM: 5000 }).turns, []);
+});
+
+test('which ramp: every landing by the same reports, and a heads-up only when another is clearly better', () => {
+  const tw = pickThisWeek(LAKE, '2026-11-14');
+  const landings = [{ name: 'North Ramp', lon: -81.39, lat: 34.11 }, { name: 'South Ramp', lon: -81.39, lat: 34.01 }];
+  const a = rampsByReports(tw, ['Striped Bass'], landings, { reachM: 5000, current: [-81.39, 34.11] });
+  assert.deepEqual(a.rows.map((r) => [r.name, r.score]), [['South Ramp', 12], ['North Ramp', 7]]);
+  assert.equal(a.mine.name, 'North Ramp');
+  assert.equal(a.better.name, 'South Ramp');
+  assert.deepEqual(a.better.spots, [{ name: 'C', n: 6 }, { name: 'D', n: 6 }]);
+  const b = rampsByReports(tw, ['Striped Bass'], landings, { reachM: 5000, current: [-81.39, 34.01] });
+  assert.equal(b.better, null, 'from the better ramp, nothing to say');
+  assert.ok(crowM([-81.40, 34.10], [-81.40, 34.00]) > 11000);
+});
+
+test('the one-troll button lays the reports\' turns, his catches only noted, and says the ramp', () => {
+  const ui = readFileSync(new URL('../js/modules/plan-water-ui.js', import.meta.url), 'utf8');
+  assert.match(ui, /catches: byReports \? \[\] : catches, via, contourOnly: byReports/, 'his catches choose nothing');
+  assert.match(ui, /askThisWeek\(\{ worker: CF_WORKER_URL, slug: T\.r2Key, date: T\.dateStr \}\)/);
+  assert.match(ui, /rampsByReports\(tw, T\.species, landings/);
+  assert.match(ui, /your catches did not choose this water/);
+  assert.match(ui, /reportTurns: T\.reportTurns \|\| \[\], reportSaid/);
+  const map = readFileSync(new URL('../js/modules/loop-on-map.js', import.meta.url), 'utf8');
+  assert.match(map, /S\.turns = snap\.reportTurns\.slice\(0, MAX_TURNS\)/, 'the report turns are his turns on the map');
+  assert.match(map, /noReportTurns: S\.reportsCleared/);
+  assert.match(map, /Laid by the fishing reports/);
+  assert.match(map, /snap\.rampAdvice/);
 });

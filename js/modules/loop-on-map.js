@@ -46,6 +46,7 @@ const S = {
   lines: null, marks: null, bar: null, barEl: null, watch: 0, clickTimer: 0, wired: false,
   lineFt: null,
   options: false,              // the day on the map is laid as options: a click is not a turn
+  reportsCleared: false,       // he took every report turn off: they are not laid again on this water and ramp
 };
 
 const $ = (id) => document.getElementById(id);
@@ -90,7 +91,7 @@ export async function planAsOneTroll() {
       return;
     }
     const key = `${now.slug}|${now.rampName}`;
-    if (key !== S.key) { S.turns = []; S.key = key; }
+    if (key !== S.key) { S.turns = []; S.key = key; S.reportsCleared = false; }
     // THE LAKE'S OWN CHART UNDER ITS LOOP, the way picking it on the map draws it: the depth bands the
     // lines ride, and his catch markers judged against this water, so a pin off it is not drawn
     // (catch-plot.js; Ryan, 10/4: "i am seeing fish on land in this area still"). Not awaited.
@@ -112,8 +113,13 @@ async function relay({ fit = false } = {}) {
       S.again = false;
       setBar({ busy: S.turns.length ? 'Laying the loop through your turns…' : 'Laying the loop…' });
       drawTurns();
-      const loop = await trollForMe({ via: S.turns.map((t) => t.at) });
+      const loop = await trollForMe({ via: S.turns.map((t) => t.at), noReportTurns: S.reportsCleared });
       const snap = loopForMap();
+      // THE REPORTS' TURNS ARE HIS TURNS ON THE MAP (11/6): numbered, each saying which reports put it there, to take
+      // off or add to like any turn he clicks.
+      if (loop && !S.turns.length && !S.reportsCleared && (snap.reportTurns || []).length && (snap.via || []).length) {
+        S.turns = snap.reportTurns.slice(0, MAX_TURNS).map((t) => ({ at: t.at, why: t.why, name: t.name }));
+      }
       if (!loop) {
         clearLines();
         S.turns.forEach((t) => { t.reached = null; });
@@ -207,6 +213,7 @@ function addTurn(at) {
 function removeTurn(i) {
   if (S.building) return;
   S.turns.splice(i, 1);
+  if (!S.turns.length) S.reportsCleared = true;
   drawTurns();
   relay();
 }
@@ -310,7 +317,8 @@ function drawTurns() {
       : t.offM > 60 ? (S.lineFt == null ? `Turn ${i + 1}: the loop goes to the nearest water it may use, ${t.offM} m from here.`
         : `Turn ${i + 1}: the loop turns ${t.offM} m from here, at the nearest water on its line (near ${line}).`)
       : `Turn ${i + 1}: the loop turns here.`;
-    m.bindTooltip(`${esc(tip)}<br><i>Click to take this turn off.</i>`, { direction: 'top', offset: [0, -12] });
+    m.bindTooltip(`${t.why ? `<b>${esc(t.why)}</b><br>` : ''}${esc(tip)}<br><i>Click to take this turn off.</i>`,
+      { direction: 'top', offset: [0, -12] });
     m.on('click', () => removeTurn(i));
     m.addTo(g);
   });
@@ -396,7 +404,10 @@ function setBar(o) {
     n.textContent = o.note;
     return;
   } else if (o.loop && o.loop.mode === 'options') {
-    body = optionsBar(o.loop, snap);
+    // Options from his fish only where the reports could not lay the day; it says why, and which ramp they would have.
+    body = (snap.reportSaid ? `<div style="margin-top:6px;color:#9fb3c3">Not laid by the fishing reports: ${esc(snap.reportSaid)}.</div>` : '')
+      + (snap.rampAdvice ? `<div style="margin-top:6px;color:#ffd54f">${esc(snap.rampAdvice)}</div>` : '')
+      + optionsBar(o.loop, snap);
   } else if (o.loop) {
     const loop = o.loop;
     const byPetal = (loop.petals || []).map((p, i) => {
@@ -410,13 +421,25 @@ function setBar(o) {
         // and the shallow edge of its own Contour alarm, which it never goes under
         + `${p.lineFt != null ? ` on ${Math.round(p.lineFt)} ft` : ''}`
         + `${p.edgeFt != null ? `, never under ${Math.round(p.edgeFt)} ft` : ''}: ${mi(out)} out, ${mi(back)} home`
-        // Every catch it goes past, the ones an earlier loop passed too -- going round again is the point.
-        + ` · past ${s.passes != null ? s.passes : (s.fish || 0)} of your ${esc(snap.species || '')} catches and ${plural(s.structure || 0, 'charted mark')}</div>`;
+        // Every catch it goes past, the ones an earlier loop passed too -- going round again is the point. A loop the
+        // reports laid says the place it turns at instead: his catches chose none of it.
+        + (loop.byReports
+          ? ` · turns at ${esc((S.turns[p.via] && S.turns[p.via].name) || (p.via != null ? `turn ${p.via + 1}` : 'the water nearest'))}`
+            + ` · ${plural(s.structure || 0, 'charted mark')}`
+          : ` · past ${s.passes != null ? s.passes : (s.fish || 0)} of your ${esc(snap.species || '')} catches and ${plural(s.structure || 0, 'charted mark')}`)
+        + '</div>';
     }).join('');
     const missed = S.turns.filter((t) => t.reached === false && t.passedBy == null).length;
     // WHICH LINE EACH LOOP RIDES -- his fish's line first, then round the same water a band over.
     const lines = [...new Set((loop.petals || []).map((p) => Math.round(p.lineFt != null ? p.lineFt : loop.lineFt)))];
-    body = `<div style="margin-top:6px">${mi(loop.trolledM)} trolled `
+    const byReports = loop.byReports
+      ? `<div style="margin-top:6px;color:#ffb300"><b>Laid by the fishing reports</b>: the numbered turns are the places they name most `
+        + `for your ${esc(snap.species || 'fish')}${loop.byReports.anyFish ? ' (none names one for it, so any fish)' : ''} within 3 weeks of this date, `
+        + `in any year from 2008. Hover a number for what they say there.`
+        + `${loop.byReports.yourFish ? ` It passes ${plural(loop.byReports.yourFish, 'of your catches', 'of your catches')}; they did not choose it.` : ''}</div>`
+      : snap.reportSaid ? `<div style="margin-top:6px;color:#9fb3c3">Not laid by the fishing reports: ${esc(snap.reportSaid)}.</div>` : '';
+    const ramp = snap.rampAdvice ? `<div style="margin-top:6px;color:#ffd54f">${esc(snap.rampAdvice)}</div>` : '';
+    body = byReports + ramp + `<div style="margin-top:6px">${mi(loop.trolledM)} trolled `
       + `on ${lines.length === 1 ? `the ${lines[0]} ft line` : `the ${lines.slice(0, -1).join(', ')} and ${lines[lines.length - 1]} ft lines`}: `
       + `about ${hours(loop.minutes)} of your ${hours(loop.budgetMin)}.</div>`
       + byPetal

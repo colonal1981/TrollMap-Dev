@@ -88,7 +88,8 @@ test('a turn no loop can reach does not cost the rest of the day: that loop is c
 test('Troll it for me takes the turns from the map exactly where he clicked, not the middle of a lane', () => {
   assert.ok(ui.includes('export async function trollForMe(opts = {}) {'));
   assert.ok(ui.includes('const fromMap = Array.isArray(opts.via);'));
-  assert.ok(ui.includes('const via = (fromMap ? opts.via : ['));
+  // where he clicked, exactly; with no click yet, the turns the fishing reports give (11/6)
+  assert.ok(ui.includes('const via = (fromMap ? (opts.via.length || opts.noReportTurns ? opts.via : reportVia)'));
   // a reason no click can fix is marked, so the bar says a click will not change it -- and no other
   // planner's day is pressed in its place (Ryan, 10/4: a lane-plan NO-GO 13 miles from his ramp)
   assert.ok(ui.includes("T.loopNoWater = noWater"));
@@ -100,13 +101,15 @@ test('Troll it for me takes the turns from the map exactly where he clicked, not
   assert.ok(ui.includes("loop-on-map.js')).planAsOneTroll();"));
 });
 
-test('the loop is still his catches and the structure: the turn fixes where it turns and nothing else', () => {
-  // the line still comes from his catches (the loop reads the ones within reach), and the day is
-  // still chosen fish first
-  assert.ok(ui.includes('const fallback = loopLine({ waterFt: guide, band, holding: T.holding, steerFt: steer });'));
-  assert.ok(ui.includes('marks: T.spots, catches, via,'));
-  // and the bar says what each loop passes
+test('the reports choose the water where they name it; elsewhere it is his catches and the structure', () => {
+  // Ryan, 11/6: "even with catches i dont like it... because i am telling the app where to tell me to fish instead of the
+  // app telling me". Where the water's reports name places for this time of year, the loops turn there and his catches
+  // choose nothing; where they do not, the line comes from his catches as before, and the day is chosen fish first.
+  assert.ok(ui.includes('let fallback = loopLine({ waterFt: repWater || guide, band, holding: T.holding, steerFt: steer });'));
+  assert.ok(ui.includes('marks: T.spots, catches: byReports ? [] : catches, via, contourOnly: byReports,'));
+  // and the bar says what each loop passes, or where the reports turn it
   assert.ok(lom.includes('catches and ${plural(s.structure || 0, \'charted mark\')}'));
+  assert.ok(lom.includes('Laid by the fishing reports'));
 });
 
 test('one button: a river goes to the river plan, a lake is laid on the main map with the old plan taken off', () => {
