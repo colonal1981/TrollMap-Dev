@@ -13,7 +13,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { layAreas, optionLoop, optionLines, runDivers, runCrankbaits, RUN_MPH, AREA_R_M, MIN_MOVE_M } from '../js/modules/plan-areas.js';
+import { layAreas, optionLoop, optionLines, runDivers, runCrankbaits, diversStretch, RUN_MPH, AREA_R_M, MIN_MOVE_M } from '../js/modules/plan-areas.js';
 import { loopSteps } from '../js/modules/plan-troll-loop.js';
 import { TACKLE_INVENTORY } from '../js/data/tackle-inventory.js';
 import { LURE_KNOWLEDGE, CRANK_MAX_MPH, depthWindow, leadForDepth } from '../js/data/lure-knowledge.js';
@@ -171,7 +171,7 @@ test('a move between loops goes with the divers only over water they clear; over
   const kinds = step.moveList.map((m) => m.kind);
   assert.ok(kinds.includes('divers') && kinds.includes('up'), kinds.join());
   for (const m of step.moveList) {
-    if (m.kind === 'divers') assert.ok(m.floorFt >= m.needFt && Math.abs(m.minutes - m.m / (3 * 1609.344 / 60)) < 1, `${m.m} m over ${m.floorFt}`);
+    if (m.kind === 'divers') assert.ok(m.floorFt >= m.needFt && Math.abs(m.trolledMin - m.trolledM / (3 * 1609.344 / 60)) < 1, `${m.trolledM} m over ${m.floorFt}`);
     if (m.kind === 'up') assert.ok(m.floorFt < 30 && m.m >= MIN_MOVE_M, `${m.m} m over ${m.floorFt}`);
     if (m.kind === 'join') assert.ok(m.m < MIN_MOVE_M);
   }
@@ -196,6 +196,41 @@ test('a move between loops goes with the divers only over water they clear; over
   // and no move leg crosses the bar
   for (const l of loop.legs.filter((x) => /-move\d+$/.test(x.name))) {
     assert.ok(l.coords.every((c) => c[1] < 33.2185 || c[1] > 33.2215), `${l.name} stays off the bar`);
+  }
+});
+
+// His third 11/8 plan: the trip home went lines up for 1.3 miles, drawn across a 3 ft flat, because the move home ends
+// on the edge of the reports' water and the whole move was lines up for its last few metres (11/6: "yeah lets do that").
+test('a move puts the divers in where its water first holds them and takes them up where it stops; shallower between is lines up', () => {
+  const cum = Array.from({ length: 60 }, (_, i) => i * 40);
+  const deep = (i) => 45;
+  // shallow at both ends: in at the first station that holds, up at the last
+  const ends = diversStretch(cum.map((_, i) => (i < 3 ? 22 : i > 55 ? 27 : deep(i))), cum, 30);
+  // (a station counts as the deeper of it and the one before, so the first shallow one after deep water still holds)
+  assert.deepEqual([ends.inM, ends.outM], [120, 2240]);
+  assert.equal(ends.trolledM, 2120);
+  assert.equal(ends.floorFt, 45);
+  // a 40 m blip is not counted, two stations are
+  assert.ok(diversStretch(cum.map((_, i) => (i === 30 ? 25 : 45)), cum, 30).trolledM);
+  const mid = diversStretch(cum.map((_, i) => (i === 30 || i === 31 ? 25 : 45)), cum, 30);
+  assert.equal(mid.why, 'shallower water between');
+  // what holds is too little of it to change baits for
+  assert.match(diversStretch(cum.map((_, i) => (i > 10 && i < 20 ? 45 : 20)), cum, 30).why, /too little/);
+  assert.match(diversStretch(cum.map(() => 20), cum, 30).why, /never/);
+  // on the lake: a move with the divers is that stretch, and where it stops short of the next loop, the loop says lines up
+  for (const day of [DAY, BAR_DAY]) {
+    day.options.forEach((op, i) => {
+      const loop = optionLoop(day, i);
+      const steps = op.steps.filter((x) => x.kind === 'area');
+      for (const st of steps) for (const m of st.moveList.filter((x) => x.kind === 'divers')) {
+        assert.ok(m.inM >= 0 && m.outM <= m.m && m.trolledM === m.outM - m.inM, `${m.inM}-${m.outM} of ${m.m}`);
+      }
+      for (const [k, l] of loop.legs.entries()) {
+        if (!/-move\d+$/.test(l.name)) continue;
+        const mv = steps.flatMap((x) => x.moveList).find((x) => x.coords === l.coords);
+        if (mv && mv.m - mv.outM > 20 && loop.legs[k + 1]) assert.ok(loop.legs[k + 1].upBefore, `${l.name}: lines up after it`);
+      }
+    });
   }
 });
 

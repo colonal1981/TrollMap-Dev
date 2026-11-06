@@ -178,6 +178,33 @@ function splitAt(coords, atM) {
 }
 
 /**
+ * WHERE ON A MOVE THE TWO DIVERS ARE OUT. Ryan, 11/6, of the trip home on his third 11/8 plan drawn lines up across a
+ * 3 ft flat: the move home ends where the day came into the area, on the edge of the reports' water, and a move was
+ * lines up from its start if any of it was under the divers' need -- so 1.3 miles went lines up for the last few metres.
+ * Now as a run is: the lines go in where the water first holds the need and come up where it stops holding it the rest
+ * of the way. Shallower water BETWEEN the two is a move lines up from its start, as before. `depths`/`cum` are a
+ * profile's stations; a station counts as the deeper of it and the one before (a 40 m blip does not count).
+ * {inM, outM, trolledM, floorFt} or {why}.
+ */
+export function diversStretch(depths, cum, needFt, minM = MIN_MOVE_M) {
+  const n = (depths || []).length;
+  const held = (k) => { const x = depths[k], y = k ? depths[k - 1] : x; return Number.isFinite(x) && Number.isFinite(y) ? Math.max(x, y) : -Infinity; };
+  let i0 = 0;
+  while (i0 < n && held(i0) < needFt) i0++;
+  let i1 = n - 1;
+  while (i1 > i0 && held(i1) < needFt) i1--;
+  if (i0 >= i1) return { why: 'never over water the divers clear' };
+  let floor = Infinity;
+  for (let k = i0; k <= i1; k++) {
+    if (held(k) < needFt) return { why: 'shallower water between', atM: Math.round(cum[k]) };
+    floor = Math.min(floor, held(k));
+  }
+  const trolledM = cum[i1] - cum[i0];
+  if (trolledM < minM) return { why: 'too little of it over water the divers clear' };
+  return { inM: Math.round(cum[i0]), outM: Math.round(cum[i1]), trolledM: Math.round(trolledM), floorFt: Math.round(floor * 10) / 10 };
+}
+
+/**
  * THE AREAS AND THE WAYS TO SPEND THE DAY IN THEM.
  *
  * @param {object}   o
@@ -483,7 +510,7 @@ export function layAreas(o) {
         const x = pr.depths[k], y = k ? pr.depths[k - 1] : x;
         if (Number.isFinite(x) && Number.isFinite(y)) floor = Math.min(floor, Math.max(x, y));
       }
-      return { coords: [a, b], m: Math.round(metresBetween(a, b)), found: true,
+      return { coords: [a, b], m: Math.round(metresBetween(a, b)), found: true, pr,
                floorFt: Number.isFinite(floor) ? Math.round(floor * 10) / 10 : null };
     }
     const sa = nearOpen(cost, a), sb = nearOpen(cost, b);
@@ -497,13 +524,14 @@ export function layAreas(o) {
       const x = pr.depths[k], y = k ? pr.depths[k - 1] : x;
       if (Number.isFinite(x) && Number.isFinite(y)) floor = Math.min(floor, Math.max(x, y));
     }
-    return { coords, m: Math.round(pr.cum[pr.cum.length - 1] || metresBetween(a, b)), found: !!path,
+    return { coords, m: Math.round(pr.cum[pr.cum.length - 1] || metresBetween(a, b)), found: !!path, pr,
              floorFt: Number.isFinite(floor) ? Math.round(floor * 10) / 10 : null };
   };
   /**
    * move(fromPoint, toPoint) for one area: {kind: 'join'|'divers'|'up', coords, m, minutes, floorFt}. A join is under
-   * MIN_MOVE_M by water. A move with the divers keeps to water at least their need (rating + steer) the whole way, no
-   * more than MOVE_DETOUR times the shortest way; any other is lines up, the shortest way.
+   * MIN_MOVE_M by water. A move with the divers keeps to water at least their need (rating + steer) from where the lines
+   * go in to where they come up (diversStretch()), no more than MOVE_DETOUR times the shortest way; its `coords` are that
+   * stretch, and `inM`/`outM` say where on the move it starts and ends. Any other is lines up, the shortest way.
    */
   const moverFor = (area) => {
     const need = area.pair ? area.pair.needFt : Infinity;
@@ -530,9 +558,13 @@ export function layAreas(o) {
         if (short.m < MIN_MOVE_M) out = { kind: 'join', m: short.m, minutes: minutesFor(short.m, TROLL_MPH) };
         else {
           const dv = area.pair ? wayOn(diverCost(), a, b) : null;
-          if (dv && dv.found && dv.floorFt != null && dv.floorFt >= need && dv.m <= MOVE_DETOUR * short.m) {
-            out = { kind: 'divers', coords: dv.coords, m: dv.m, minutes: minutesFor(dv.m, RUN_MPH), floorFt: dv.floorFt,
-                    rods: area.pair.rods, needFt: need };
+          const st = dv && dv.found && dv.m <= MOVE_DETOUR * short.m ? diversStretch(dv.pr.depths, dv.pr.cum, need) : null;
+          if (st && st.trolledM) {
+            const mid = splitAt(splitAt(dv.coords, st.inM)[1], st.outM - st.inM)[0];
+            const upM = Math.max(0, dv.m - st.trolledM);
+            const trolledMin = minutesFor(st.trolledM, RUN_MPH), upMin = minutesFor(upM, TRANSIT_MPH);
+            out = { kind: 'divers', coords: mid, m: dv.m, trolledM: st.trolledM, upM, inM: st.inM, outM: st.outM,
+                    minutes: trolledMin + upMin, trolledMin, upMin, floorFt: st.floorFt, rods: area.pair.rods, needFt: need };
           } else {
             out = { kind: 'up', coords: short.coords, m: short.m, minutes: minutesFor(short.m, TRANSIT_MPH), floorFt: short.floorFt,
                     shallowFt: dv ? dv.floorFt : short.floorFt };
@@ -621,10 +653,11 @@ export function layAreas(o) {
       at = j;
     }
     if (seq.length) { const mv = home(at); t += mv.minutes; moves.push(mv); }
-    const sum = (kind) => Math.round(moves.filter((x) => x.kind === kind).reduce((a, x) => a + x.minutes, 0));
+    const sum = (f) => Math.round(moves.reduce((a, x) => a + (f(x) || 0), 0));
     return { laps: seq, moves, usedMin: Math.round(t), leftMin: Math.round(min - t), distinct: new Set(seq).size,
-             hopMin: Math.round(moves.reduce((a, x) => a + x.minutes, 0)), diversMin: sum('divers'), upMin: sum('up'),
-             joinMin: sum('join') };
+             hopMin: sum((x) => x.minutes), diversMin: sum((x) => x.kind === 'divers' && x.trolledMin),
+             upMin: sum((x) => (x.kind === 'up' ? x.minutes : x.kind === 'divers' ? x.upMin : 0)),
+             joinMin: sum((x) => x.kind === 'join' && x.minutes) };
   };
   const options = [];
   const optionOf = (parts, label) => {
@@ -737,8 +770,14 @@ export function optionLoop(day, i) {
       if (m.kind === 'up') { upNext = true; return; }
       mv++;
       const to = !last ? 'the next loop' : after && after.between ? 'the run across' : p.area.near ? 'the way in to the ramp' : 'the run home';
-      legs.push({ coords: m.coords, lengthM: m.m, petal: -1, half: 'run', name: `area${areaNo}-move${mv}`, area: p.area.key,
-                  run: { mph: RUN_MPH, rods: m.rods.map((x) => x.name), floorFt: m.floorFt, needFt: m.needFt, to, move: true } });
+      // Shallow water before the lines go in, after a run with the same divers out: lines up across it, not trolled on.
+      const prev = legs[legs.length - 1];
+      const upFirst = (m.inM || 0) > 20 && prev && prev.half === 'run';
+      legs.push({ coords: m.coords, lengthM: m.trolledM || m.m, petal: -1, half: 'run', name: `area${areaNo}-move${mv}`, area: p.area.key,
+                  run: { mph: RUN_MPH, rods: m.rods.map((x) => x.name), floorFt: m.floorFt, needFt: m.needFt, to, move: true },
+                  ...(upFirst ? { upBefore: true } : {}) });
+      // And where they come up short of the next loop, the rest is lines up.
+      if (m.m - (m.outM != null ? m.outM : m.m) > 20) upNext = true;
     };
     const laps = (step && step.lapList) || [], moves = (step && step.moveList) || [];
     laps.forEach((L, x) => {
