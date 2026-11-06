@@ -26,6 +26,10 @@ SOURCES = {   # key -> (who publishes it, what it is, the states its waters are 
     'Item': ('The Sumter Item', "weekly reprint of SCDNR's column, 2004-2017", {'SC'}),
     'YT-BigFishBlanch': ('Capt. Chris Blanchette (YouTube)', 'monthly Lake Murray video report, transcript', {'SC'}),
     'FB-Wolfe': ('Wolfe (Facebook)', 'Lake Wateree posts', {'SC'}),
+    # 11/6, his picks: "Georgia DNR weekly blog, Tournament patterns, Santee Cooper Country, Murray videos"
+    'GA-WRD': ('Georgia DNR Wildlife Resources Division', 'weekly Georgia Fishing Report blog', {'GA', 'SC'}),
+    'BASS': ('B.A.S.S. (Bassmaster)', 'tournament reports and patterns', {'SC', 'GA', 'NC', 'TN'}),
+    'MLF': ('Major League Fishing', 'tournament reports and patterns', {'SC', 'GA', 'NC', 'TN'}),
 }
 # SC only, his word of 11/5: "when we run research we are going to have to stick to SC waters unless we plan to find
 # these type of sources for the other 3 states". A source for another state is one more row here, and a reader.
@@ -39,7 +43,14 @@ DATED_BY = ['section heading', 'release', 'release (no year: the one before the 
 WATER_FROM = ['heading', 'named', 'place named', 'captains', 'system', 'source page', 'none']
 DEPTH_KIND = ['water', 'fish', 'unclear']
 FISH_POSITION = ['bottom', 'suspended', 'top']
-HIS_WAY = ['A-rig', 'crankbait']
+# The lure families a report names (report_text.LURE_WORDS), for every fish. His way is a lure the report trolls, from
+# the same list; before 11/6 it was only 'A-rig' and 'crankbait' (stripers). Bait is apart: never his on fresh water.
+LURES = ['A-rig', 'square bill', 'deep crankbait', 'lipless crankbait', 'topwater', 'jerkbait', 'crankbait', 'bladed jig',
+         'spinnerbait', 'underspin', 'swimbait', 'blade bait', 'spoon', 'inline spinner', 'bucktail', 'soft plastic', 'jig']
+HIS_WAY = LURES
+BAIT = ['live bait', 'cut bait', 'prepared bait']
+TIMES = ['first light', 'morning', 'midday', 'afternoon', 'evening', 'night']
+AREAS = ['upper lake', 'lower lake', 'mid lake', 'main lake', 'creek mouths', 'backs of creeks']   # report_places.AREAS
 METHODS = ['trolling', 'umbrella rig', 'planer board', 'live bait', 'down-rod', 'cut bait', 'casting', 'jigging']
 KINDS = ['humps', 'flats', 'creek channels', 'river / main channel', 'deep water near the dam', 'open water', 'points',
          'trees / timber', 'schooling / birds']
@@ -55,6 +66,7 @@ FIELDS = {
     'who': (list, True), 'text': (STR, True), 'context': ((str, type(None)), True),
     'rating': ((str, type(None)), True), 'water_temp_f_said': ((int, float, type(None)), True),
     'gauge': ((dict, type(None)), True), 'depths': (list, True), 'methods': (list, True),
+    'lures': (list, True), 'bait': (list, True), 'time_of_day': (list, True),
     'kinds_of_water': (list, True), 'places': (list, True), 'area': (list, True), 'sentences': (list, True),
     'repeated': (list, True), 'copies': (int, True),
 }
@@ -66,7 +78,8 @@ def blank(**kw):
     """A statement with every field present; the collector fills what it knows."""
     s = {'archived': None, 'water': [], 'water_from': 'none', 'water_as_written': None, 'species': [],
          'species_as_written': None, 'about': 'named', 'who': [], 'context': None, 'rating': None,
-         'water_temp_f_said': None, 'gauge': None, 'depths': [], 'methods': [], 'kinds_of_water': [], 'places': [],
+         'water_temp_f_said': None, 'gauge': None, 'depths': [], 'methods': [], 'lures': [], 'bait': [],
+         'time_of_day': [], 'kinds_of_water': [], 'places': [],
          'area': [], 'sentences': [], 'repeated': [], 'copies': 0}
     s.update(kw)
     s['id'] = make_id(s['source'], s['url'], s['date'], s['text'])
@@ -124,11 +137,18 @@ def check(s, slugs, sources_text):
     for d in s['depths']:
         if d.get('kind') not in DEPTH_KIND or not d.get('ft') or not all(isinstance(x, int) for x in d['ft']): e.append('depth %r' % d)
     if any(m not in METHODS for m in s['methods']): e.append('methods %r' % s['methods'])
+    if any(m not in LURES for m in s['lures']): e.append('lures %r' % s['lures'])
+    if any(m not in BAIT for m in s['bait']): e.append('bait %r' % s['bait'])
+    if any(m not in TIMES for m in s['time_of_day']): e.append('time_of_day %r' % s['time_of_day'])
     if any(k not in KINDS for k in s['kinds_of_water']): e.append('kinds_of_water %r' % s['kinds_of_water'])
     for p in s['places']:
-        if not {'name', 'lon', 'lat'} <= set(p): e.append('place %r' % p)
+        if not {'name', 'lon', 'lat'} <= set(p) or not all(isinstance(p[k], (int, float)) for k in ('lon', 'lat')):
+            e.append('place %r' % p)
+    if any(a not in AREAS for a in s['area']): e.append('area %r' % s['area'])
     for x in s['sentences']:
-        if any(f not in FISH_POSITION for f in x.get('fish', [])) or any(h not in HIS_WAY for h in x.get('his_way', [])):
+        if (any(f not in FISH_POSITION for f in x.get('fish', [])) or any(h not in HIS_WAY for h in x.get('his_way', []))
+                or any(h not in LURES for h in x.get('lures', [])) or any(t not in TIMES for t in x.get('time', []))
+                or not set(x.get('his_way', [])) <= set(x.get('lures', x.get('his_way', [])))):
             e.append('sentence %r' % x.get('said', '')[:60])
         elif NORM(x['said']) not in NORM(s['text']): e.append('sentence not in the text')
     if not all(date_ok(r) for r in s['repeated']): e.append('repeated %r' % s['repeated'])

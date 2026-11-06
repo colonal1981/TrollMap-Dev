@@ -425,6 +425,12 @@ class ReportsStep(unittest.TestCase):
                                             'the tournament, but Stan suggests getting there early.'))
         self.assertIsNotNone(K.WRAPPING.search('Sign up now for the AHQ Insider.'))
 
+    def test_a_kept_statement_carries_its_lures_bait_and_time(self):
+        crappie = [s for s in self.kept if 'crappie' in s['species']]
+        self.assertTrue(crappie)
+        self.assertTrue(any('jig' in s['lures'] for s in crappie), [s['text'] for s in crappie])
+        self.assertTrue(any('live bait' in s['bait'] for s in crappie), 'minnows are bait')
+
     def test_the_check_refuses_what_it_should(self):
         texts = K.source_texts(self.cache); slugs = set(REGISTRY)
         good = self.kept[0]
@@ -443,6 +449,84 @@ class ReportsStep(unittest.TestCase):
         refused(lambda s: s.update(water=[], water_from='named'), 'disagree')
         refused(lambda s: s.update(date='2026-13'), 'date')
         refused(lambda s: s.update(source='Fishbrain'), 'not in the table')
+        refused(lambda s: s.update(lures=['live herring']), 'lures')
+        refused(lambda s: s.update(bait=['jig']), 'bait')
+        refused(lambda s: s.update(time_of_day=['brunch']), 'time_of_day')
+        refused(lambda s: s.update(places=[{'name': 'Colonel Creek'}]), 'place')
+        refused(lambda s: s.update(area=['the good spot']), 'area')
+        refused(lambda s: s.update(sentences=[{'said': s['text'][:20], 'fish': [], 'lures': ['jig'], 'his_way': ['spoon'],
+                                               'time': [], 'ft': []}]), 'sentence')
+
+
+class EveryFishHisWay(unittest.TestCase):
+    """Ryan, 11/6: "I am a fisherman... i am not a striper fisherman... I troll", and no live bait on fresh water. The
+    lures are read for every fish, trolling is any trolling, and bait is kept apart from the lures."""
+    import report_text as T
+
+    def test_the_contracts_lure_list_is_the_readers(self):
+        self.assertEqual(K.LURES, [k for k, _ in self.T.LURE_WORDS])
+        self.assertEqual(K.TIMES, [k for k, _ in self.T.TIMES])
+        self.assertEqual(K.BAIT, self.T.BAIT_FAMILIES)
+
+    def test_the_more_exact_family_claims_its_words(self):
+        L = self.T.lures
+        self.assertEqual(L('Trolling deep-diving crankbaits and Stretch 25s on the points.', ['striped bass']), ['deep crankbait'])
+        self.assertEqual(L('chasing schooling fish on the surface using jigs, spoons and surface plugs.', ['striped bass']),
+                         ['topwater', 'spoon', 'jig'])
+        self.assertEqual(L('trolling plugs; spoon billed Rebels have been most effective.', ['striped bass']), ['crankbait'])
+        self.assertEqual(L('Topwater lures like Rebel Pop-Rs have been getting it done.', ['black bass']), ['topwater'])
+        self.assertEqual(L("Get out a Norman's DD22 crankbait and plow the deep points.", ['black bass']), ['deep crankbait'])
+        self.assertEqual(L('A square bill crankbait around rock.', ['black bass']), ['square bill'])
+
+    def test_names_that_are_not_lures(self):
+        L = self.T.lures
+        self.assertEqual(L('Bradley Hallman of Norman, Okla., rounded out the top five.', ['black bass']), [])
+        self.assertEqual(L('Crappie fishing is over when the last speckled bandit departs the shallows.', ['crappie']), [])
+
+    def test_bait_is_not_a_lure(self):
+        L, B = self.T.lures, self.T.bait
+        t = 'Carolina rigs with live herring are catching fish on the humps.'
+        self.assertEqual((L(t, ['striped bass']), B(t, ['striped bass'])), ([], ['live bait']))
+        self.assertEqual(L('Carolina rigs with lizards along the points.', ['black bass']), ['soft plastic'])
+        t = 'Jigs tipped with minnows over brush, or a Rapala minnow along the bank.'
+        self.assertEqual((L(t, ['crappie']), B(t, ['crappie'])), (['jerkbait', 'jig'], ['live bait']))
+        self.assertEqual(B('Drifting cut herring and chicken livers.', ['catfish']), ['cut bait', 'prepared bait'])
+
+    def test_a_bare_worm_is_plastic_for_bass_and_live_for_bream(self):
+        L, B = self.T.lures, self.T.bait
+        t = 'Fish worms around the docks.'
+        self.assertEqual((L(t, ['largemouth bass']), B(t, ['largemouth bass'])), (['soft plastic'], []))
+        self.assertEqual((L(t, ['bream']), B(t, ['bream'])), ([], ['live bait']))
+        self.assertEqual(L('Shaky head worms and floating worms.', ['black bass']), ['soft plastic'])
+
+    def test_the_time_of_day(self):
+        Tm = self.T.times
+        self.assertEqual(Tm('Early in the morning a topwater bite, then deeper by mid-day.'), ['first light', 'midday'])
+        self.assertEqual(Tm('Morning surface water temperatures are in the low 60s.'), [])
+        self.assertEqual(Tm('Cool nights have dropped the water. Best after dark under the lights.'), ['night'])
+        self.assertEqual(Tm('Late in the day and this afternoon.'), ['afternoon', 'evening'])
+
+    def test_his_way_is_trolling_for_every_fish(self):
+        S = self.T.sentences
+        x = S('Long-lining jigs in 12 feet over the channel has been best.', ['crappie'])[0]
+        self.assertEqual((x['lures'], x['his_way'], x['ft']), (['jig'], ['jig'], [[12, 12]]))
+        x = S('Pulling crankbaits on the flats early in the morning.', ['crappie'])[0]
+        self.assertEqual((x['his_way'], x['time']), (['crankbait'], ['first light']))
+        x = S('Trolling spoons 30 to 40 feet down.', ['trout'])[0]
+        self.assertEqual(x['his_way'], ['spoon'])
+        x = S('Cast a spinnerbait to the docks.', ['black bass'])[0]
+        self.assertEqual((x['lures'], x['his_way']), (['spinnerbait'], []), 'cast, not trolled')
+        x = S('Alabama rigs are catching fish on the points.', ['black bass'])[0]
+        self.assertEqual(x['his_way'], ['A-rig'], 'an A-rig always counts')
+        self.assertEqual(S('Pulling them off the bank has been hard.', ['crappie']), [])
+
+    def test_where_the_fish_are_is_not_the_water_temperature_or_a_lure(self):
+        S = self.T.sentences
+        self.assertEqual(S('Morning surface water temperatures are in the low 60s.', ['crappie']), [])
+        x = S('A suspending jerkbait on the points.', ['black bass'])[0]
+        self.assertEqual(x['fish'], [], 'a suspending jerkbait is a lure, not suspended fish')
+        x = S('The fish are suspended over 30 feet.', ['striped bass'])[0]
+        self.assertEqual(x['fish'], ['suspended'])
 
 
 if __name__ == '__main__':

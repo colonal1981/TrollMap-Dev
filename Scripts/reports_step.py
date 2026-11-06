@@ -18,7 +18,8 @@ See THE_WHERE_AND_WHEN_MAP_2026-11-03.md and THE_REPORT_STATEMENT_CONTRACT_2026-
        scc/       Santee Cooper Country: Santee Cooper's, read by the Santee pipeline for now
   2. READ every statement about this water: report_column.py (SCDNR's column and The Item's copy of it, all waters),
      report_ahq.py (this water's AHQ posts), report_cs.py (its Carolina Sportsman articles and the roundups),
-     report_text.py (depths, methods, the sentences). A paragraph in several
+     report_text.py (depths, methods, lures and bait, time of day, the sentences), report_places.py (the places named,
+     on his chart: chartpack/<slug>/, beside registry/). A paragraph in several
      places is kept once, at its earliest date, with the later dates in `repeated`; the same words said of two
      waters are two statements, except a report a page printed under two lakes by mistake (one_page_two_waters).
   3. CHECK every statement against report_contract.py. A water whose statements break the contract is not kept.
@@ -43,6 +44,11 @@ import report_ahq as A             # noqa: E402
 import report_text as T            # noqa: E402
 import report_contract as K        # noqa: E402
 import report_cs as S                # noqa: E402
+import report_places as P            # noqa: E402
+import report_ga as G                # noqa: E402
+import report_scc as SC              # noqa: E402
+import report_tourney as TN          # noqa: E402
+import report_yt as Y                # noqa: E402
 
 PAUSE_S = 2.5                       # between two requests to the same site
 # A save that fails on the network, or that the Worker cannot answer (5xx, 429), tries again after these waits.
@@ -159,10 +165,11 @@ def ahq_posts_for(urls, slug, widx):
     return out
 
 
-def fetch_missing(urls, folder, fetcher, log=print, limit=0):
-    """Fetch each url not already kept in `folder`, PAUSE_S apart. Returns (fetched, teasers, failed)."""
+def fetch_missing(urls, folder, fetcher, log=print, limit=0, pause=None, slug_of=None):
+    """Fetch each url not already kept in `folder`, `pause` (PAUSE_S) apart. Returns (fetched, teasers, failed)."""
     os.makedirs(folder, exist_ok=True)
-    todo = [u for u in urls if not os.path.exists(os.path.join(folder, u.rstrip('/').split('/')[-1] + '.json'))]
+    slug_of = slug_of or (lambda u: u.rstrip('/').split('/')[-1])
+    todo = [u for u in urls if not os.path.exists(os.path.join(folder, slug_of(u) + '.json'))]
     if limit: todo = todo[:limit]
     got = teas = 0; failed = []
     for i, u in enumerate(todo, 1):
@@ -174,8 +181,37 @@ def fetch_missing(urls, folder, fetcher, log=print, limit=0):
             json.dump(rec, f, ensure_ascii=False, indent=1)
         got += 1; teas += bool(rec.get('members_only_teaser'))
         if i % 25 == 0: log('   %d/%d fetched' % (i, len(todo)))
-        time.sleep(PAUSE_S)
+        time.sleep(PAUSE_S if pause is None else (pause(u) if callable(pause) else pause))
     return got, teas, failed
+
+
+def _listed(cache, name, key, lister, refresh, log, merge=False):
+    """A site's list of posts ([(url, lastmod)]), read fresh once a run and kept in <cache>/<name>; the kept list
+    alone when the read fails or lists nothing."""
+    path = os.path.join(cache, name)
+    kept = []
+    if os.path.exists(path):
+        with open(path, encoding='utf-8-sig') as fh:
+            kept = [tuple((l.rstrip('\n').split('\t') + [''])[:2]) for l in fh if l.strip()]
+    if refresh and (key, path) not in _READ_THIS_RUN:
+        _READ_THIS_RUN.add((key, path))
+        try:
+            fresh = lister(log=log)
+            if fresh and merge:                                   # a partial read adds to the kept list
+                have = {u for u, _ in fresh}
+                fresh = fresh + [x for x in kept if x[0] not in have]
+            if fresh:
+                new = len({u for u, _ in fresh} - {u for u, _ in kept})
+                os.makedirs(cache, exist_ok=True)
+                with open(path, 'w', encoding='utf-8') as f: f.write(''.join('%s\t%s\n' % x for x in fresh))
+                return fresh, new
+            log('   %s listed nothing: using the kept list of %d' % (key, len(kept)))
+        except Exception as e:                                   # noqa: BLE001 -- say it and use the kept list
+            log('   %s not listed (%s): using the kept list of %d' % (key, e, len(kept)))
+    return kept, 0
+
+
+GA_WATERS = {s for s, _ in G.WATERS}
 
 
 def live_page(cache, log=print):
@@ -197,7 +233,7 @@ def _records(folder):
                 yield json.load(fh)
 
 
-def read_statements(slug, cache, idx, names, ahq_urls, cs_urls=()):
+def read_statements(slug, cache, idx, names, ahq_urls, cs_urls=(), extra=None):
     """Every statement about this water, in the column (all waters, so a reprint folds into its first copy and a
     guide's usual fish is learned from everything he said), in this water's AHQ posts and in its Carolina Sportsman
     articles and the S.C. roundups."""
@@ -254,20 +290,33 @@ def read_statements(slug, cache, idx, names, ahq_urls, cs_urls=()):
             if ws is not None and (not ws or S.times_named(rec.get('text'), ws, pn, rx) < S.NAMED_AT_LEAST):
                 docs['CS not about it'] += 1; continue          # its address names the water, its text does not
             docs['CS'] += 1; add(S.statements(rec, ws, pn, rx))
+    extra = extra or {}
+    for key, sub, reader in (('ga', 'ga', lambda r: G.statements(r, {slug})), ('scc', 'scc', lambda r: SC.statements(r, slug)),
+                             ('tourney', 'tourney', lambda r: TN.statements(r, slug)), ('yt', 'yt', lambda r: Y.statements(r, slug))):
+        if key != 'yt' and key not in extra: continue
+        want = None if key == 'yt' else {(SC.slug_of(u[0]) if key == 'scc' else TN.slug_of(u) if key == 'tourney'
+                                          else G.slug_of(u)) for u in extra[key]}
+        for rec in _records(os.path.join(cache, sub)):
+            if want is not None and rec.get('slug') not in want: continue
+            st = reader(rec)
+            if st: docs[st[0]['source']] += 1; add(st)
     C.assign_unheaded(rows)
     C.species_by_captains(rows)
     rows, folded = C.collapse_repeats(rows)
     return [x for x in rows if slug in x['waters']], docs, folded, two
 
 
-def to_contract(x):
+def to_contract(x, where=None):
+    """`where` is the water's report_places.Matcher: the places the words name, on his chart."""
     return K.blank(
+        places=where.places(x['text']) if where else [], area=P.areas(x['text']),
         source=x['source'], url=x['url'], archived=x.get('archived'), date=x['date'], dated_by=x['dated_by'],
         water=x['waters'], water_from=(x.get('water_from') or 'heading') if x['waters'] else 'none',
         water_as_written=x.get('heading'), species=x['species'], species_as_written=x.get('label'), about=x['about'],
         who=x['who'], text=x['text'], rating=x.get('rating'), water_temp_f_said=x.get('water_temp_f_said'),
         depths=T.depths(x['text']), methods=T.methods(x['text']), kinds_of_water=T.kinds_of_water(x['text']),
-        sentences=T.sentences(x['text']), repeated=x.get('repeated', []), copies=x.get('also', 0))
+        lures=T.lures(x['text'], x['species']), bait=T.bait(x['text'], x['species']), time_of_day=T.times(x['text']),
+        sentences=T.sentences(x['text'], x['species']), repeated=x.get('repeated', []), copies=x.get('also', 0))
 
 
 def run(slug, regdir, cache, out, dry_run=True, fetch=True, limit=0, log=print):
@@ -302,11 +351,41 @@ def run(slug, regdir, cache, out, dry_run=True, fetch=True, limit=0, log=print):
             clock.mark('CS fetch')
             res['scdnr_page_read'] = live_page(cache, log=log)
             clock.mark('SCDNR page')
-        rows, docs, folded, two = read_statements(slug, cache, idx, names, mine, cs_mine)
+        # 11/6, his picks: Georgia DNR's weekly blog (Hartwell, Thurmond, Russell), Santee Cooper Country's monthly
+        # pages (Marion, Moultrie), the tournament reports on his lakes (Bassmaster, MLF). The Murray videos are kept
+        # in yt/ and read as they are.
+        extra = {}
+        if slug in GA_WATERS:
+            ga, _ = _listed(cache, 'ga_posts.txt', 'GA-WRD', G.post_urls, fetch, log)
+            extra['ga'] = [u for u, _ in ga]
+        if slug in SC.LAKES:
+            sc, _ = _listed(cache, 'scc_pages.txt', 'SCC', SC.page_urls, fetch, log)
+            extra['scc'] = sc
+        first = not os.path.exists(os.path.join(cache, 'tourney_articles.txt'))
+        tn, _ = _listed(cache, 'tourney_articles.txt', 'tournaments',
+                        lambda log: TN.article_urls(log=log, mlf_all=first), fetch, log, merge=True)
+        extra['tourney'] = [u for u, _ in tn if slug in TN.waters_of(u)]
+        res['new_sources_listed'] = {k: len(v) for k, v in extra.items()}
+        if fetch:
+            got = {}
+            if 'ga' in extra:
+                got['GA-WRD'] = fetch_missing(extra['ga'], os.path.join(cache, 'ga'), G.fetch_post, log=log, limit=limit)[0]
+            if 'scc' in extra:
+                mods = dict(extra['scc'])
+                got['SCC'] = fetch_missing(list(mods), os.path.join(cache, 'scc'), lambda u: SC.fetch_page(u, mods.get(u, '')),
+                                           log=log, limit=limit)[0]
+            got['tournaments'] = fetch_missing(extra['tourney'], os.path.join(cache, 'tourney'), TN.fetch_article, log=log,
+                                               limit=limit, pause=lambda u: TN.PAUSE[TN.site_of(u)], slug_of=TN.slug_of)[0]
+            res['new_sources_fetched'] = got
+            clock.mark('new sources')
+        rows, docs, folded, two = read_statements(slug, cache, idx, names, mine, cs_mine, extra)
         res['documents_read'] = dict(docs); res['paragraphs_folded'] = folded
         res['one_page_two_waters'] = two
         clock.mark('read')
-        statements = [to_contract(x) for x in rows]
+        packs = os.path.join(os.path.dirname(os.path.abspath(regdir)), 'chartpack')
+        where = P.Matcher(P.gazetteer(packs, regdir, slug))
+        statements = [to_contract(x, where) for x in rows]
+        res['places_named'] = sum(1 for s in statements if s['places'])
         texts = K.source_texts(cache)
         slugs = set(idx)
         bad = [(s['date'], s['source'], e) for s in statements for e in [K.check(s, slugs, texts)] if e]
@@ -400,8 +479,8 @@ def report(res, log=print):
     if res.get('skipped'): log('   skipped: ' + res['skipped']); return
     if res.get('error'): log('   ' + res['error'])
     for k in ('ahq_posts_listed', 'ahq_new_in_sitemap', 'ahq_fetched', 'ahq_teasers', 'cs_posts_listed', 'cs_new_in_sitemap',
-              'cs_fetched', 'scdnr_page_read', 'documents_read',
-              'paragraphs_folded', 'one_page_two_waters', 'statements', 'broken_n', 'by_source', 'by_year', 'by_species', 'kept', 'saved',
+              'cs_fetched', 'scdnr_page_read', 'new_sources_listed', 'new_sources_fetched', 'documents_read',
+              'paragraphs_folded', 'one_page_two_waters', 'statements', 'places_named', 'broken_n', 'by_source', 'by_year', 'by_species', 'kept', 'saved',
               'save_tries', 'bytes', 'bytes_before_gzip'):
         if k in res: log('   %-20s %s' % (k, res[k]))
     for u, e in ((res.get('ahq_failed') or []) + (res.get('cs_failed') or []))[:5]: log('   failed %s: %s' % (u, e))
