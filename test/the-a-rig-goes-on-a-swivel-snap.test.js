@@ -63,6 +63,9 @@ test('both planners hand the rule to the seating', () => {
   assert.match(sp, /planArgsFrom\(res, candidates, \{ tackle: o\.tackle, connectionOf, snapFirstOf \}\)/);
   const pw = readFileSync(new URL('../js/modules/plan-water-ui.js', import.meta.url), 'utf8');
   assert.match(pw, /snapFirstOf: \(name\) => \{/);
+  // and the one-troll Build the day passes it on: planFromWater() called planArgsFrom() without it (found 11/6 evening)
+  const pf = readFileSync(new URL('../js/modules/plan-from-water.js', import.meta.url), 'utf8');
+  assert.match(pf, /planArgsFrom\(res, legs, \{ tackle: o\.tackle, connectionOf: o\.connectionOf, snapFirstOf: o\.snapFirstOf \}\)/);
   const pp = readFileSync(new URL('../js/modules/plan-prompt.js', import.meta.url), 'utf8');
   assert.match(pp, /seatRods\(claimed, ctx\.connectionOf, ctx\.snapFirstOf\)/);
 });

@@ -120,10 +120,12 @@ describe('speed model — hard limits only where physics breaks', () => {
     }
   });
 
-  it('no lipped bait is allowed past 3mph — above that it leaves its rated depth', () => {
+  // Ryan, 2026-11-06: "anything 3.5 and higher is where i have seen the most issues with the crankbaits... i routinely
+  // troll above 2.5 and have never had an issue". It was 3.0 here, unsourced.
+  it('no lipped bait is allowed at 3.5mph or more — that is where he has seen them blow out', () => {
     for (const [t, k] of Object.entries(LURE_KNOWLEDGE)) {
       if (k.depthMode !== 'rated') continue;
-      expect(k.speed.max, t).toBeLessThanOrEqual(3.0);
+      expect(k.speed.max, t).toBeLessThan(3.5);
       expect(k.speedIsHardLimit, t).toBe(true);
     }
   });
@@ -152,7 +154,8 @@ describe('speed model — hard limits only where physics breaks', () => {
     expect(tooDeep.limitedBy).toBe('lead');
 
     const sr = TACKLE_INVENTORY.find(l => l.id === 'cb_sr');
-    expect(canReachDepth(sr, 4, 3.4, { maxLeadFt: 120 }).limitedBy).toBe('speed');
+    expect(canReachDepth(sr, 4, 3.5, { maxLeadFt: 120 }).limitedBy).toBe('speed');
+    expect(canReachDepth(sr, 4, 3.0, { maxLeadFt: 120 }).ok, 'his 3 mph run').toBe(true);
     expect(canReachDepth(sr, 20, 2.0, { maxLeadFt: 120 }).limitedBy).toBe('rating');
     expect(canReachDepth(sr, 4, 2.5, { maxLeadFt: 120 }).ok).toBe(true);
   });

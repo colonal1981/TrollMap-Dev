@@ -257,7 +257,8 @@ test('8. the map draws and numbers them, a click is not a turn, and the plan is 
   assert.ok(ui.includes("const laid = T.lastLoop && T.lastLoop.mode === 'options' && trollOrderOf(picked)"));
   assert.ok(ui.includes('materialisePlan(r.plan, { launch: T.ramp, win: window, marks: true, options: laid })'));
   // the main map
-  assert.ok(lom.includes("S.options = loop.mode === 'options';"));
+  // (and in the areas the reports name, 11/6: a click is not a turn there either)
+  assert.ok(lom.includes("S.options = loop.mode === 'options' || loop.mode === 'areas';"));
   assert.ok(lom.includes('These options are laid from your fish, so a click is not a turn.'));
   assert.ok(lom.includes("'Build Option 1</button></div>'"));
   assert.ok(lom.includes('html: optionBadge(op.n, color)'));

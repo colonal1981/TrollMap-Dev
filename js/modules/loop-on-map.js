@@ -32,7 +32,8 @@
 import { state } from '../core/state.js';
 import { LOOP_COLORS, TRANSIT_COLOR } from './plan-to-timeline.js';
 import { turnsReached } from './plan-troll-loop.js';
-import { findWater, trollForMe, buildFromPicked, loopForMap, riverHere, optionShapeSaid, bandFromSaid } from './plan-water-ui.js';
+import { findWater, trollForMe, buildFromPicked, loopForMap, riverHere, optionShapeSaid, bandFromSaid, layAreaOption } from './plan-water-ui.js';
+import { optionLines, RUN_MPH, hm } from './plan-areas.js';
 import { optionColor, optionBadge } from './plan-tracks.js';
 
 const MAX_TURNS = 4;           // a day is at most four loops (trollLoop's maxPetals)
@@ -46,6 +47,7 @@ const S = {
   lines: null, marks: null, bar: null, barEl: null, watch: 0, clickTimer: 0, wired: false,
   lineFt: null,
   options: false,              // the day on the map is laid as options: a click is not a turn
+  areas: false,                // ... in the areas the reports name (plan-areas.js)
   reportsCleared: false,       // he took every report turn off: they are not laid again on this water and ramp
 };
 
@@ -135,8 +137,9 @@ async function relay({ fit = false } = {}) {
         continue;
       }
       S.lineFt = loop.lineFt;
-      S.options = loop.mode === 'options';
-      if (S.options) S.turns = [];   // the options are laid from his fish; no turn goes into them
+      S.options = loop.mode === 'options' || loop.mode === 'areas';
+      S.areas = loop.mode === 'areas';
+      if (S.options) S.turns = [];   // the options are laid from his fish, or in the reports' areas; no turn goes into them
       const r = turnsReached(S.turns.map((t) => t.at), loop);
       S.turns.forEach((t, i) => { t.reached = r[i].reached; t.offM = r[i].offM; t.passedBy = r[i].passedBy; });
       drawLoop(loop, fit);
@@ -196,6 +199,11 @@ function wire() {
 
 function addTurn(at) {
   if (!S.on || S.building) return;
+  if (S.areas) {
+    setBar({ note: 'The day is laid in the areas the fishing reports name, so a click on the water is not a turn. '
+      + 'Pick a way to spend the day in the box.' });
+    return;
+  }
   if (S.options) {
     setBar({ note: 'These options are laid from your fish, so a click is not a turn. Every option is numbered on the '
       + 'map and goes in the GPX; the plan is built from Option 1.' });
@@ -246,11 +254,12 @@ function drawLoop(loop, fit) {
   const g = L.layerGroup();
   const ll = (c) => [c[1], c[0]];
   const pts = [];
+  if (loop.mode === 'areas') drawAreas(loop, g, pts);
   if (Array.isArray(loop.cove) && loop.cove.length > 1) {
     L.polyline(loop.cove.map(ll), { color: '#000', weight: 5, opacity: 0.4, interactive: false }).addTo(g);
     L.polyline(loop.cove.map(ll), { color: TRANSIT_COLOR, weight: 2.5, opacity: 0.95, dashArray: '10,7', interactive: false }).addTo(g);
   }
-  for (const leg of loop.legs || []) {
+  for (const leg of loop.mode === 'areas' ? [] : loop.legs || []) {
     const pair = LOOP_COLORS[leg.petal % LOOP_COLORS.length];
     const home = leg.half === 'back';
     const c = (leg.coords || []).map(ll);
@@ -291,6 +300,56 @@ function drawLoop(loop, fit) {
       state.MAP.fitBounds(pts, { paddingTopLeft: [40, 40], paddingBottomRight: [barW + 50, 40], animate: false });
     }, 120);
   }
+}
+
+/**
+ * THE AREAS ON THE MAP: every area the reports name as a dashed ring with its name, and the day chosen in them -- the
+ * run trolled with the deep divers in white dashes, each lap line once in its own colour (the way home dashed), so a
+ * lap gone round six times is one drawing.
+ */
+const AREA_RING = '#ffb300';
+function drawAreas(loop, g, pts) {
+  const ll = (c) => [c[1], c[0]];
+  const day = loop.day || {};
+  for (const a of day.areas || []) {
+    const inDay = (day.options[loop.option] || {}).areas || [];
+    L.circle(ll(a.at), { radius: day.radiusM, color: AREA_RING, weight: inDay.includes(a.key) ? 2.5 : 1.5,
+                         opacity: inDay.includes(a.key) ? 0.95 : 0.6, fill: false, dashArray: '6,6', interactive: false }).addTo(g);
+    L.marker(ll(a.at), { interactive: false, keyboard: false, icon: L.divIcon({ className: '', iconSize: [0, 0], iconAnchor: [0, 0],
+      html: `<div style="transform:translate(-50%,-50%);white-space:nowrap;background:rgba(11,22,35,.85);color:#ffe082;`
+        + `border:1px solid ${AREA_RING};border-radius:6px;padding:1px 6px;font:700 11px system-ui,sans-serif">${esc(a.name)}`
+        + `${a.near ? '' : ` · ${mi(a.run.lengthM)}`}</div>` }) }).addTo(g);
+    pts.push(ll(a.at));
+  }
+  const drawn = new Set();
+  const lapLines = [...new Set((loop.legs || []).filter((l) => l.half !== 'run').map((l) => l.lineFt))];
+  for (const leg of loop.legs || []) {
+    const c = (leg.coords || []).map(ll);
+    if (c.length < 2) continue;
+    if (leg.half === 'run') {
+      L.polyline(c, { color: '#000', weight: 6, opacity: 0.5, interactive: false }).addTo(g);
+      L.polyline(c, { color: '#ffffff', weight: 3, opacity: 0.95, dashArray: '10,6', interactive: false }).addTo(g);
+      pts.push(...c);
+      continue;
+    }
+    const k = `${c[0]}|${c[c.length - 1]}|${c.length}`;
+    if (drawn.has(k)) continue;
+    drawn.add(k);
+    const pair = LOOP_COLORS[Math.max(0, lapLines.indexOf(leg.lineFt)) % LOOP_COLORS.length];
+    const home = leg.half === 'back';
+    L.polyline(c, { color: '#000', weight: 6, opacity: 0.55, interactive: false }).addTo(g);
+    L.polyline(c, { color: home ? pair[1] : pair[0], weight: 3, opacity: 1, interactive: false, ...(home ? { dashArray: '12,6' } : {}) }).addTo(g);
+    pts.push(...c);
+  }
+}
+
+/** Another way to spend the day in the areas: laid at once, nothing measured again. */
+function pickArea(i) {
+  if (S.busy || S.building || !Number.isInteger(i)) return;
+  const loop = layAreaOption(i);
+  if (!loop) return;
+  drawLoop(loop, false);
+  setBar({ loop, snap: loopForMap() });
 }
 
 /** Numbered turns: white where a loop turns, red where none can, outlined while one is being laid. */
@@ -344,6 +403,7 @@ function showBar() {
         if (!a) return;
         const what = a.dataset.lom;
         if (what === 'build') build();
+        else if (what === 'area-opt') pickArea(Number(a.dataset.i));
         else if (what === 'plan') document.querySelector('#bottomNav button[data-tab="plan"]')?.click();
         else if (what === 'close') { removeBar(); if (!S.building && !S.busy) endPreview(); }
       });
@@ -403,6 +463,8 @@ function setBar(o) {
     }
     n.textContent = o.note;
     return;
+  } else if (o.loop && o.loop.mode === 'areas') {
+    body = areasBar(o.loop, snap);
   } else if (o.loop && o.loop.mode === 'options') {
     // Options from his fish only where the reports could not lay the day; it says why, and which ramp they would have.
     body = (snap.reportSaid ? `<div style="margin-top:6px;color:#9fb3c3">Not laid by the fishing reports: ${esc(snap.reportSaid)}.</div>` : '')
@@ -459,6 +521,41 @@ function setBar(o) {
       + '<div style="margin-top:4px;color:#9fb3c3;font-size:11px">Baits, stops and times: about two minutes on Claude.</div>';
   }
   S.barEl.innerHTML = head + body;
+}
+
+/** The bar for a day in the reports' areas: the areas, the ways to spend the day (one is chosen), and its clock. */
+function areasBar(loop, snap) {
+  const day = loop.day;
+  const sp = esc(snap.species || 'fish');
+  const areas = day.areas.map((a) => `<div style="margin-top:3px"><b style="color:#ffe082">${esc(a.name)}</b>: `
+    + `${plural(a.n, 'report')}${day.reports && day.reports.anyFish ? ' (any fish)' : ''} · `
+    + `${a.near ? 'by the ramp' : `${mi(a.run.lengthM)} by water, ${hm(a.runMin)} at ${RUN_MPH} mph`}`
+    + ` · ${a.acres} acres of ${day.waterFt[0]}–${day.waterFt[1]} ft · a lap ${a.laps.map((l) => hm(l.minutes)).join(' or ')}`
+    + `${a.tooFar ? ' · <span style="color:#ff8a80">too far for this window</span>' : ''}</div>`).join('');
+  const opts = day.options.map((op, i) => {
+    const on = i === loop.option;
+    return `<div data-lom="area-opt" data-i="${i}" style="margin-top:4px;padding:5px 7px;border-radius:7px;cursor:pointer;`
+      + `border:1px solid ${on ? '#69f0ae' : 'rgba(232,239,244,.25)'};background:${on ? 'rgba(105,240,174,.12)' : 'transparent'}">`
+      + `<b>${on ? '● ' : '○ '}${esc(op.label)}</b> · ${hm(op.fishingMin)} in the area${op.areas.length > 1 ? 's' : ''}`
+      + `${op.runningMin ? `, ${hm(op.runningMin)} running with the divers out` : ''}</div>`;
+  }).join('');
+  const op = day.options[loop.option];
+  const clock = optionLines(day, op).map((l) => `<div style="margin-top:2px">${esc(l)}</div>`).join('');
+  const run = (op.steps.find((s) => s.kind === 'run') || {});
+  return `<div style="margin-top:6px;color:#ffb300"><b>Laid by the fishing reports</b>: the areas they name for your ${sp} `
+      + `within 3 weeks of this date, in any year from 2008. The day is spent in an area, in laps on the `
+      + `${day.lines.map((l) => `${l} ft`).join(' and ')} line${day.lines.length > 1 ? 's' : ''}, not turned at it.</div>`
+    + areas
+    + `<div style="margin-top:8px;color:#9fb3c3">Pick a way to spend the day:</div>${opts}`
+    + `<div style="margin-top:6px;color:#c9d6df">${clock}</div>`
+    + (run.rods ? `<div style="margin-top:4px;color:#9fb3c3">Runs at ${RUN_MPH} mph with ${esc(run.rods.map((r) => r.name).join(' and '))}: `
+      + `they clear the ${Math.round(run.floorFt)} ft the run holds once out of the cove.</div>` : '')
+    + (snap.areaSaid ? `<div style="margin-top:4px;color:#9fb3c3">${esc(snap.areaSaid)}</div>` : '')
+    + `<details style="margin-top:6px"><summary style="cursor:pointer;color:#9fb3c3">Why this day</summary>`
+    + `<div style="margin-top:4px;color:#c9d6df;max-height:9em;overflow:auto">${esc(snap.status)}</div></details>`
+    + '<div style="margin-top:8px"><button data-lom="build" class="primary" style="width:100%;height:34px;font-weight:700">'
+    + 'Build this day</button></div>'
+    + '<div style="margin-top:4px;color:#9fb3c3;font-size:11px">Baits, stops and times: about two minutes on Claude.</div>';
 }
 
 /** The bar for a day laid as options: what each one is, in number order, and Build for Option 1. */

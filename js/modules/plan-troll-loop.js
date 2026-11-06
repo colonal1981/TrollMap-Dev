@@ -336,7 +336,7 @@ export function shortestFrom(G, cost, src, { blocked = null, dst = -1 } = {}) {
   return { dist, prev, len };
 }
 
-const pathTo = (prev, src, dst) => {
+export const pathTo = (prev, src, dst) => {
   const p = [dst];
   while (p[p.length - 1] !== src) { const q = prev[p[p.length - 1]]; if (q < 0) return null; p.push(q); }
   return p.reverse();
@@ -353,7 +353,7 @@ const lineM = (c) => { let m = 0; for (let k = 1; k < c.length; k++) m += metres
  * there -- the same cost the path was chosen on, so the straight piece is simply the better path
  * where the grid could not draw it, and it never cuts across water the path went round.
  */
-function straighten(G, cost, cells, blocked = null) {
+export function straighten(G, cost, cells, blocked = null) {
   const { w, cellM } = G;
   const cum = [0];
   for (let k = 1; k < cells.length; k++) {

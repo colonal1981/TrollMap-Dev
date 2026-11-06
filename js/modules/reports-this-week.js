@@ -272,8 +272,21 @@ export function turnsFromReports(tw, species, { ramp = null, reachM = Infinity, 
              why: `${p.name}: ${n} report${n === 1 ? '' : 's'} within ${tw.days} days of this date (${p.years})`
                + `${said ? ` — ${said}` : ''}${p.far ? '. The chart prints this name in more than one spot' : ''}` };
   });
+  // AND HOW DEEP THE FISH THEMSELVES WERE, where the reports say: the run's deep divers are matched to it (plan-areas.js).
+  const F = own && own.fishDepth ? own : S;
   return { turns, anyFish, mentioned, waterFt: S.waterDepth ? [S.waterDepth.lo, S.waterDepth.hi] : null,
-           waterN: S.waterDepth ? S.waterDepth.n : 0, places: places.length };
+           waterN: S.waterDepth ? S.waterDepth.n : 0, places: places.length,
+           fishFt: F.fishDepth ? [F.fishDepth.lo, F.fishDepth.hi] : null, fishN: F.fishDepth ? F.fishDepth.n : 0 };
+}
+
+/**
+ * THE AREAS THE REPORTS NAME (plan-areas.js; Ryan, 11/6: "i feel like honestly those are 2 different areas to
+ * concentrate in"). The places turnsFromReports() would turn at, but each one a whole day's choice of its own, so the
+ * day does not have to reach them all: every place for his fish a run of `reachM` from the ramp reaches, no two within
+ * `apartM` (one area), the most named first.
+ */
+export function areasFromReports(tw, species, { ramp = null, reachM = Infinity, apartM = 1500, max = 4 } = {}) {
+  return turnsFromReports(tw, species, { ramp, reachM, budgetM: Number.MAX_SAFE_INTEGER, max, apartM });
 }
 
 /**

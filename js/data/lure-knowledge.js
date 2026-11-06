@@ -23,6 +23,13 @@
 import { ozLabel } from '../utils/oz.js';
 import { lightKindsIn } from '../utils/light-state.js';
 
+// HOW FAST A CRANKBAIT MAY GO BEFORE IT BLOWS OUT, IN HIS WORDS, NOT THE BOX'S. Ryan, 2026-11-06: "anything 3.5
+// and higher is where i have seen the most issues with the crankbaits... i routinely troll above 2.5 and have never had
+// an issue", and of a run at about 3 mph with two deep divers out: "3mph is slow enough that the crankbaits won't blow
+// out". The ceilings these carried (DD1 2.8, DD2 2.6, DD3 2.4, DD4 2.0, the shallow ones 3.0) came with the first
+// upload, unsourced. Every crankbait now tops out under his 3.5. The floors and the ideal speeds are unchanged.
+export const CRANK_MAX_MPH = 3.4;
+
 export const LURE_KNOWLEDGE = {
 
   // ── Crankbaits — PHYSICAL depth limits apply ──────────────────────────────
@@ -33,7 +40,7 @@ export const LURE_KNOWLEDGE = {
     ratedDepth: { min: 2, max: 5 },
     leadRatio: { byDepthFt: [[12, 3.0], [20, 3.8], [null, 5.2]] },
     speedAffectsLead: false,
-    speed:     { min:1.8, ideal:2.4, max:3.0 },
+    speed:     { min:1.8, ideal:2.4, max:CRANK_MAX_MPH },
     speedIsHardLimit: true,
     technique: 'Deflects off wood and rock — slow roll over shallow cover',
     presentationSignature: { noise:'rattle', flash:'medium', profile:'baitfish', water_column:'upper' }
@@ -45,7 +52,7 @@ export const LURE_KNOWLEDGE = {
     ratedDepth: { min:3, max:5 },
     leadRatio: { byDepthFt: [[12, 3.0], [20, 3.8], [null, 5.2]] },
     speedAffectsLead: false,
-    speed:     { min:2.0, ideal:2.5, max:3.0 },
+    speed:     { min:2.0, ideal:2.5, max:CRANK_MAX_MPH },
     speedIsHardLimit: true,
     technique: 'Shallow flat runner — points and creek mouths at dawn',
     presentationSignature: { noise:'rattle', flash:'medium', profile:'baitfish', water_column:'upper' }
@@ -57,7 +64,7 @@ export const LURE_KNOWLEDGE = {
     ratedDepth: { min:6, max:12 },
     leadRatio: { byDepthFt: [[12, 3.0], [20, 3.8], [null, 5.2]] },
     speedAffectsLead: false,
-    speed:     { min:1.8, ideal:2.4, max:3.0 },
+    speed:     { min:1.8, ideal:2.4, max:CRANK_MAX_MPH },
     speedIsHardLimit: true,
     technique: 'Mid-range ledge runner — secondary points and hump tops',
     presentationSignature: { noise:'rattle', flash:'medium', profile:'baitfish', water_column:'middle' }
@@ -69,7 +76,7 @@ export const LURE_KNOWLEDGE = {
     ratedDepth: { min:14, max:18 },
     leadRatio: { byDepthFt: [[12, 3.0], [20, 3.8], [null, 5.2]] },
     speedAffectsLead: false,
-    speed:     { min:1.6, ideal:2.2, max:2.8 },
+    speed:     { min:1.6, ideal:2.2, max:CRANK_MAX_MPH },
     speedIsHardLimit: true,
     technique: 'Primary ledge crankbait — run on channel swing drop-offs',
     presentationSignature: { noise:'rattle', flash:'medium', profile:'baitfish', water_column:'lower' }
@@ -81,7 +88,7 @@ export const LURE_KNOWLEDGE = {
     ratedDepth: { min:16, max:20 },
     leadRatio: { byDepthFt: [[12, 3.0], [20, 3.8], [null, 5.2]] },
     speedAffectsLead: false,
-    speed:     { min:1.5, ideal:2.0, max:2.6 },
+    speed:     { min:1.5, ideal:2.0, max:CRANK_MAX_MPH },
     speedIsHardLimit: true,
     technique: 'Deep ledge and thermocline zone — summer striper primary',
     presentationSignature: { noise:'rattle', flash:'medium', profile:'baitfish', water_column:'lower' }
@@ -93,7 +100,7 @@ export const LURE_KNOWLEDGE = {
     ratedDepth: { min:20, max:25 },
     leadRatio: { byDepthFt: [[12, 3.0], [20, 3.8], [null, 5.2]] },
     speedAffectsLead: false,
-    speed:     { min:1.4, ideal:1.8, max:2.4 },
+    speed:     { min:1.4, ideal:1.8, max:CRANK_MAX_MPH },
     speedIsHardLimit: true,
     technique: 'Deep channel and hump edges — thermocline bottom in peak summer',
     presentationSignature: { noise:'rattle', flash:'medium', profile:'baitfish', water_column:'lower' }
@@ -105,7 +112,7 @@ export const LURE_KNOWLEDGE = {
     ratedDepth: { min:25, max:35 },
     leadRatio: { byDepthFt: [[12, 3.0], [20, 3.8], [null, 5.2]] },
     speedAffectsLead: false,
-    speed:     { min:1.3, ideal:1.6, max:2.0 },
+    speed:     { min:1.3, ideal:1.6, max:CRANK_MAX_MPH },
     speedIsHardLimit: true,
     technique: 'Deepest available — dam face and thermocline bottom in peak summer',
     presentationSignature: { noise:'rattle', flash:'medium', profile:'baitfish', water_column:'lower' }
@@ -582,13 +589,25 @@ export function getSpeedRange(lureType) {
 // exception. Rated baits stay false on purpose — a crankbait's depth is its bill, and
 // its speed is a hard cap (nothing over 3 mph) rather than a lead input.
 //
-// speedFactor itself is still a three-step function, not a curve, and STILL
-// UNCALIBRATED. It says 15% more line above 2.2 mph and 12% less below 1.6. That
-// shape is a working value inherited from autoCalculateLead, not a measurement.
-
+// A CURVE, NOT THREE STEPS. It was a three-step function inherited from autoCalculateLead: 15% more line above
+// 2.2 mph, 12% less below 1.6, and the same depth for every speed between. Ryan, 2026-11-06: "we shouldn't let
+// the route length dictate trolling speed... faster you go the shallower the sinking lures run", and asked what
+// sets the speed, "speed should fit the running depth of the lures to match where the fish are". Between 1.6 and
+// 2.2 mph -- the whole of his trolling range -- the steps said speed changed nothing, so a plan could raise the
+// speed to fit a route at no cost the app could see.
+//
+// The line a bait needs for a depth now rises in step with the speed: twice the speed, twice the line; or at one
+// lead, a bait runs as much shallower as the boat goes faster (depth ~ 1/speed through the water). That shape is
+// MINE, not measured: weight trolling guides call speed a large effect and give no single curve, and drag on the
+// line and the bait grows faster than the speed does. It is pinned at 2.0 mph, where the ratios above were set
+// (the spoon's 3.5 is his "About 20 ft sounds right" at 70 ft and 2 mph), and the A-rig's one measured point
+// (28 ft on 100 ft at 1.4 mph, 11/2) is taken back through it, so that point still holds exactly.
+// A crankbait is not on it: its bill sets its depth, and its speed is a ceiling (CRANK_MAX_MPH).
+// A function, not a const, for the reference: LURE_KNOWLEDGE above calls speedFactor() while this file is loading.
 function speedFactor(speedMph) {
-  const s = speedMph || 2.4;                    // autoCalculateLead's default
-  return s > 2.2 ? 1.15 : s < 1.6 ? 0.88 : 1.0;
+  const ref = 2.0;
+  const s = Number(speedMph) > 0 ? Number(speedMph) : 2.4;   // autoCalculateLead's default
+  return Math.min(4, Math.max(0.6, s)) / ref;
 }
 
 // ── Weight ────────────────────────────────────────────────────────────────────

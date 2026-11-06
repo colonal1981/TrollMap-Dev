@@ -304,7 +304,9 @@ function legFrom(piece, i, ramp, slug, wind, extra = {}) {
     // On the nose, in mph, length-weighted along the piece's own line. Null when nothing was
     // forecast: a piece nobody forecast is not calm, it is unknown.
     headwindMph: wind ? dearer.headwindMph : null,
-    estMin: Math.round(minutesFor(lengthM, TROLL_MPH)),
+    estMin: Math.round(minutesFor(lengthM, piece.run && Number(piece.run.mph) > 0 ? Number(piece.run.mph) : TROLL_MPH)),
+    // A RUN TO OR FROM AN AREA (plan-areas.js): trolled at its own speed with the two deep divers it names.
+    run: piece.run || undefined,
     runLedges: null,
     support: null,
     // THE ENVELOPE RIDES ALONG so the day can warn about a shallow spot before the sounder finds
@@ -359,8 +361,9 @@ function trollLeg(leg, s, ramp, wind) {
   leg.coordinates = [...leg.coordinates, s.onTo];
   leg.end = s.onTo;
   leg.lengthM = (leg.lengthM || 0) + s.onM;
-  leg.estMin = Math.round(minutesFor(leg.lengthM, TROLL_MPH));
-  leg.batteryAh = Number((leg.batteryAh + ampHoursAlong([from, s.onTo], TROLL_MPH, { wind }).ah).toFixed(2));
+  const mph = leg.run && Number(leg.run.mph) > 0 ? Number(leg.run.mph) : TROLL_MPH;
+  leg.estMin = Math.round(minutesFor(leg.lengthM, mph));
+  leg.batteryAh = Number((leg.batteryAh + ampHoursAlong([from, s.onTo], mph, { wind }).ah).toFixed(2));
   leg.transitOutM = ramp ? Math.round(metresBetween(s.onTo, ramp)) : 0;
   leg.trollsOnM = Math.round(s.onM);
   const low = Number(s.onShallowestFt);
@@ -595,6 +598,8 @@ export async function planFromWater(o) {
       // THE LAST METRES OF THIS LEG ARE THE GAP TO THE NEXT PIECE, trolled with the same two rods.
       // `maxRunDepthFt` above already includes it. Only on a day built as one troll.
       trollsOnM: l.trollsOnM || undefined,
+      // THE RUN TO OR FROM AN AREA: its speed and the two baits that go out on it. See the AREA DAY block.
+      theRun: l.run ? { mph: l.run.mph, baits: l.run.rods, floorFt: l.run.floorFt, to: l.run.to || undefined } : undefined,
       structures: l.passes.map((h) => ({ id: h.id, type: h.type, atM: h.atM, offM: h.offM,
                                          what: h.what, depthFt: h.depthFt,
                                          worthFishing: h.weight > 0 || undefined,
@@ -704,7 +709,10 @@ export async function planFromWater(o) {
   //
   // And its `problems` are returned instead of thrown away. A model that names a rod the boat
   // does not carry, or a lure that is not in the bag, said so all along and nobody was listening.
-  const args = planArgsFrom(res, legs, { tackle: o.tackle, connectionOf: o.connectionOf });
+  // AND WHICH BAITS GO ON A SNAP ROD FIRST (the A-rig, 11/6). Handed in by plan-water-ui.js and, until 11/6 evening,
+  // dropped here: the one-troll Build the day, the path his 11/8 Moultrie plan was built on, seated the A-rig by the
+  // model's order on a leader rod all the same.
+  const args = planArgsFrom(res, legs, { tackle: o.tackle, connectionOf: o.connectionOf, snapFirstOf: o.snapFirstOf });
 
   // A SPOT HE TICKED IS A STOP, WHETHER OR NOT THE MODEL WROTE ONE FOR IT. The prompt calls them
   // "not yours to drop", and a prompt is a request. One the model left out goes in at the default

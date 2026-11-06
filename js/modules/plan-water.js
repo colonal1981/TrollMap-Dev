@@ -1020,9 +1020,11 @@ export function dayCost(picked, o) {
   // point or runs into a pocket that chord is a direction the boat never travels, and on a piece
   // that comes back on itself it is close to meaningless. ampHoursAlong() prices each segment at
   // its own bearing and adds them up; see the note there for why the sum is not the average.
-  const legBand = picked.map((p) => ampHoursAlong(p.coords || [], trollMph, env));
+  // A RUN TO AN AREA IS TROLLED AT ITS OWN SPEED (plan-areas.js, 3 mph with two deep divers), and priced at it.
+  const mphOf = (p) => (p && p.run && Number(p.run.mph) > 0 ? Number(p.run.mph) : trollMph);
+  const legBand = picked.map((p) => ampHoursAlong(p.coords || [], mphOf(p), env));
   const legAh = legBand.map((b) => b.ah);
-  const legMin = picked.map((p) => minutesFor(p.lengthM, trollMph));
+  const legMin = picked.map((p) => minutesFor(p.lengthM, mphOf(p)));
 
   const n = picked.length;
   const best = { order: [], flips: [], moveM: Infinity };

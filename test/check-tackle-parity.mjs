@@ -134,9 +134,11 @@ check('lead-controlled baits round-trip depth -> lead -> depth', () => {
 check('every type declares whether its speed limit is hard', () =>
   Object.entries(LURE_KNOWLEDGE)
     .filter(([, k]) => typeof k.speedIsHardLimit !== 'boolean').map(([t]) => t));
-check('no lipped bait allowed past 3mph', () =>
+// Ryan, 2026-11-06: "anything 3.5 and higher is where i have seen the most issues with the crankbaits... i routinely
+// troll above 2.5 and have never had an issue". The cap was 3.0 here, unsourced.
+check('no lipped bait allowed at 3.5mph or more', () =>
   Object.entries(LURE_KNOWLEDGE)
-    .filter(([, k]) => k.depthMode === 'rated' && (k.speed?.max > 3.0 || !k.speedIsHardLimit))
+    .filter(([, k]) => k.depthMode === 'rated' && (!(k.speed?.max < 3.5) || !k.speedIsHardLimit))
     .map(([t, k]) => `${t}: max ${k.speed?.max}, hard=${k.speedIsHardLimit}`));
 check('lead-controlled baits impose no hard speed limit', () =>
   Object.entries(LURE_KNOWLEDGE)

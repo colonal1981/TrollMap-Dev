@@ -52,7 +52,8 @@ import { rampWater, poolsFor, sameWaterLandings, cutOffPool, poolOnlyState, cutO
 import { closerLanding, closerLandingNote } from './closer-landing.js';
 import { askLaunchStatus, launchStatusNote } from './launch-status.js';
 import { askGuideReports, savedGuide } from './guide-reports.js';
-import { askThisWeek, turnsFromReports, rampsByReports } from './reports-this-week.js';
+import { askThisWeek, turnsFromReports, rampsByReports, areasFromReports } from './reports-this-week.js';
+import { layAreas, optionLoop, optionLines, runCrankbaits, RUN_MPH, AREA_R_M, hm } from './plan-areas.js';
 import { shoreRays, roughLegs } from '../utils/wind-waves.js';
 import { inshoreSeasonFor } from '../data/inshore-season.js';
 import { seabedHabitatFor } from '../data/seabed-habitat.js';
@@ -1425,6 +1426,38 @@ export async function trollForMe(opts = {}) {
   // nothing ("i am telling the app where to tell me to fish instead of the app telling me"): the loops ride that depth.
   const byReportDepth = !byReports && !!(rep && rep.mentioned && rep.waterFt);
   const reportsLead = byReports || byReportDepth;
+  // THE DAY IS SPENT IN THE AREAS THE REPORTS NAME, NOT TURNED AT THEM (plan-areas.js; Ryan, 11/6: "just because a
+  // place is mentioned in a report why would there be a turn there?", and of the dam and the Bonneau flats: "those are
+  // 2 different areas to concentrate in"). Where they name places for his fish and the water they put it over, each
+  // place is an area to choose, and the day is laps inside it; a run to it is trolled at 3 mph with two deep divers.
+  // Turns he clicks on the map are not asked for here: the loop through them is laid as before.
+  T.areaDay = null; T.areaSaid = null;
+  const clicked = Array.isArray(opts.via) && opts.via.length > 0;
+  if (!clicked && !opts.noAreas && T.reportAreas && T.reportAreas.turns.length) {
+    const waterFt = T.reportAreas.waterFt || (rep && rep.waterFt) || null;
+    say(`Measuring the areas the reports name from ${T.rampName || 'the ramp'}…`);
+    await new Promise((res) => setTimeout(res, 0));
+    let day = null;
+    try {
+      day = layAreas({
+        ramp: T.ramp, daFeatures: T.daFeatures, koFeatures: T.koFeatures, shoreFeatures: T.shoreFeatures,
+        offsetFt: T.offsetFt || 0, places: T.reportAreas.turns, waterFt, fishFt: T.reportAreas.fishFt,
+        windowMin: T.windowMin, stopMin: stopsWanted() * DEFAULT_STOP_MIN, cranks: runCrankbaits(TACKLE_INVENTORY),
+        marks: T.spots, launchTime: T.launchTime,
+      });
+    } catch (e) { day = { error: e.message }; }
+    if (day && !day.error && day.options.length) {
+      T.areaDay = day;
+      T.areaDay.reports = { anyFish: !!T.reportAreas.anyFish, waterN: T.reportAreas.waterN, fishN: T.reportAreas.fishN };
+      const key = `${T.r2Key}|${T.rampName}|${T.dateStr}`;
+      const keep = T.areaPickKey === key && Number.isInteger(T.areaPick) && T.areaPick < day.options.length ? T.areaPick : 0;
+      T.areaPickKey = key;
+      return layAreaOption(keep);
+    }
+    T.areaSaid = day && day.error ? day.error
+      : day && day.left && day.left.length ? day.left.map((a) => `${a.name}: ${a.left}`).join('; ')
+      : 'no area the reports name leaves time for a lap after the run there and back';
+  }
   // WHERE HE SAID TO TURN: where he clicked the water on the main map (loop-on-map.js), exactly
   // there; or on Pick Water, a spot he ticked, or the middle of a piece he ticked. On the map the report turns are
   // laid there as numbered turns he can take off or add to; on Pick Water they are the turns when he ticked none.
@@ -1581,7 +1614,9 @@ export async function trollForMe(opts = {}) {
       + 'your catches did not choose this water. '
       + (adv ? `${adv} ` : '')
     : '';
-  say(repSaid + notByReports + `${n} loop${n === 1 ? '' : 's'} from ${T.rampName || 'the ramp'} and back: ${fmtMi(loop.trolledM)} trolled, `
+  // WHERE THE REPORTS' AREAS COULD NOT BE LAID AS A DAY, the loop says why first (layAreas()).
+  const areasNot = T.areaSaid ? `The areas the reports name could not be laid as a day (${T.areaSaid}), so this is the loop through them. ` : '';
+  say(areasNot + repSaid + notByReports + `${n} loop${n === 1 ? '' : 's'} from ${T.rampName || 'the ramp'} and back: ${fmtMi(loop.trolledM)} trolled, `
     + `${fmtMi(loop.runM)} with the lines up (out of the cove and back in)`
     // Where a line had to come back within 100 m of water the day already trolled, it says how much.
     + (loop.sharedM > 0 ? `; ${fmtMi(loop.sharedM)} of it is back over water the day already trolled` : '')
@@ -1619,12 +1654,78 @@ export async function trollForMe(opts = {}) {
 }
 
 /**
+ * ONE OF THE AREA DAY'S OPTIONS, LAID AS THE DAY (plan-areas.js): its legs go into the list as the pieces Build the day
+ * builds from, in the order he fishes them -- the run out with two deep divers, the laps, the run home -- and the map
+ * draws it. Another option is one press away: nothing is measured again.
+ */
+export function layAreaOption(i) {
+  const day = T.areaDay;
+  if (!day || !day.options[i]) return null;
+  const loop = optionLoop(day, i);
+  if (!loop) return null;
+  const band = Array.isArray(T.band) && T.band.length === 2 ? T.band : null;
+  const found = T.pieces.filter((p) => !p.loop);
+  const pieces = loopPieces(loop, {
+    depthAt: T.depthAt, spots: T.spots, slug: T.r2Key, rampName: T.rampName,
+    shoreIndex: T.shoreFeatures && T.shoreFeatures.length ? shorelineIndex(T.shoreFeatures) : null,
+    reasonsWith: { minM: T.minM || 805, fishBandFt: band, holding: T.holding, todayOffsetFt: T.offsetFt || 0 },
+  });
+  // Named for what each leg is, so the plan says "run-out" and "area1-lap2-back", not loop numbers; a run carries its
+  // speed and its two baits (planArgsFrom() holds the speed; the prompt names the baits).
+  pieces.forEach((p, k) => {
+    const leg = loop.legs[k];
+    p.runId = `${T.r2Key || 'water'}#${leg.name}`;
+    if (leg.run) p.run = leg.run;
+    if (leg.area) p.area = leg.area;
+  });
+  const keys = pieces.map((p) => p.key);
+  T.pieces = [...pieces, ...found];
+  T.picked = new Set(keys);
+  T.pickedSpots = new Set();
+  T.trollOrder = keys.slice();
+  T.trollSteps = loopSteps(loop, pieces);
+  T.areaPick = i;
+  T.lastLoop = loop;
+  T.lastVia = [];
+  T.loopWhy = null; T.loopNoWater = false;
+  paint();
+  const el = $('wgStatus');
+  if (el) { el.textContent = areaDaySaid(day, i, { rampName: T.rampName, species: T.species }); el.style.color = 'var(--muted)'; }
+  return loop;
+}
+
+const miles = (m) => `${((Number(m) || 0) / 1609.344).toFixed(1)} mi`;
+
+/** The area day in words: the areas, then the option chosen, step by step. For the status line and the prompt. */
+export function areaDaySaid(day, i, { rampName = '', species = '' } = {}) {
+  const op = day.options[i];
+  const sp = species || 'fish';
+  const rep = day.reports || {};
+  const areas = day.areas.map((a) => `${a.name} (${a.n} report${a.n === 1 ? '' : 's'}; ${a.near ? 'by the ramp' : `${miles(a.run.lengthM)} by water, about ${hm(a.runMin)} at ${RUN_MPH} mph`}`
+    + `${a.tooFar ? ', too far to leave a lap in this window' : ''})`).join('; ');
+  const lines = day.lines.length === 2 ? `the ${day.lines[0]} ft and ${day.lines[1]} ft lines` : `the ${day.lines[0]} ft line`;
+  return `Laid by the fishing reports for this time of year: ${day.areas.length} area${day.areas.length === 1 ? '' : 's'} they name`
+    + `${rep.anyFish ? ' (none names a place for your fish around this date, so for any fish)' : ` for ${sp}`} within 3 weeks of this date, `
+    + `each the water within ${miles(day.radiusM)} of the place: ${areas}. `
+    + `The day is ${op.label}: ${optionLines(day, op).join('; ')}. `
+    + `The laps ride ${lines}, the middle of the ${day.waterFt[0]}–${day.waterFt[1]} ft of water the reports put your ${sp} over`
+    + `${rep.waterN ? ` (${rep.waterN} depth${rep.waterN === 1 ? '' : 's'} stated)` : ''}, out one side and back the other; `
+    + 'go round again where they bite. '
+    + (day.fishFt ? `The reports put the fish ${day.fishFt[0]}–${day.fishFt[1]} ft down. ` : '')
+    + `A run is trolled at ${RUN_MPH} mph with two deep divers that clear its water, lines up out of the cove. `
+    + 'Your catches did not choose any of this.'
+    + (day.left.length ? ` Left out: ${day.left.map((a) => `${a.name}, ${a.left}`).join('; ')}.` : '')
+    + (day.coveCrossesShore ? ` The way out of ${rampName || 'the ramp'} runs past charted docks and shore lines, so it is drawn on the depth chart alone — steer it by eye.` : '');
+}
+
+/**
  * The water's reports for the day, read once a water and day (askThisWeek: the gated /research/reports), and the turns
  * they give from this ramp (turnsFromReports). Null where the water has no reports, they could not be read, or none
  * names a place for this time of year: then the day is laid as before, from his catches or the chart, and says why.
  */
 async function reportTurns() {
   T.reportSaid = null;
+  T.reportAreas = null;
   if (!T.r2Key || !T.dateStr || !Array.isArray(T.ramp)) return null;
   const key = `${T.r2Key}|${T.dateStr}`;
   if (T.reportTwKey !== key) {
@@ -1638,6 +1739,9 @@ async function reportTurns() {
   const budgetM = (budgetMin * TROLL_MPH * 1609.344) / 60;
   const reachM = budgetM / 2;
   const r = turnsFromReports(tw, T.species, { ramp: T.ramp, reachM, budgetM });
+  // THE AREAS: every place for his fish a run at RUN_MPH reaches and comes back from with an hour left to fish it.
+  const runReachM = Math.max(0, (budgetMin - 60) / 2) * (RUN_MPH * 1609.344 / 60);
+  T.reportAreas = areasFromReports(tw, T.species, { ramp: T.ramp, reachM: runReachM });
   if (!r.turns.length) {
     T.reportSaid = r.mentioned
       ? `the reports talk about ${T.species || 'this fish'} around this date, but none of them names a place for it that a day from ${T.rampName || 'this ramp'} can reach`
@@ -1751,6 +1855,8 @@ export function loopForMap() {
     species: T.species || null, status: $('wgStatus')?.textContent || '',
     // the turns the fishing reports gave (trollForMe), and why there were none
     reportTurns: T.reportTurns || [], reportSaid: T.reportSaid || null,
+    // the areas the reports name, and the option the day is laid as (layAreaOption)
+    areaDay: T.areaDay || null, areaPick: Number.isInteger(T.areaPick) ? T.areaPick : null, areaSaid: T.areaSaid || null,
     rampAdvice: T.rampAdvice ? rampAdviceSaid(T.rampAdvice, T.rampName, T.species) : '',
   };
 }

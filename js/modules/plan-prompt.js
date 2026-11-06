@@ -1439,6 +1439,37 @@ the conditions block says whether that condition is in force today.
  *
  * `dayMin` is dayCost()'s own number when the caller has one. Nothing is re-estimated here.
  */
+/**
+ * THE DAY IN THE AREAS THE REPORTS NAME (plan-areas.js), said to the model where its legs are listed: what a run is,
+ * what the laps are, and that no speed is raised to fit. '' on any other day.
+ *
+ * Ryan, 2026-11-06: "we shouldn't let the route length dictate trolling speed... faster you go the shallower the
+ * sinking lures run", "speed should fit the running depth of the lures to match where the fish are", and of a run:
+ * "lets do it at about 3 mph and during that time put 2 deep diving crankbaits that match the fishing depth and
+ * allowable depth for that run".
+ */
+export function areaDayBlock(candidates) {
+  const runs = (candidates || []).filter((c) => c && c.theRun);
+  if (!runs.length) return '';
+  const baits = [...new Set(runs.flatMap((c) => c.theRun.baits || []))];
+  return `
+THE DAY IS SPENT IN AN AREA THE FISHING REPORTS NAME, NOT TURNED AT IT. The legs above are, in order, the run out to
+the area, laps inside it, and the run home (a day in two areas has a run across between them).
+- A LEG CARRYING \`theRun\` IS A RUN. It is trolled at \`theRun.mph\` with exactly the two baits it names
+  (${baits.map(promptSafeTackleName).join(', ')}), which the app chose to clear the water the run holds
+  (\`theRun.floorFt\`) and to sit near the depth the reports put the fish. Rig those two on two of the six rods (they
+  tie direct, so leader rods), deploy them on every run, return \`speedMph\` as \`theRun.mph\`, and stop nowhere on a
+  run. The app holds that speed and that pair whatever you return.
+- THE LAP LEGS ARE THE SAME WATER GONE ROUND AGAIN, on two depth lines in turn: legs named \`lapN-out\` and
+  \`lapN-back\`. That is the day: he stays in the area while it produces. Rig each lap for the hour it is fished in
+  and say in its \`why\` what that hour changes; a structure listed again on a later lap carries \`passedBefore\`.
+- THE SPEED ON A LAP IS THE SPEED THAT HOLDS THE BAITS AT THE DEPTH YOU WANT THEM, and nothing else. Faster runs a
+  weighted bait shallower and slower runs it deeper. NEVER RAISE IT TO FIT THE DISTANCE INTO THE TIME: the app laid
+  whole laps to fit the day at ${TROLL_MPH} mph, and where a slower speed runs past the return time, the plan says
+  where the clock runs out rather than speeding up. Time the laps leave over is his: say it.
+`;
+}
+
 export function timeBudgetBlock(windowMin, launchTime, returnTime, dayMin, stopMin, stopCount) {
   const w = Number(windowMin);
   if (!Number.isFinite(w) || w <= 0) return '';
@@ -1483,6 +1514,10 @@ stop, finished before nine in the morning.
 
 Fill it with WATER, not with padding: more legs, more passes over a leg that earns them, more
 stops. Do not stretch a leg's time to make a number add up.
+
+AND NEVER BY TROLLING FASTER OR SLOWER THAN THE BAITS WANT. A leg's \`speedMph\` is the speed that holds its baits
+at the depth you want them: faster runs a weighted bait shallower, slower runs it deeper. Ryan, 2026-11-06: "we
+shouldn't let the route length dictate trolling speed". A day that does not fit at that speed is said, not sped up.
 
 AND IF IT STILL COMES IN SHORT, SAY SO IN THE PLAN AND SAY WHY. A short day is a legitimate answer
 — the water that fits the conditions may genuinely run out, or the battery or the wind may decide
@@ -2534,7 +2569,7 @@ first lane, \`trollMin\` for every pass, \`transitToM\` for every hop, your stop
 \`transitToRampM\` home, the metres at ${TRANSIT_MPH} mph.`}`}
 
 ${JSON.stringify(candidates)}
-${o.waterIsChosen ? `
+${areaDayBlock(candidates)}${o.waterIsChosen ? `
 THE FISHERMAN ALREADY CHOSE THIS WATER, AND THE APP PUT IT IN ORDER.
 He picked these stretches himself, off a map, with the reasons for and against in front of him —
 they are in \`whyThisWater\` on each one, computed from the chart, not written by you. The ORDER
@@ -3422,6 +3457,27 @@ export function planArgsFrom(res, candidates, ctx = {}) {
                   + `${JSON.stringify(d)} — no rods deployed`);
     }
 
+    // A RUN TO OR FROM AN AREA IS TROLLED WITH THE TWO DEEP DIVERS THE APP NAMED FOR IT (plan-areas.js; Ryan, 11/6:
+    // "during that time put 2 deep diving crankbaits that match the fishing depth and allowable depth for that run").
+    // Where the rods rigged carry them, they are the pair on that leg whatever the model sent; where they do not, it
+    // is said, and the model's pair stands.
+    if (c.run && Array.isArray(c.run.rods) && c.run.rods.length) {
+      const want = c.run.rods.map((n) => String(n).toLowerCase());
+      const on = want.map((w) => seat.rods.find((r) => !r.staged && String(r.lure || '').toLowerCase() === w));
+      if (on.every(Boolean) && on.length >= 2 && on[0].id !== on[1].id) {
+        const pair = { port: on[0].id, starboard: on[1].id };
+        const had = deploy[c.runId];
+        if (!had || !((had.port === pair.port && had.starboard === pair.starboard) || (had.port === pair.starboard && had.starboard === pair.port))) {
+          decisions.push(`${c.runId} is a run at ${c.run.mph} mph: ${on[0].id} and ${on[1].id} (${c.run.rods.join(' and ')}) go out on it`);
+        }
+        deploy[c.runId] = pair;
+      } else {
+        problems.push(`${c.runId} is a run at ${c.run.mph} mph with ${c.run.rods.join(' and ')}, and `
+                    + `${want.filter((w, k) => !on[k]).length === want.length ? 'neither is' : 'one of them is not'} on a rod this plan rigged — `
+                    + 'the pair the model chose goes out instead');
+      }
+    }
+
     // OPTIONAL, AND ABSENT MEANS THE SAME PAIR COMES BACK. That is the right answer on a day whose
     // light and current do not change, and it is what every plan before this field did, so silence
     // here is not a gap to report. Only a pair that is named and unusable is.
@@ -3493,7 +3549,8 @@ export function planArgsFrom(res, candidates, ctx = {}) {
                                      || str(leg.notes)),
                      ifNotProducing };
     if (!riverDay) {
-      answer.speedMph = num(leg.speedMph) ?? undefined;
+      // A run is held at its own speed: the divers are matched to it, and it is not the model's to change.
+      answer.speedMph = c.run && Number(c.run.mph) > 0 ? Number(c.run.mph) : num(leg.speedMph) ?? undefined;
       answer.trollPasses = trollPasses;
       for (const k of MODEL_LEG_FIELDS) if (!(k in answer)) answer[k] = undefined;
     }
