@@ -3164,13 +3164,13 @@ export function parsePlanResponse(text) {
  * @param {function} connOf     lureName => 'snap' | 'tie' | 'either' | null
  * @returns {{rods: object[], map: object, problems: string[]}}
  */
-export function seatRods(rods, connOf) {
+export function seatRods(rods, connOf, firstOf = null) {
   const problems = [];
   // Only rods the plan actually rigs get seated. The rest keep whatever is already on them and
   // are not the plan's business.
   const need = (rods || []).filter((r) => r && r.lure).map((r) => {
     const c = connOf ? connOf(r.lure) : null;
-    return { rod: r, tie: c === 'tie' };
+    return { rod: r, tie: c === 'tie', first: c !== 'tie' && !!(firstOf && firstOf(r.lure)) };
   });
 
   const ties = need.filter((n) => n.tie).length;
@@ -3189,10 +3189,18 @@ export function seatRods(rods, connOf) {
   // snap rods before spilling onto leader rods, because a snap rod is the cheap one to change and
   // that is the entire reason for having two.
   const freeFluoro = [...FLUORO_RODS], freeSnap = [...SNAP_RODS];
-  const order = [...need.filter((n) => n.tie), ...need.filter((n) => !n.tie)];
+  // AND AN A-RIG TAKES A SNAP ROD BEFORE ANY OTHER SNAP BAIT (SNAP_FIRST in lure-knowledge.js). Ryan, 2026-11-06:
+  // "i also do not tie an a-rig to a leader... i use the swivel snap for the a-rig". His Moultrie card had the swimbait
+  // and the spoon on the snaps and the A-rig tied to a leader, because they came first in the model's list.
+  const order = [...need.filter((n) => n.tie), ...need.filter((n) => n.first),
+                 ...need.filter((n) => !n.tie && !n.first)];
   for (const n of order) {
     const pool = n.tie ? [freeFluoro] : [freeSnap, freeFluoro];
     n.seat = (pool.find((p) => p.length) || []).shift() || null;
+    if (n.first && n.seat && ROD_RIG[n.seat] !== 'snap') {
+      problems.push(`${n.rod.lure} is on a leader rod (${n.seat}): there are more A-rigs than snap rods, and he `
+                  + 'runs an A-rig on a swivel snap');
+    }
   }
 
   const map = {};
@@ -3286,7 +3294,7 @@ export function planArgsFrom(res, candidates, ctx = {}) {
         ? r.runsDepthFt.map(Number) : null,
     };
   });
-  const seat = seatRods(claimed, ctx.connectionOf);
+  const seat = seatRods(claimed, ctx.connectionOf, ctx.snapFirstOf);
   problems.push(...seat.problems);
   const moved = Object.keys(seat.map);
   // TWO DIFFERENT REASONS, AND ONLY ONE OF THEM NEEDS HIM. Change request 18: the note said "so

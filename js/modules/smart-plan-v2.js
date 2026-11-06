@@ -33,7 +33,7 @@ import { riverDriftRuns, driftCurrentSummary, centrelineTransit, waterTest } fro
 import { packDerivedFacts } from '../utils/pack-facts.js';
 import { assemblePlan, validatePlan, parseClock, DEFAULT_STOP_MIN } from './plan-assemble.js';
 import { TROLL_MPH, TRANSIT_MPH } from './plan-water.js';
-import { connectionFor, snapEligibleFrom } from '../data/lure-knowledge.js';
+import { connectionFor, snapEligibleFrom, snapFirst } from '../data/lure-knowledge.js';
 // ONE SPELLING OF "IS THIS A RIVER", shared with the Water tab -- see saysRiver() for why it is not
 // a string compare in two files, and why it is not `waterState.river`.
 import { saysRiver } from './plan-inputs.js';
@@ -468,6 +468,7 @@ export async function buildSmartPlanV2(o) {
   // module never has to know how the inventory is shaped.
   const typeOf = new Map((o.inventory || []).map((l) => [l.name, l.type]));
   const connectionOf = (name) => (typeOf.has(name) ? connectionFor(typeOf.get(name)) : null);
+  const snapFirstOf = (name) => typeOf.has(name) && snapFirst(typeOf.get(name));
   // Was `connectionFor(l.type) !== 'tie'` written out here, which is canTakeSnap() with the
   // table's own name filed off -- and Pick Water, reading the same bag, had no copy at all.
   const snapEligible = snapEligibleFrom(o.inventory);
@@ -766,7 +767,7 @@ export async function buildSmartPlanV2(o) {
     }
   }
 
-  const args = planArgsFrom(res, candidates, { tackle: o.tackle, connectionOf });
+  const args = planArgsFrom(res, candidates, { tackle: o.tackle, connectionOf, snapFirstOf });
 
   // ── THE DAY ENDS ON A LANE NEAR THE RAMP ──────────────────────────────────────────────────────
   //

@@ -157,10 +157,9 @@ export async function syncLakeIntelData() {
       lines.push('\u2022 Note: LakeMonster species/elevation lists are intentionally NOT used as facts here; they can be generic or wrong for this lake.');
       if(d.lakeMonster.context) lines.push(`\u2022 ${d.lakeMonster.context}`);
     }
-    if(d.latestReport?.summary){
-      lines.push('Latest scraped fishing-report intel (VERIFY \u2014 third-party report, may be stale or promotional):');
-      lines.push(d.latestReport.summary);
-    }
+    // THE SCRAPED REPORT PAGE IS NOT PRINTED (2026-11-06): it was AHQ's page around its reports, a "Catch of the
+    // Week" and the members-only teaser. Ryan: "this does nothing for me". The dated reports reach the plan and its
+    // report through guide-reports.js and reports-this-week.js.
     if(d.sources?.length){ lines.push('Sources / verify links:'); d.sources.forEach(src=>lines.push(`\u2022 ${src.label}: ${src.url}`)); }
     if(out) out.value = lines.join('\n');
     if(summary){
@@ -169,7 +168,7 @@ export async function syncLakeIntelData() {
       const spList = [rp?.biology?.predatorSpecies, p.primarySportFish]
         .map(coerceList).find((l) => l.length) || [];
       const speciesDisplay = spList.join(', ') || 'Profile generated';
-      summary.innerHTML = `<b style="color:var(--accent)">\uD83E\uDDE0 ${esc(d.lake||label)}</b><br><span>${esc(speciesDisplay)}</span>${profileBadge}${d.latestReport?.source?`<br><span class="muted">Latest scraped report source \u2014 verify before relying: ${esc(d.latestReport.source)}</span>`:''}`;
+      summary.innerHTML = `<b style="color:var(--accent)">\uD83E\uDDE0 ${esc(d.lake||label)}</b><br><span>${esc(speciesDisplay)}</span>${profileBadge}`;
     }
     say('Intel ready', false);
     return d;

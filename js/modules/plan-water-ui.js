@@ -78,7 +78,7 @@ import { materialisePlan, HAND_STEER_BAND_FT } from './plan-tracks.js';
 import { loadSessionFromPlan, isEnabled, launchFrom } from './notifications.js';
 import { renderAll } from '../core/map-init.js';
 import { TACKLE_INVENTORY } from '../data/tackle-inventory.js';
-import { connectionFor, snapEligibleFrom } from '../data/lure-knowledge.js';
+import { connectionFor, snapEligibleFrom, snapFirst } from '../data/lure-knowledge.js';
 import { readInputs, rampCoords, preparePlanInputs, keepToThePool } from './smart-plan-v2-wiring.js';
 import { esc } from '../utils/escape.js';
 import { stepTimer, timingNote } from '../utils/step-timer.js';
@@ -1965,6 +1965,11 @@ export async function buildFromPicked() {
       connectionOf: (name) => {
         const hit = TACKLE_INVENTORY.find((l) => l.name === name);
         return hit ? connectionFor(hit.type) : null;
+      },
+      // and which of those go on a snap rod first: the A-rig (snapFirst in lure-knowledge.js, 11/6)
+      snapFirstOf: (name) => {
+        const hit = TACKLE_INVENTORY.find((l) => l.name === name);
+        return !!hit && snapFirst(hit.type);
       },
       // The loadout carries a lure NAME; the depth maths needs the inventory object, because
       // LURE_KNOWLEDGE is keyed by `type` and the lead ratio scales on `weightOz`. Without this

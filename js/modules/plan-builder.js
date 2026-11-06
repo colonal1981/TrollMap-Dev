@@ -68,6 +68,37 @@ import { get as dbGet, put as dbPut, getAll as dbGetAll, del as dbDel, isReady a
 // `estDurationMin` on a troll leg already includes its cast stops -- see assemblePlan(). That is
 // why a leg's run time can exceed its distance divided by its speed, and it is the number the
 // timeline shows, which is the point.
+/**
+ * THE A-RIGS ON THE CARD, ONE ROW A ROD (section 9 of the trip report). Ryan, 2026-11-06, of his Moultrie report: "this
+ * doesn't match the loadout". The section printed a "~2.65oz Framework", a 4.6" trailer and "3/16oz × 5" heads for every
+ * A-rig whatever was rigged: the first upload's rigs, which are not his (tackle-inventory.js, 11/4: one 1.6 oz frame,
+ * 4 blades, 5 baits, weighted by its heads), and one row per leg with no rod on it. Now the rig is the card's: its
+ * heads and weight from its own name, the legs it fishes, and its color, depth and lead. Nothing is filled in that the
+ * card does not say.
+ */
+export function arigBreakdownRows(spread) {
+  const by = new Map();
+  for (const r of spread || []) {
+    if (!r || !/a-?rig|umbrella/i.test(String(r.lure || ''))) continue;
+    const key = [r.rod, r.lure, r.lead, r.depth, r.color].join('|');
+    const e = by.get(key) || { r, legs: [] };
+    const leg = /^\[Leg (\d+)/.exec(String(r.notes || ''));
+    if (leg && !e.legs.includes(`L${leg[1]}`)) e.legs.push(`L${leg[1]}`);
+    by.set(key, e);
+  }
+  return [...by.values()].map(({ r, legs }) => {
+    const m = /^A-Rig\s*[–-]\s*(.+?)\s*\(~?\s*([\d.]+)\s*oz\)\s*$/i.exec(String(r.lure || ''));
+    const rig = m ? `${m[1]}, about ${m[2]} oz with the frame` : String(r.lure || '');
+    return `<tr>
+      <td><b>${esc(r.rod || '—')}</b></td>
+      <td>${esc(legs.join(', ') || '—')}</td>
+      <td>${esc(rig)}${r.trailerSize ? ` · ${esc(r.trailerSize)} trailers` : ''}</td>
+      <td>${esc(r.color || '—')}</td>
+      <td><b>${esc(r.depth || '—')} ft</b> @ <b>${esc(r.lead || '—')} ft lead</b></td>
+    </tr>`;
+  }).join('');
+}
+
 export function laneTelemetry(plan) {
   const legs = (plan && Array.isArray(plan.legs)) ? plan.legs : [];
   const out = [];
@@ -1033,21 +1064,8 @@ export async function buildPlanPreviewHtml(p){
     swimNote  = '3/4–1oz jigheads. Fish deep and slow. Early/late bite windows only.';
   }
 
-  // ── A-rig breakdown ───────────────────────────────────────────────────────
-  const arigRows = p.spread.filter(r=>r.lure && r.lure.toLowerCase().includes('rig')).map(r=>{
-    const isLight = (r.lure||'').toLowerCase().includes('light') || (r.lure||'').includes('1.65');
-    const rigFramework = r.arigWeight || (isLight ? '~1.65oz Framework' : '~2.65oz Framework');
-    const trailer = r.trailerSize || (isLight ? '3.8" swimbait' : '4.6" swimbait');
-    const jigheads = r.jigWeight || (isLight ? '1/8oz × 5 (Uniform)' : '3/16oz × 5 (Uniform)');
-    return `<tr>
-      <td><b>${esc(r.side)} — ${esc(r.position)}</b></td>
-      <td>${esc(rigFramework)}</td>
-      <td><b style="color:#00e5ff">${esc(trailer)}</b></td>
-      <td><b style="color:#76ff03">${esc(jigheads)}</b></td>
-      <td>${esc(r.color||'Natural Pattern')}</td>
-      <td><b>${esc(r.depth||'—')} ft</b> @ <b>${esc(r.lead||'—')} ft lead</b></td>
-    </tr>`;
-  }).join('');
+  // ── A-rig breakdown: arigBreakdownRows(), from the rig on the card ──────────
+  const arigRows = arigBreakdownRows(p.spread);
 
   // ── Battery scenarios (NK180 Pro) ─────────────────────────────────────────
   const motorField = p.meta.motor || '';
@@ -1629,119 +1647,12 @@ ${src}`;
         </div>`;
     }
 
-    // ── Module F — Recent fishing reports, verbatim ───────────────────────────
+    // ── MODULE F, AHQ'S REPORT PAGE, IS GONE (2026-11-06) ───────────────────────────────────────
     //
-    // Ryan, 2026-08-15: "maybe a way to just scan for updated guide reports during the
-    // planning... this doesn't need to go to the llm for anything maybe just to me in the trip
-    // html report". So nothing here is summarised or scored. What a person on the water wrote,
-    // the date they wrote it, and a link.
-    //
-    // The DATE IS PRINTED OR THE ITEM SAYS IT HAS NONE. AHQ states no date anywhere, so its
-    // text is boxed separately and labelled undated -- printing "3 days ago" on a page that
-    // says nothing about when would be a derived number wearing a fact's clothes, which is the
-    // mistake that produced a wrong Duke drawdown on 2026-08-10.
-    try {
-      const rec = lakeRecordFor(p.meta.waterbodyLabel || p.meta.lake || '') || lakeRecordFor(cleanLake);
-      if (rec) {
-        const worker = workerBase();
-        const names = [rec.name, rec.displayName, ...(rec.legacyDisplayNames || [])]
-          .filter(Boolean).filter((v, i, a) => a.indexOf(v) === i);
-        const rc = new AbortController();
-        const rt = setTimeout(() => rc.abort(), 9000);
-        const rr = await fetch(`${worker}/reports/${encodeURIComponent(rec.slug)}`
-          + `?names=${encodeURIComponent(names.join('|'))}&state=${encodeURIComponent(rec.state || '')}`,
-          { signal: rc.signal });
-        clearTimeout(rt);
-        const rd = await rr.json();
-        // ── A DATE-ONLY STRING IS A CALENDAR DATE, NOT AN INSTANT ────────────────────────────
-        //
-        // Ryan's card, 2026-09-15: "Angler's Headquarters — published Sep 2, 2026 · 12 days old",
-        // on a page that says "Lake Wateree 03 September, 2026" and a report headed "Updated
-        // September 3". parseAhqDate returns '2026-09-03'; `new Date('2026-09-03')` is UTC midnight
-        // and toLocaleDateString renders it in his timezone, which is four hours earlier, so it
-        // printed the 2nd. The AGE was computed off the raw string and stayed right, which is why
-        // the line disagreed with itself: Sep 2, twelve days before Sep 15.
-        //
-        // The fix is this file's own existing idiom — `new Date(date + 'T12:00:00')`, used for
-        // p.meta.date on two other lines here. Local noon cannot be moved across a day boundary by
-        // any real offset. An `it.published` that carries a full timestamp is a genuine instant and
-        // is still rendered as one; only a bare YYYY-MM-DD is pinned.
-        const reportDate = (v) => {
-          const t = String(v || '').trim();
-          if (!t) return null;
-          const d = /^\d{4}-\d{2}-\d{2}$/.test(t) ? new Date(`${t}T12:00:00`) : new Date(t);
-          return Number.isNaN(d.getTime())
-            ? null : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-        };
-        // Whole days between two calendar days, counted the same way the label is rendered, so the
-        // date and the age can never disagree again.
-        const reportAgeDays = (v) => {
-          const t = String(v || '').trim();
-          if (!t) return null;
-          const d = /^\d{4}-\d{2}-\d{2}$/.test(t) ? new Date(`${t}T12:00:00`) : new Date(t);
-          if (Number.isNaN(d.getTime())) return null;
-          const noonToday = new Date();
-          noonToday.setHours(12, 0, 0, 0);
-          return Math.round((noonToday - d) / 86400000);
-        };
-        const rows = (rd.items || []).map((it) => {
-          const when = reportDate(it.published) || 'no date given';
-          const days = reportAgeDays(it.published);
-          const age = days == null ? '' : days === 0 ? ' · today' : ` · ${days} day${days === 1 ? '' : 's'} old`;
-          const body = it.description ? `<br><span class="rp-small">${esc(it.description)}</span>` : '';
-          const warn = it.caution ? `<br><span class="rp-small" style="color:#b3261e">⚠ ${esc(it.caution)}</span>` : '';
-          const where = it.matched_in === 'article'
-            ? '<span class="rp-small" style="color:#94a3b8"> · named in the post body, not the headline</span>' : '';
-          return `<tr><td style="white-space:nowrap">${esc(when)}<span class="rp-small">${esc(age)}</span></td>`
-               + `<td><b>${it.link ? `<a href="${esc(it.link)}" target="_blank" rel="noopener">${esc(it.title)}</a>` : esc(it.title)}</b>`
-               + `${where}${body}${warn}</td>`
-               + `<td class="rp-small">${esc(it.source || '')}</td></tr>`;
-        }).join('');
-        // ── THE PAGE SAYS WHEN, AND THIS PRINTS WHAT IT SAYS ────────────────────────────────
-        //
-        // This read the bucket's NAME and nothing else: every entry in `undated` got a hardcoded
-        // "no date published. Treat as background, not as current." parseAhqDate() has read AHQ's
-        // own date since 2026-09-14 and the Worker has sent `published` and `undated` per entry
-        // ever since; neither was read here, so the card kept calling a dated report undated.
-        //
-        // Ryan, 2026-09-15: "this note is still there ... Lake Wateree 03 September, 2026 / what
-        // more of a date does this need lol???" Nothing. It needed a reader.
-        //
-        // `rd.pages` is the field now, because a bucket called `undated` holding dated entries is a
-        // lie by name. `rd.undated` is still read for one release, for a browser holding a cached
-        // bundle against a Worker that has already deployed — it is a transient, not a dialect.
-        const undated = (rd.pages || rd.undated || []).map((u) => {
-          const when = reportDate(u.published);
-          const days = reportAgeDays(u.published);
-          const age = days == null ? '' : days === 0 ? ' · today'
-            : ` · ${days} day${days === 1 ? '' : 's'} old`;
-          const head = when
-            ? `<b style="color:#1a7f37">published ${esc(when)}</b><span class="rp-small">${esc(age)}</span>`
-            : `<b style="color:#b06a00">no date published</b>. Treat as background, not as current.`;
-          return `<div class="rp-callout rp-info" style="margin-top:8px">`
-            + `<b>${esc(u.source || '')}</b> — ${head}`
-            + `<br><span class="rp-small">${esc(u.text || '')}</span>`
-            + `${u.link ? `<br><a href="${esc(u.link)}" target="_blank" rel="noopener">${esc(u.link)}</a>` : ''}</div>`;
-        }).join('');
-        // "Nobody looked" and "nothing to report" are different answers, and the report says which.
-        const checked = (rd.checked || []).length
-          ? `Checked ${esc((rd.checked || []).join(', '))}.` : 'No source was reachable.';
-        if (rows || undated) {
-          reportsHtml = `<h2>📰 Recent Fishing Reports — ${esc(rec.displayName || rec.name)}</h2>
-            <p class="rp-small">Verbatim from the source, newest first. Nothing here has been summarised or scored. ${checked}</p>
-            ${rows ? `<table><thead><tr style="background:#eef4fa"><th>Date</th><th>Report</th><th>Source</th></tr></thead><tbody>${rows}</tbody></table>` : ''}
-            ${undated}`;
-        } else {
-          reportsHtml = `<div class="rp-callout rp-info"><b>📰 Recent Fishing Reports</b><br>`
-            + `<span class="rp-small">Nothing published about this water. ${checked}</span></div>`;
-        }
-      }
-    } catch (err) {
-      // Distinguished on purpose: a failed lookup must not read as "no reports exist".
-      console.warn('[plan-builder] fishing reports unavailable:', err);
-      reportsHtml = `<div class="rp-callout rp-warn"><b>📰 Recent Fishing Reports</b><br>`
-        + `<span class="rp-small">Could not be checked — the report lookup failed. This is not the same as "no reports".</span></div>`;
-    }
+    // It printed Angler's Headquarters' Santee Cooper page as the Worker's /reports scraped it: a "Catch of the Week",
+    // the week's members-only teaser ("AHQ INSIDER ... Exclusive Content ... Read more"). Ryan, 2026-11-06: "this does
+    // nothing for me", of that card, and of the years-of-reports section below: "i like this". The reports themselves
+    // reach this page dated and read, in "What the Guides Reported" and "Years of Reports for This Time of Year".
 
     // ── Module F2 — What the guides reported, as the plan read it ─────────────────────────────
     //
@@ -2439,9 +2350,9 @@ ${p.meta.structure?`<h2>🗺 Structure Notes Per Lane</h2>
 </div>
 
 ${arigRows ? `
-<h2>9 · Tactical Umbrella Rig Breakdown</h2>
+<h2>9 · The A-Rigs on This Plan</h2>
 <table>
-  <thead><tr style="background:#eef4fa"><th>Rod / Lane</th><th>Rig Framework Weight</th><th>Trailer Profile Size</th><th>Tactical Keel Jigheads</th><th>Color Pattern</th><th>Target Depth / Wire Lead</th></tr></thead>
+  <thead><tr style="background:#eef4fa"><th>Rod</th><th>Legs</th><th>The rig</th><th>Color</th><th>Depth @ lead</th></tr></thead>
   <tbody>${arigRows}</tbody>
 </table>` : ''}
 

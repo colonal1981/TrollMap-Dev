@@ -316,8 +316,8 @@ test('and the report date is the calendar day the page states, not a timezone sh
   // `new Date('2026-09-03')` is UTC midnight; rendered in UTC-4 it printed "Sep 2, 2026" beside an
   // age of 12 days, so the line disagreed with itself. This file's own idiom for a date-only string
   // is `+ 'T12:00:00'`, already used for p.meta.date twice.
-  assert.match(live, /const reportDate = \(v\) => \{/);
-  assert.match(live, /\$\{t\}T12:00:00/);
+  // The card that printed those dates (Module F, AHQ's page) was taken off the report on 2026-11-06: "this does
+  // nothing for me". What is left of this test is that nothing renders a bare published date as an instant.
   assert.ok(!/new Date\(it\.published\)\.toLocaleDateString/.test(live),
     'the feed renderer must go through the shared formatter');
   assert.ok(!/new Date\(u\.published\)\.toLocaleDateString/.test(live),

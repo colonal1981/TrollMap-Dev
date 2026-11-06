@@ -1543,6 +1543,16 @@ export function connectionFor(lureType) {
   return TERMINAL_CONNECTION[lureType] || 'tie';
 }
 
+/**
+ * THE SNAP RODS GO TO THESE FIRST. 'snap' says a lure MAY hang off a swivel snap; this says it goes on one when there is
+ * a choice. Ryan, 2026-11-06, of his Moultrie card putting the A-rig on a leader rod: "i also do not tie an a-rig to a
+ * leader... i use the swivel snap for the a-rig for ease of tieing knots". seatRods() in plan-prompt.js reads it.
+ */
+export const SNAP_FIRST = Object.freeze(['umbrella_rig']);
+export function snapFirst(lureType) {
+  return SNAP_FIRST.includes(lureType);
+}
+
 /** Can this lure hang off one of the two snap rods? */
 export function canTakeSnap(lureType) {
   return connectionFor(lureType) !== 'tie';

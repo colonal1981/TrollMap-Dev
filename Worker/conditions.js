@@ -195,6 +195,25 @@ function solunar(sundata, moondata) {
   return out;
 }
 
+/**
+ * US Eastern time's offset from UTC on a calendar day: -4 from the second Sunday of March to the first Sunday of
+ * November, -5 the rest of the year. His waters are all on Eastern time. A changeover day is counted by most of its
+ * daylight (the change is at 2 AM). Not a date: -4, as before.
+ */
+export function easternOffsetHours(dateStr) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateStr || ''));
+  if (!m) return -4;
+  const y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+  const sunday = (month, nth) => {                      // the nth Sunday of a month, as a day of the month
+    const first = new Date(Date.UTC(y, month - 1, 1)).getUTCDay();
+    return 1 + ((7 - first) % 7) + 7 * (nth - 1);
+  };
+  const start = sunday(3, 2), end = sunday(11, 1);
+  const after = mo > 3 || (mo === 3 && d >= start);
+  const before = mo < 11 || (mo === 11 && d < end);
+  return after && before ? -4 : -5;
+}
+
 async function skyAlmanac(lat, lon, date, tz) {
   const url = `https://aa.usno.navy.mil/api/rstt/oneday?date=${encodeURIComponent(date)}`
             + `&coords=${lat},${lon}&tz=${tz}`;
@@ -5246,8 +5265,13 @@ export async function handleConditions(request, env, url) {
       why: 'the Worker has no lake registry; the client knows the centroid it selected',
     }), { status: 400, headers: { ...CORS, ...JSON_HEADERS } });
   }
-  const tz = Number(url.searchParams.get('tz')) || -4;
   const date = url.searchParams.get('date') || new Date().toISOString().slice(0, 10);
+  // THE CLOCK ON THE PLAN'S DAY. No caller sends `tz`, and this was `|| -4` all year, so from the first Sunday of
+  // November to the second of March every sun and moon time ran an hour late. Ryan's Moultrie plan for 11/8 (built
+  // 11/6) read civil dawn 07:19 and sunrise 07:45 against a real 06:18 and 06:44, rigged for 79 minutes of dark that
+  // were 18, and timed a ledge "just before first light" at 06:50, after sunrise. A `tz` sent is still used as sent.
+  const tzQ = url.searchParams.get('tz');
+  const tz = tzQ !== null && tzQ.trim() !== '' && Number.isFinite(Number(tzQ)) ? Number(tzQ) : easternOffsetHours(date);
 
   // Started here, awaited by the two jobs below. Resolving to a shape rather than rejecting
   // keeps one failed R2 read from being three separate unhandled rejections.
