@@ -704,6 +704,121 @@ async function readFacebook(src, env, month, prevMonth) {
   return out;
 }
 
+// ── POSTS TO READ: FOUND BY A SEARCH, NEVER OPENED (11/6) ───────────────────────────────────
+//
+// Facebook's robots.txt: "Collection of data on Facebook through automated means is prohibited
+// unless you have express written permission from Facebook". Ryan, 11/6: "is there an automated
+// way to search for it but not collect it? can i manually collect it after the automatic search?"
+// So this asks a search engine (TinyFish search, which reads its own index, not facebook.com) for
+// recent posts about the water and lists them: the page, the date the search gives, the link. The
+// app shows them beside "A report you read"; he opens one himself, reads it, and pastes it. Nothing
+// here fetches a post, and the search's preview is shown to him only, labelled, never to the plan
+// (a search snippet is model output, not the post: THE_SCORER_WAS_BUILT_FOR_A_DIFFERENT_QUESTION).
+
+const FB_POST = /^https:\/\/(?:www\.|m\.|web\.)?facebook\.com\/(?:[^/]+\/(?:posts|photos|videos|reel|permalink)\b|groups\/[^/]+\/(?:posts|permalink)\/|permalink\.php|story\.php|reel\/|share\/|watch\/?\?)/i;
+// Words in a water's names that also name a hundred other things in a post.
+const LOOSE_WORDS = new Set(['hill', 'island', 'point', 'mill', 'dam', 'fork', 'north', 'south', 'east', 'west',
+  'upper', 'lower', 'big', 'little', 'old', 'new']);
+const lettersOf = (s) => String(s || '').toLowerCase().replace(/[^a-z]/g, '');
+// One post, one key: the address without its tracking, except where the query IS the post
+// (story.php?story_fbid=..., permalink.php, watch/?v=).
+const postKey = (u) => {
+  const t = String(u || '').replace(/#.*$/, '').toLowerCase().replace(/^https:\/\/(?:www\.|m\.|web\.)?/, 'https://');
+  return (/\.php\?|\/watch\/?\?/.test(t) ? t : t.replace(/\?.*$/, '')).replace(/\/+$/, '');
+};
+const wordsOf = (s) => new Set(String(s || '').toLowerCase().split(/[^a-z]+/)
+  .map((w) => (w.length > 3 && w.endsWith('s') ? w.slice(0, -1) : w)).filter(Boolean));
+
+/** Whose post, from its address: the page's handle, or "a Facebook group". */
+export function postPage(url) {
+  const path = String(url || '').replace(/^https?:\/\/[^/]+\//, '').split(/[/?#]/);
+  if (path[0] === 'groups') return 'a Facebook group';
+  const handle = path[0] === 'p' || path[0] === 'people' ? String(path[1] || '').replace(/-\d{6,}$/, '') : path[0];
+  return decodeURIComponent(handle || '').replace(/[-_.]+/g, ' ').trim() || 'Facebook';
+}
+
+/** The day a search result's date names, Eastern: "4 days ago", "1 month ago", "Oct 3, 2026". */
+export function searchDay(said, nowMs = Date.now()) {
+  const s = String(said || '').trim();
+  if (!s) return null;
+  const rel = s.match(/^(\d+)\s+(minute|hour|day|week|month|year)s?\s+ago$/i);
+  if (rel) {
+    const ms = { minute: 60e3, hour: 3600e3, day: 864e5, week: 7 * 864e5, month: 30 * 864e5, year: 365 * 864e5 }[rel[2].toLowerCase()];
+    return { date: dayEastern(new Date(nowMs - Number(rel[1]) * ms)), approx: /month|year/i.test(rel[2]) };
+  }
+  // A calendar date is that day, wherever this runs: "2026-10-03" parses as UTC midnight and
+  // "Oct 3, 2026" as local midnight, so neither goes through a time zone.
+  const iso = s.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (iso) return { date: iso[1], approx: false };
+  const t = Date.parse(s);
+  if (!Number.isFinite(t)) return null;
+  const dt = new Date(t);
+  const two = (n) => String(n).padStart(2, '0');
+  return { date: `${dt.getFullYear()}-${two(dt.getMonth() + 1)}-${two(dt.getDate())}`, approx: false };
+}
+
+/**
+ * The search results worth listing: a Facebook post (by its address), about this water (it names
+ * the water, or it is one of the water's own guides' pages), and about fishing. Newest first, a
+ * post with no date last. Pure; the route below feeds it.
+ */
+export function pickPosts(results, { tokens = [], pages = [], nowMs = Date.now() } = {}) {
+  const want = [...tokens].filter((t) => t.length > 2 && !LOOSE_WORDS.has(t));
+  const seen = new Set();
+  const out = [];
+  for (const r of results || []) {
+    const url = String((r && r.url) || '').replace(/#.*$/, '');
+    if (!FB_POST.test(url)) continue;
+    const key = postKey(url);
+    if (seen.has(key)) continue;
+    const said = `${(r && r.title) || ''} ${(r && r.snippet) || ''}`;
+    const known = pages.find((p) => key.startsWith(postKey(p.url)) || (p.author && lettersOf(said).includes(lettersOf(p.author))));
+    const words = wordsOf(`${said} ${url.replace(/[^a-z]+/gi, ' ')}`);
+    if (!known && !want.some((t) => words.has(t))) continue;
+    if (!/fish|report|bite|striper|bass|crappie|catfish|bream|perch/i.test(said)) continue;
+    seen.add(key);
+    const when = searchDay(r.date, nowMs);
+    out.push({
+      url, page: known ? known.author : postPage(url), source: known ? known.label : null,
+      title: String(r.title || '').replace(/\s+/g, ' ').trim(),
+      preview: String(r.snippet || '').replace(/\s+/g, ' ').trim().slice(0, 240),
+      when: when ? when.date : null, whenApprox: when ? when.approx : null, whenSaid: r.date || null,
+    });
+  }
+  return out.sort((a, b) => (a.when && b.when ? b.when.localeCompare(a.when) : a.when ? -1 : b.when ? 1 : 0));
+}
+
+/** Search for this water's recent Facebook posts. Never opens one. */
+export async function findPosts(slug, env, dateStr) {
+  let idx;
+  try { idx = await lakeIndex(env); } catch (e) { return { slug, posts: [], why: `the registry could not be read: ${e.message}` }; }
+  const row = idx && idx[slug];
+  if (!row) return { slug, posts: [], why: `${slug} is not in the registry` };
+  const d = /^\d{4}-\d{2}-\d{2}$/.test(String(dateStr || '')) ? String(dateStr) : dayEastern();
+  const y = Number(d.slice(0, 4));
+  const mi = Number(d.slice(5, 7)) - 1;
+  const prevY = mi === 0 ? y - 1 : y;
+  const prevMi = mi === 0 ? 11 : mi - 1;
+  const after = `${prevY}-${String(prevMi + 1).padStart(2, '0')}-01`;
+  const name = String(row.name || slug).replace(/,\s*[A-Z]{2}(\/[A-Z]{2})*$/, '');
+  const pages = (GUIDE_SOURCES[slug] || []).filter((s) => s.kind === 'facebook');
+  const queries = [
+    ...pages.flatMap((p) => [...p.queries(`${MONTHS[mi]} ${y}`), ...p.queries(`${MONTHS[prevMi]} ${prevY}`)]),
+    `"${name}" fishing report`, `"${name}" fishing`,
+  ];
+  const found = await Promise.all([...new Set(queries)].map((q) => tinyfishSearch({
+    query: q, include_domains: 'facebook.com', after_date: after,
+    purpose: `Find recent Facebook posts that are fishing reports for ${name}, to list as links he opens and reads himself`,
+  }, env).then((r) => ({ q, r }), (e) => ({ q, error: String((e && e.message) || e) }))));
+  const tokens = nameTokens(rowNames(row));
+  if (slug === 'lake_marion' || slug === 'lake_moultrie') { tokens.add('santee'); tokens.add('cooper'); }
+  const posts = pickPosts(found.flatMap((x) => (x.r && x.r.results) || []), { tokens, pages })
+    .filter((p) => !p.when || p.when >= after);
+  const failed = found.filter((x) => x.error);
+  return { slug, date: d, after, posts, searched: found.map((x) => x.q),
+           ...(failed.length ? { failed: failed.map((x) => `${x.q}: ${x.error}`) } : {}) };
+}
+
 async function transcriptOf(env, videoId) {
   const key = `guide:yt:${videoId}`;
   if (env.KV) {
@@ -869,6 +984,8 @@ const json = (o, status = 200) =>
  * every source again on demand.
  */
 export async function handleGuideReports(request, env, url) {
+  const pm = url.pathname.match(/^\/guide-reports\/([a-z0-9_]+)\/posts\/?$/);
+  if (pm) return handleFindPosts(request, env, url, pm[1]);
   const mm = url.pathname.match(/^\/guide-reports\/([a-z0-9_]+)\/?$/);
   if (!mm) return null;
   if (request.method === 'OPTIONS') return new Response(null, { headers: CORS });
@@ -889,5 +1006,31 @@ export async function handleGuideReports(request, env, url) {
   const body = { ...await gatherGuideReports(slug, env, date), readAt: new Date().toISOString() };
   // A day where every source failed is not kept, so the next plan asks again.
   if (env.KV && body.reports.length) await env.KV.put(key, JSON.stringify(body), { expirationTtl: 2 * 86400 });
+  return json(body);
+}
+
+/**
+ * GET /guide-reports/<slug>/posts?date=YYYY-MM-DD[&fresh=1] -- the posts to read (findPosts).
+ *
+ * Kept in KV for the Eastern day, like the reports: the searches are free, but a day of opening the
+ * card asks once. `fresh=1` is "Look again", token-guarded like the reports' own, because a post put
+ * up this afternoon is not in the morning's list.
+ */
+async function handleFindPosts(request, env, url, slug) {
+  if (request.method === 'OPTIONS') return new Response(null, { headers: CORS });
+  if (request.method !== 'GET') return json({ error: 'GET' }, 405);
+  const fresh = url.searchParams.get('fresh') === '1';
+  if (fresh && !await isAuthorized(request, env)) return json({ error: 'unauthorized' }, 401);
+  const date = url.searchParams.get('date') || dayEastern();
+  const key = `guide:posts:v1:${slug}:${String(date).slice(0, 7)}:${dayEastern()}`;
+  if (env.KV && !fresh) {
+    const hit = await env.KV.get(key, 'json');
+    if (hit) return json({ ...hit, cached: true });
+  }
+  const body = { ...await findPosts(slug, env, date), searchedAt: new Date().toISOString() };
+  // A day where every search failed is not kept, so the next look asks again.
+  if (env.KV && body.searched && (body.failed || []).length < body.searched.length) {
+    await env.KV.put(key, JSON.stringify(body), { expirationTtl: 2 * 86400 });
+  }
   return json(body);
 }

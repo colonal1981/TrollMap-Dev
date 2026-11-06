@@ -22,11 +22,18 @@
  *
  * Kept in IndexedDB's `settings` store under its own key (no schema change, so no version bump to
  * block on an old tab) and synced through /sync as type `report`, so a post pasted on the phone is
- * there for the plan on the PC.
+ * there for the plan on the PC. *
+ * POSTS TO READ (11/6). Facebook forbids automated collection, so the app does not read a post; it
+ * lists the ones a search engine knows about (Worker: GET /guide-reports/<slug>/posts) beside this
+ * card. Ryan: "is there an automated way to search for it but not collect it? can i manually
+ * collect it after the automatic search?" He opens one, reads it, and "Paste this one" fills the
+ * date, who wrote it and the post's link; the paste keeps the link, and a post already pasted
+ * drops off the list.
  */
 
 import { SANTEE_LAKES } from '../utils/report-water.js';
 import { getAll as dbGetAll, put as dbPut, del as dbDel } from '../utils/db.js';
+import { workerAuthOnly } from '../utils/worker-auth.js';
 
 export const PASTE_KIND = 'pasted_report';
 export const PASTE_SYNC_TYPE = 'report';
@@ -40,7 +47,7 @@ const letters = (s) => String(s || '').toLowerCase().replace(/[^a-z]/g, '');
  * A pasted report as it is kept. `{ ok: true, record }`, or `{ ok: false, why }` in words he can
  * act on. `aboutLake` is kept only on Marion and Moultrie, and only as one of the two.
  */
-export function pastedRecord({ text, date, from, aboutLake, slug, now = new Date() } = {}) {
+export function pastedRecord({ text, date, from, aboutLake, slug, link, now = new Date() } = {}) {
   const t = String(text || '').trim();
   if (!slug) return { ok: false, why: 'Pick the water above first -- a report is kept for the water it is about.' };
   if (!t) return { ok: false, why: 'Paste the report into the box first.' };
@@ -53,6 +60,8 @@ export function pastedRecord({ text, date, from, aboutLake, slug, now = new Date
       key: id, id, kind: PASTE_KIND, slug, text: t, date,
       from: String(from || '').trim(),
       aboutLake: santee && SANTEE_LAKES.includes(aboutLake) ? aboutLake : null,
+      // the post it came from, when he pasted it from the list of posts to read
+      link: /^https?:\/\/\S+$/.test(String(link || '').trim()) ? String(link).trim() : null,
       savedAt: now.toISOString(),
     },
   };
@@ -105,11 +114,42 @@ export function pastedAsReports(records, planDate, sourceReports = []) {
       publishedFrom: SAID,
       ...(history ? { role: 'same month, an earlier year' } : {}),
       aboutLake: r.aboutLake || null,
-      url: null,
+      url: r.link || null,
       note: notes.join(' ') || null,
       text: r.text,
     };
   });
+}
+
+/** One post, one key, whichever way Facebook spelled its address (www., m., tracking). */
+export function postKey(u) {
+  const t = String(u || '').replace(/#.*$/, '').toLowerCase().replace(/^https?:\/\/(?:www\.|m\.|web\.)?/, 'https://');
+  return (/\.php\?|\/watch\/?\?/.test(t) ? t : t.replace(/\?.*$/, '')).replace(/\/+$/, '');
+}
+
+/** The posts still to read: the list less every one already pasted (by its link). */
+export function postsToRead(posts, pasted) {
+  const done = new Set((pasted || []).map((r) => r && r.link).filter(Boolean).map(postKey));
+  return (posts || []).filter((p) => p && p.url && !done.has(postKey(p.url)));
+}
+
+/**
+ * Ask the Worker for the water's posts to read. Never throws: `{ error }` in words he can act on.
+ * `fresh` is "Look again": the day's list is kept, and a fresh look is his, so it carries the token.
+ */
+export async function askPosts({ worker, slug, date, fresh = false, fetchImpl } = {}) {
+  const f = fetchImpl || (typeof fetch === 'function' ? fetch : null);
+  if (!worker || !slug) return { error: 'Pick the water above first.' };
+  if (!f) return { error: 'no fetch' };
+  try {
+    const q = new URLSearchParams({ ...(date ? { date } : {}), ...(fresh ? { fresh: '1' } : {}) }).toString();
+    const r = await f(`${worker}/guide-reports/${encodeURIComponent(slug)}/posts${q ? `?${q}` : ''}`,
+      fresh ? { headers: workerAuthOnly() } : undefined);
+    if (!r || !r.ok) return { error: `the search could not be asked (HTTP ${r ? r.status : '?'})` };
+    return await r.json();
+  } catch (e) {
+    return { error: `the search could not be asked (${(e && e.message) || e})` };
+  }
 }
 
 // ── the browser half ─────────────────────────────────────────────────────────────────────────
@@ -143,7 +183,7 @@ const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<
  * The "A report you read" card on the Smart Plan tab. `slugOf()` answers the water picked above,
  * the same lookup the planner uses.
  */
-export function wirePasteBox({ slugOf, dateOf } = {}) {
+export function wirePasteBox({ slugOf, dateOf, worker } = {}) {
   const $ = (id) => document.getElementById(id);
   const box = $('pastedReportsCard');
   if (!box || box.dataset.wired) return;
@@ -153,6 +193,56 @@ export function wirePasteBox({ slugOf, dateOf } = {}) {
     if (el) { el.textContent = m; el.style.color = bad ? 'var(--warn)' : 'var(--muted)'; }
   };
 
+  // ── posts to read ──
+  let finds = { slug: null, posts: [], error: null, looking: false };
+  const renderFinds = (mine) => {
+    const el = $('pastedReportFinds');
+    if (!el) return;
+    if (finds.looking) { el.innerHTML = '<div class="muted" style="font-size:12px">Looking…</div>'; return; }
+    if (finds.error) { el.innerHTML = `<div style="font-size:12px;color:var(--warn)">${esc(finds.error)}</div>`; return; }
+    const left = postsToRead(finds.posts, mine);
+    const done = (finds.posts || []).length - left.length;
+    el.innerHTML = left.map((p, i) => `
+      <div style="border-top:1px solid var(--border,#1e2a3a);padding:6px 0;font-size:12px">
+        <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline">
+          <b>${p.when ? `${esc(p.when)}${p.whenApprox ? ' (about)' : ''}` : 'no date in the search'} · ${esc(p.page)}</b>
+          <span style="display:flex;gap:6px;flex-shrink:0">
+            <a href="${esc(p.url)}" target="_blank" rel="noopener noreferrer" style="font-size:11px">Open</a>
+            <button type="button" class="small ghost" data-use="${i}" style="font-size:11px">Paste this one</button>
+          </span>
+        </div>
+        <div>${esc(p.title)}</div>
+        ${p.preview ? `<div class="muted" style="font-size:11px">The search's preview, not the post: ${esc(p.preview)}</div>` : ''}
+      </div>`).join('')
+      || `<div class="muted" style="font-size:12px">${finds.slug ? `No posts found${done ? ` that are not pasted already (${done} pasted)` : ''}.` : 'Open this card with a water picked to look for posts.'}</div>`;
+    el.dataset.left = JSON.stringify(left.map((p) => ({ url: p.url, when: p.when, whenApprox: p.whenApprox, page: p.page, source: p.source })));
+  };
+  const find = async (fresh = false) => {
+    const slug = slugOf ? slugOf() : null;
+    if (!slug || !worker) return;
+    if (!fresh && finds.slug === slug && !finds.error) return;
+    finds = { slug, posts: [], error: null, looking: true };
+    renderFinds([]);
+    const got = await askPosts({ worker, slug, date: dateOf ? dateOf() : null, fresh });
+    if ((slugOf ? slugOf() : null) !== slug) return;            // the water changed while it looked
+    finds = { slug, posts: got.posts || [], error: got.error || null, looking: false };
+    render();
+  };
+  $('pastedReportFinds')?.addEventListener('click', (ev) => {
+    const i = ev.target && ev.target.dataset ? ev.target.dataset.use : null;
+    if (i == null) return;
+    let left = [];
+    try { left = JSON.parse($('pastedReportFinds').dataset.left || '[]'); } catch (_) { left = []; }
+    const p = left[Number(i)];
+    if (!p) return;
+    if ($('pastedReportLink')) $('pastedReportLink').value = p.url;
+    if ($('pastedReportFrom')) $('pastedReportFrom').value = p.source ? p.page : (p.page === 'a Facebook group' ? '' : p.page);
+    if ($('pastedReportDate') && p.when && !p.whenApprox) $('pastedReportDate').value = p.when;
+    $('pastedReportText')?.focus();
+    say(`Open the post, copy what it says, and paste it here.${p.when && !p.whenApprox ? ' Check the date against the post.' : ' Set the date the post shows.'}`);
+  });
+  $('pastedReportFindAgain')?.addEventListener('click', () => find(true));
+
   const render = async () => {
     const slug = slugOf ? slugOf() : null;
     const lakeWrap = $('pastedReportLakeWrap');
@@ -161,11 +251,12 @@ export function wirePasteBox({ slugOf, dateOf } = {}) {
     const count = $('pastedReportsCount');
     const mine = slug ? pastedForWater(await loadPasted(), slug).sort((a, b) => (a.date < b.date ? 1 : -1)) : [];
     if (count) count.textContent = mine.length ? `(${mine.length} for this water)` : '';
+    renderFinds(mine);
     if (!list) return;
     list.innerHTML = mine.map((r) => `
       <div style="border-top:1px solid var(--border,#1e2a3a);padding:6px 0;font-size:12px">
         <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline">
-          <b>${esc(r.date)}${r.from ? ` · ${esc(r.from)}` : ''}${r.aboutLake ? ` · ${esc(lakeName(r.aboutLake))}` : ''}</b>
+          <b>${esc(r.date)}${r.from ? ` · ${esc(r.from)}` : ''}${r.aboutLake ? ` · ${esc(lakeName(r.aboutLake))}` : ''}${r.link ? ` · <a href="${esc(r.link)}" target="_blank" rel="noopener noreferrer">the post</a>` : ''}</b>
           <button type="button" class="small ghost" data-del="${esc(r.id)}" style="font-size:11px">Remove</button>
         </div>
         <div class="muted" style="white-space:pre-wrap;max-height:4.5em;overflow:hidden">${esc(r.text)}</div>
@@ -176,7 +267,7 @@ export function wirePasteBox({ slugOf, dateOf } = {}) {
     const res = pastedRecord({
       text: $('pastedReportText')?.value, date: $('pastedReportDate')?.value,
       from: $('pastedReportFrom')?.value, aboutLake: $('pastedReportLake')?.value || null,
-      slug: slugOf ? slugOf() : null,
+      slug: slugOf ? slugOf() : null, link: $('pastedReportLink')?.value || null,
     });
     if (!res.ok) return say(res.why, true);
     try {
@@ -185,6 +276,7 @@ export function wirePasteBox({ slugOf, dateOf } = {}) {
       return say(`Could not keep it on this device: ${(e && e.message) || e}`, true);
     }
     $('pastedReportText').value = '';
+    if ($('pastedReportLink')) $('pastedReportLink').value = '';
     say('Added. The next plan for this water reads it.');
     render();
   });
@@ -196,8 +288,8 @@ export function wirePasteBox({ slugOf, dateOf } = {}) {
   });
   const dateEl = $('pastedReportDate');
   if (dateEl && !dateEl.value && dateOf) dateEl.value = dateOf() || '';
-  $('planLake')?.addEventListener('change', render);
+  $('planLake')?.addEventListener('change', () => { render(); if (box.open) find(); });
   window.addEventListener('trollmap:data-synced', render);
-  box.addEventListener('toggle', () => { if (box.open) render(); });
+  box.addEventListener('toggle', () => { if (box.open) { render(); find(); } });
   render();
 }

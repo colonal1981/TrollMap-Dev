@@ -861,6 +861,8 @@ export function wireSmartPlanV2() {
   wirePasteBox({
     slugOf: () => resolveR2Key($('planLake')?.value || ''),
     dateOf: () => { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); },
+    // the posts to read beside the card are asked of his Worker (guide-reports.js, findPosts)
+    worker: CF_WORKER_URL,
   });
   const btn = $('runSmartPlanBtn');
   if (!btn || btn.dataset.v2wired) return;

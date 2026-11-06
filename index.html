@@ -882,6 +882,17 @@
                 📝 A report you read <span id="pastedReportsCount" style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)"></span>
               </summary>
               <p style="font-size:11px;color:var(--muted);margin:6px 0">A Facebook post, a text, a page — anything about the water picked above. The plan reads it with the guides' reports, by the date you give it.</p>
+              <!-- POSTS TO READ, 11/6: found by a web search, never opened by the app (Facebook forbids
+                   automated collection). He opens one, reads it, pastes it. pasted-reports.js. -->
+              <div id="pastedReportFinder" style="margin:6px 0">
+                <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
+                  <span style="font-size:11px;font-weight:700">Posts to read</span>
+                  <button id="pastedReportFindAgain" type="button" class="small ghost" style="font-size:11px">Look again</button>
+                </div>
+                <p style="font-size:11px;color:var(--muted);margin:2px 0 4px">Found by a web search for this water, never read by the app. Open one, read it, and paste what it says below.</p>
+                <div id="pastedReportFinds" style="max-height:16em;overflow-y:auto"></div>
+              </div>
+              <input type="hidden" id="pastedReportLink">
               <textarea id="pastedReportText" rows="5" placeholder="Paste the report here" style="width:100%"></textarea>
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px">
                 <div>
