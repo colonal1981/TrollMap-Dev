@@ -311,7 +311,8 @@ def read_statements(slug, cache, idx, names, ahq_urls, cs_urls=(), extra=None):
 def to_contract(x, where=None):
     """`where` is the water's report_places.Matcher: the places the words name, on his chart."""
     return K.blank(
-        places=where.places(x['text'], one_water=len(x['waters']) == 1) if where else [], area=P.areas(x['text']),
+        places=where.places(x['text'], one_water=len(x['waters']) == 1, others=where.words_of(x['waters'])) if where else [],
+        area=P.areas(x['text']),
         source=x['source'], url=x['url'], archived=x.get('archived'), date=x['date'], dated_by=x['dated_by'],
         water=x['waters'], water_from=(x.get('water_from') or 'heading') if x['waters'] else 'none',
         water_as_written=x.get('heading'), species=x['species'], species_as_written=x.get('label'), about=x['about'],

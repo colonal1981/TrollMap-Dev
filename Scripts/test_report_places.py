@@ -74,6 +74,19 @@ class Places(unittest.TestCase):
         self.assertEqual(got('Below Pinopolis Dam and at the dam.', True), ['Pinopolis Dam'], 'once')
         self.assertEqual(got('A dam on the river upstream.', True), [], '"a dam" is not the dam')
 
+    def test_the_dam_on_a_report_about_two_lakes_is_this_ones_only_where_the_sentence_names_it(self):
+        # Santee Cooper's reports are about Marion and Moultrie both (his Short Stay day, 11/6)
+        others = self.m.words_of(['lake_test', 'other_lake'])
+        self.assertEqual(others, ['keowee'])
+        got = lambda t: [p['name'] for p in self.m.places(t, one_water=False, others=others)]
+        self.assertEqual(got('The bait gets very deep in Lake Test near the dam and the fish follow.'), ['Pinopolis Dam'])
+        self.assertEqual(got('Fish are stacking up at the dam on their way back out.'), [], 'neither lake named')
+        self.assertEqual(got('On Lake Keowee and Lake Test the fish are at the dam.'), [], 'which dam is not said')
+        self.assertEqual(got('Lake Test is fishing well. The fish are at the dam.'), [], 'another sentence')
+        self.assertEqual(got('Deep water at areas like the Test dam this month.'), ['Pinopolis Dam'], 'named outright')
+        self.assertEqual(got('Below the Little River dam the fish are deep, at the dam itself.'), ['Little River'],
+                         'a legacy name\'s arm ("Little River - Lake Test") does not name this lake for its dam')
+
     def test_a_guides_base_is_not_where_the_fish_were(self):
         got = lambda t: [p['name'] for p in self.m.places(t)]
         self.assertEqual(got('Guide Leroy Suggs out of Blacks Camp said stripers are schooling near Bonneau.'), ['Bonneau'])

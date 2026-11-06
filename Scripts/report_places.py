@@ -48,10 +48,13 @@ KIND_WORDS = {'shoal', 'shoals', 'stump', 'stumps', 'pile', 'piles', 'piling', '
               'abandoned', 'manor', 'brigde', 'waterfall', 'anderson'}
 # A GUIDE'S BASE IS NOT WHERE THE FISH WERE: "Guide Leroy Suggs out of Blacks Camp said...".
 BASE = re.compile(r"(?:\bout of|\bbased (?:at|in|out of)|\bowner of|\boperates?)\s+(?:the\s+)?$", re.I)
-# "THE DAM" ON A REPORT ABOUT ONE WATER IS THAT WATER'S DAM, where its chart names exactly one ("stacked up at the dam on
-# their way back out to the ocean", Moultrie, November: Pinopolis Dam). A report about Marion and Moultrie together does
-# not say which.
+# "THE DAM" IS THE WATER'S DAM, where its chart names exactly one: on a report about this water alone, or in a sentence
+# that names this water and no other the report is about. Santee Cooper's reports are about both lakes, so on Moultrie
+# "very deep in Lake Moultrie near the dam" is Pinopolis Dam, and "stack up at the dam on their way back out to the
+# ocean", naming neither lake, is no dam. "The Moultrie dam" and "the Lake Moultrie dam" name it outright. Found on his
+# Short Stay day, 11/6: 86 of the 87 striper reports around the date are about both lakes, and 12 of them say dam.
 THE_DAM = re.compile(r"\bthe\s+(?:main\s+)?dam\b", re.I)
+SENTENCE = re.compile(r'(?<=[.!?])\s+')
 ALIASES = {             # his names for a place the chart names otherwise
     'Pinopolis Dam': (['Lake Moultrie Dam', 'Moultrie Dam'], 'Ryan, 2026-11-03: "lake moultrie dam = pinopolis dam"'),
 }
@@ -107,6 +110,13 @@ def gazetteer(packs, regdir, slug):
     lakes = {_norm(_bare(n)) for k, v in idx.items() if v.get('feature_type') == 'lake' and k != slug
              for n in [v.get('name')] + (v.get('legacy_display_names') or [])}
     lakes |= {re.sub(r' [a-z]{2}$', '', n) for n in lakes}
+    # each lake's own words, for "the dam" in a sentence naming another water a report is about (Matcher.words_of)
+    # By its name alone, not the legacy names: those carry its arms ("Big Creek", "Twelvemile"), and "Fishing Creek dam"
+    # on Wateree is the dam upstream, not Wateree Dam.
+    def core(v):
+        ns = {_norm(_bare(n)) for n in [v.get('name'), v.get('display_name')] if n}
+        return sorted({w for n in ns for w in n.split() if len(w) > 2 and w not in ('lake', 'reservoir', 'pond', 'the')})
+    words_by_lake = {k: core(v) for k, v in idx.items() if v.get('feature_type') == 'lake' and k != slug}
     raw = {}                                              # name -> {'pts': [...], 'from': ...}
     def add(name, lon, lat, frm, **kw):
         n = _bare(name); k = _norm(n)
@@ -178,7 +188,8 @@ def gazetteer(packs, regdir, slug):
         if spread > FAR_M: g['far_apart'] = True
         for k in ('slug', 'bare', 'said_by', 'approx'):
             if e.get(k): g[k] = e[k]
-        if the_dam and n == the_dam: g['the_dam'] = True
+        if the_dam and n == the_dam:
+            g.update(the_dam=True, own_words=core(row), lake_words=words_by_lake)
         out.append(g)
     return out
 
@@ -195,11 +206,28 @@ class Matcher:
         for _, core, g in full + bare:
             self.by.setdefault(g['as_written'].lower(), g)
         self.dam = next((g for g in gaz if g.get('the_dam')), None)
+        own = '|'.join(re.escape(w) for w in (self.dam or {}).get('own_words', []))
+        self.own = re.compile(r'\b(?:%s)\b' % own, re.I) if own else None
+        self.own_dam = re.compile(r'\b(?:%s)\s+dam\b' % own, re.I) if own else None
         full.sort(key=lambda x: -x[0])
         self.full = re.compile(r"(?<![A-Za-z])(?:" + '|'.join(c for _, c, _ in full) + r")(?![A-Za-z])") if full else None
         self.bare = [(re.compile(r"(?<![A-Za-z])" + c + r"(?![A-Za-z])"), g) for _, c, g in bare]
 
-    def places(self, text, one_water=False):
+    def words_of(self, waters):
+        """The other lakes' own words, for the waters a report is about."""
+        by = (self.dam or {}).get('lake_words', {})
+        return sorted({w for k in waters or [] for w in by.get(k, [])})
+
+    def _the_dam(self, t, one_water, others):
+        if not self.dam: return False
+        if self.own_dam and self.own_dam.search(t): return True
+        if not THE_DAM.search(t): return False
+        if one_water: return True
+        other = re.compile(r'\b(?:%s)\b' % '|'.join(re.escape(w) for w in others), re.I) if others else None
+        return any(THE_DAM.search(x) and self.own and self.own.search(x) and not (other and other.search(x))
+                   for x in SENTENCE.split(t))
+
+    def places(self, text, one_water=False, others=()):
         t = re.sub(r"[’'`]", '', ATTRIB.sub(' ', text))
         hit = []
         if self.full:
@@ -208,7 +236,7 @@ class Matcher:
                 key = re.sub(r'\s+', ' ', m.group(0)).lower()
                 g = self.by.get(key) or self.by.get(re.sub(r's$', '', key))
                 if g: hit.append(g)
-        if one_water and self.dam and THE_DAM.search(t):
+        if self._the_dam(t, one_water, others):
             hit.append(self.dam)
         for rx, g in self.bare:
             # "the Saluda" is the river; "Saluda Shoals" and "Lake Saluda" are not
