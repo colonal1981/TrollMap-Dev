@@ -17,7 +17,7 @@ import { matchRampIndex, normRampName } from '../utils/ramp-match.js';
 import { getLoadedAccessIndex, registryRecordFor } from '../data/access-index.js';
 import { getSeason, seasonNote, calendarSeason } from '../data/species-intel.js';
 import { lakeSurfaceTemp, poolOffsetFt } from '../utils/water-conditions.js';
-import { askGuideReports, reportWaterForLanes } from './guide-reports.js';
+import { askGuideReports, reportWaterForLanes, savedGuide } from './guide-reports.js';
 import { wirePasteBox } from './pasted-reports.js';
 import { depthBandFor, usableAhFrom, researchIntel, structureWeights, oxygenFloorFt,
          describeDepthBand, fishDepthEvidence, conditionsFrom, fetchRegistrySpecies,
@@ -536,7 +536,8 @@ export async function runSmartPlanV2(opts = {}) {
     if (ls.decision && r.plan) r.plan.decisions = [...(r.plan.decisions || []), ls.decision];
   }
   // What the plan read from the guides goes with the plan, so the trip report shows the same thing.
-  if (guide && r.plan) r.plan.guideReports = guide;
+  // Of the years of reports, only the block it was given (savedGuide), not some hundreds of them.
+  if (guide && r.plan) r.plan.guideReports = savedGuide(guide, species, inp.dateStr);
   // And the limits that were read and are not in the way go where the app's other settled things
   // go -- see plan-assemble.js. They are still on the plan and still rendered; they are not one
   // of the things it wants to tell him before he launches.

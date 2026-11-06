@@ -1,5 +1,5 @@
 // worker-research.js — public API barrel (impl in Worker/research/*)
-export { handleResearchList, handleResearchGet, handleResearchSave, handleResearchSaveReports, handleResearchDelete, handleEnhancedLakeIntel } from './research/storage.js';
+export { handleResearchList, handleResearchGet, handleResearchSave, handleResearchSaveReports, handleResearchReports, handleResearchDelete, handleEnhancedLakeIntel } from './research/storage.js';
 export { handleResearchLimnologyData, refreshStaleLimnology } from './research/limnology.js';
 export { handleResearchDiscover } from './research/discover.js';
 export { handleResearchProxyDownload, handleResearchProxyDownloadBatch } from './research/download.js';

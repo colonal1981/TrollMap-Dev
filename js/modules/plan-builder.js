@@ -1771,6 +1771,21 @@ ${src}`;
               : 'What the plan read, verbatim. Nothing here has been summarised.'}</p>`
           + cards + (failed ? `<div class="rp-callout rp-warn" style="margin-top:8px"><span class="rp-small">Could not be read: <br>${failed}</span></div>` : '');
       }
+      // AND THE YEARS OF REPORTS FOR THIS TIME OF YEAR (11/6), the block exactly as the plan read it:
+      // a saved plan keeps it whole (savedGuide in guide-reports.js); an older plan's fresh ask
+      // writes it for the plan's day and fish. Printed whole, folded, because it is long.
+      if (g && g.thisWeek && !g.thisWeek.none) {
+        const { thisWeekBlock } = await import('./reports-this-week.js');
+        const block = thisWeekBlock(g.thisWeek, p.meta.species || [], p.meta.date).trim();
+        if (block) {
+          const tw = g.thisWeek;
+          reportsHtml += `<h2>📚 Years of Reports for This Time of Year</h2>`
+            + `<p class="rp-small">${tw.error ? `Could not be read: ${esc(tw.error)}. This is not the same as "no reports".`
+                : `${tw.near || 0} reports on this water from within ${tw.days || 21} days of this date in other years. What the plan read, as it read it.`}</p>`
+            + (tw.error ? '' : `<details><summary class="rp-small">Read it</summary>`
+              + `<div class="rp-small" style="white-space:pre-wrap">${esc(block)}</div></details>`);
+        }
+      }
     } catch (err) {
       console.warn('[plan-builder] guide reports unavailable:', err);
     }

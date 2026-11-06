@@ -171,6 +171,32 @@ describe('worker auth — every mutating route is gated', () => {
   });
 });
 
+describe('worker auth — a gated read is gated', () => {
+  // Ryan's reports file (11/6): his collection, read by the planner only. The public chart-pack
+  // route was closed to it on 11/5; this is the one door, and it asks for the token like the save.
+  const READS = ['/research/reports'];
+
+  it('allowMutation() counts GATED_READS', () => {
+    const fn = worker.slice(worker.indexOf('async function allowMutation'),
+                            worker.indexOf('async function allowMutation') + 400);
+    expect(/GATED_READS\.includes\(path\)/.test(fn)).toBe(true);
+  });
+
+  for (const r of READS) {
+    it(`${r} is in GATED_READS`, () => {
+      const list = worker.slice(worker.indexOf('const GATED_READS'), worker.indexOf('const GATED_READS') + 300);
+      expect(list.includes(`"${r}"`)).toBe(true);
+    });
+  }
+
+  it('the planner sends the token on the reports read', () => {
+    const lines = source(join(ROOT, 'js/modules/reports-this-week.js')).split('\n');
+    const at = lines.findIndex((l) => l.includes('/research/reports?water='));
+    expect(at).toBeGreaterThan(-1);
+    expect(/workerAuthOnly\(\)/.test(lines.slice(at, at + 3).join('\n'))).toBe(true);
+  });
+});
+
 describe('worker auth — the client signs what the Worker checks', () => {
   it('every client POST to a gated route sends the token', () => {
     const files = walk(join(ROOT, 'js'));

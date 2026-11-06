@@ -412,6 +412,41 @@ async function handleResearchSaveReports(request, env) {
     bytes: stored && Number.isFinite(stored.size) ? stored.size : null }), { headers: JSON_HEADERS });
 }
 
+// ── A WATER'S FISHING REPORTS, READ BY THE PLANNER ─────────────────────────────────────────────
+//
+// Ryan, 11/6: "I am a fisherman... i am not a striper fisherman... I troll", and "if the app can tell
+// me that i should be throwing a certain type of topwater bait in a certain area at a certain time i
+// will do that". The browser reads the water's whole reports file and picks this time of year itself
+// (js/modules/reports-this-week.js). Gated like the save: the file is his collection, and the public
+// chart-pack route was closed to it on 11/5 (18b05b1e).
+//
+// The water is the registry slug the planner already holds. The file sits beside the water's
+// research profile, found the way the save found it (the slug's own ids, then the registry's names
+// for it: the same reads as /research/get, no listing of the bucket), and its customMetadata.water
+// must be this slug, set by the save, or it is some other water's. NOT PARSED HERE: the stored gzip
+// bytes go out as they are, marked gzip, and the browser unzips them. encodeBody 'manual' keeps
+// Cloudflare from zipping them again.
+async function handleResearchReports(request, env) {
+  const url = new URL(request.url);
+  const water = String(url.searchParams.get('water') || '').trim();
+  const refuse = (status, error) => new Response(JSON.stringify({ ok:false, error }), { status, headers:JSON_HEADERS });
+  if (!/^[a-z0-9_]{1,80}$/.test(water)) return refuse(400, `water must be a registry slug, got ${JSON.stringify(water)}`);
+  const probe = (id) => env.R2_TROLLMAP_CHARTPACKS.head(`lakes/${id}.json`).catch(() => null);
+  const found = await resolveResearchStorageId(water, probe)
+    || await resolveResearchStorageId(water, probe, await registryIdentityNames(env, water));
+  if (!found) return refuse(404, `no reports kept for ${water}: no research profile found for it`);
+  const key = `lake_packages/${found.id}/reports.json`;
+  const obj = await env.R2_TROLLMAP_CHARTPACKS.get(key);
+  if (!obj) return refuse(404, `no reports kept for ${water}`);
+  const kept = obj.customMetadata && obj.customMetadata.water;
+  if (kept !== water) return refuse(409, `${key} holds the reports of ${JSON.stringify(kept || null)}, not ${water}`);
+  return new Response(obj.body, {
+    encodeBody: 'manual',
+    headers: { ...CORS, 'Content-Type': 'application/json', 'Content-Encoding': 'gzip',
+               'Cache-Control': 'private, max-age=3600', 'X-Reports-Key': key },
+  });
+}
+
 async function handleResearchDelete(request, env) {
   let body;
   try { body = await request.json(); } catch { body = {}; }
@@ -666,4 +701,4 @@ If no thermocline or depth information is found, return found: false and null fo
 // Tiling and ESRI image fetching happens client-side (no worker timeout issues).
 // Worker receives one base64 image + bounds, runs Gemini, returns structures.
 
-export { handleResearchList, handleResearchGet, handleResearchSave, handleResearchSaveReports, handleResearchDelete, handleEnhancedLakeIntel, handleResearchThermoclineSearch };
+export { handleResearchList, handleResearchGet, handleResearchSave, handleResearchSaveReports, handleResearchReports, handleResearchDelete, handleEnhancedLakeIntel, handleResearchThermoclineSearch };

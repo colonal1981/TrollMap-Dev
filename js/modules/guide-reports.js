@@ -17,10 +17,16 @@
  * Gathering is the Worker's (Worker/guide-reports.js); reading the water out of a report is
  * utils/report-water.js. A report Ryan read himself and pasted in joins them here, on every
  * planner, through askGuideReports() -- see pasted-reports.js.
+ *
+ * AND YEARS OF REPORTS FOR THIS TIME OF YEAR (11/6): askGuideReports() also reads the water's kept
+ * reports file and picks the weeks around the plan's day (`thisWeek`, reports-this-week.js), and
+ * guideReportsBlock() prints them after this month's. A saved plan keeps only the block it read
+ * (savedGuide()), not the statements.
  */
 
 import { supersede, reportWaterForPlan, SANTEE_LAKES, placeNamesIn, namesOnlyOn } from '../utils/report-water.js';
 import { loadPasted, pastedForWater, pastedAsReports } from './pasted-reports.js';
+import { askThisWeek, thisWeekBlock, forSaving } from './reports-this-week.js';
 
 /**
  * The names on only one of the two Santee Cooper charts, for santeeLakesIn() in report-water.js.
@@ -64,13 +70,20 @@ export async function askGuideReports({ worker, slug, date, fetchImpl, timeoutMs
   if (!worker || !slug) return { error: 'no Worker or no water to ask about' };
   const pastedAsk = Array.isArray(pasted) ? Promise.resolve(pasted) : loadPasted();
   const mine = async (sourceReports) => pastedAsReports(pastedForWater(await pastedAsk, slug), date, sourceReports);
+  const f = fetchImpl || (typeof fetch === 'function' ? fetch : null);
+  // Years of reports for this time of year, read alongside and never in the way: askThisWeek()
+  // answers {error} rather than throwing, and null when there is no date to pick weeks around.
+  const weekAsk = f ? askThisWeek({ worker, slug, date, fetchImpl: f }) : Promise.resolve(null);
+  const withWeek = async (out) => {
+    const tw = await weekAsk;
+    return tw ? { ...out, thisWeek: tw } : out;
+  };
   // The water asked about rides on every answer: lakeOf() reads it to tell Marion's water from
   // Moultrie's, and a paste can reach the plan on an answer the Worker never gave.
   const withMine = async (out) => {
     const m = await mine([]);
-    return m.length ? { slug, ...out, reports: supersede(m) } : { slug, ...out };
+    return withWeek(m.length ? { slug, ...out, reports: supersede(m) } : { slug, ...out });
   };
-  const f = fetchImpl || (typeof fetch === 'function' ? fetch : null);
   if (!f) return withMine({ error: 'no fetch' });
   const ctl = typeof AbortController === 'function' ? new AbortController() : null;
   const t = ctl ? setTimeout(() => ctl.abort(), timeoutMs) : null;
@@ -85,7 +98,7 @@ export async function askGuideReports({ worker, slug, date, fetchImpl, timeoutMs
     if (!r || !r.ok) return withMine({ error: `the Worker answered HTTP ${r ? r.status : '?'}`, ...places });
     const body = await r.json();
     const theirs = body.reports || [];
-    return { slug, ...body, reports: supersede([...theirs, ...await mine(theirs)]), ...places };
+    return withWeek({ slug, ...body, reports: supersede([...theirs, ...await mine(theirs)]), ...places });
   } catch (e) {
     return withMine({ error: e && e.name === 'AbortError' ? `no answer in ${Math.round(timeoutMs / 1000)} s`
       : String((e && e.message) || e), ...(placesAsk ? { places: await placesAsk } : {}) });
@@ -131,6 +144,19 @@ function whenOf(r) {
  */
 export function guideReportsBlock(guide, species, planDate) {
   if (guide == null) return '';
+  return monthBlock(guide, species, planDate) + thisWeekBlock(guide.thisWeek, species, planDate);
+}
+
+/**
+ * What a saved plan keeps of what it read: the guides' reports as they were, and of the years of
+ * reports only the block the plan was given (forSaving in reports-this-week.js).
+ */
+export function savedGuide(guide, species, planDate) {
+  if (!guide || !guide.thisWeek) return guide;
+  return { ...guide, thisWeek: forSaving(guide.thisWeek, species, planDate) };
+}
+
+function monthBlock(guide, species, planDate) {
   const head = '\nWHAT THE GUIDES ON THIS WATER REPORTED\n';
   const cannot = guide.error ? `They could not be read today (${guide.error}). Say so in \`scoutNotes\`; do not write as though nobody reported.` : null;
   const any = (guide.reports || []).length > 0;

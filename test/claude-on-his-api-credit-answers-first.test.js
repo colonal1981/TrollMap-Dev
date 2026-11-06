@@ -271,6 +271,7 @@ test('5. the two routes that spend are behind the gate', () => {
   const w = src('Worker/trollmap-worker.js');
   const list = /const SPENDING_ROUTES = \[([\s\S]*?)\];/.exec(w)[1];
   assert.deepEqual([...list.matchAll(/"([^"]+)"/g)].map((m) => m[1]), ['/claude/ask', '/claude/look']);
-  assert.ok(w.includes('let mutating = MUTATING_ROUTES.includes(path) || SPENDING_ROUTES.includes(path);'));
+  // The gate's one line also counts GATED_READS since 11/6 (/research/reports, his reports file).
+  assert.match(w, /let mutating = MUTATING_ROUTES\.includes\(path\) \|\| SPENDING_ROUTES\.includes\(path\)[^;\n]*;/);
   for (const r of ['/claude/health', '/claude/ask', '/claude/look']) assert.ok(w.includes(`path === "${r}"`), r);
 });

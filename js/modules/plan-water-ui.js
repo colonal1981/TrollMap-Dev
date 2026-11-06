@@ -51,7 +51,7 @@ import { landingsFor } from '../data/launch-reach.js';
 import { rampWater, poolsFor, sameWaterLandings, cutOffPool, poolOnlyState, cutOffNote } from '../data/lake-pools.js';
 import { closerLanding, closerLandingNote } from './closer-landing.js';
 import { askLaunchStatus, launchStatusNote } from './launch-status.js';
-import { askGuideReports } from './guide-reports.js';
+import { askGuideReports, savedGuide } from './guide-reports.js';
 import { shoreRays, roughLegs } from '../utils/wind-waves.js';
 import { inshoreSeasonFor } from '../data/inshore-season.js';
 import { seabedHabitatFor } from '../data/seabed-habitat.js';
@@ -1929,8 +1929,9 @@ export async function buildFromPicked() {
   if (ls.warning) r.problems = [...(r.problems || []), ls.warning];
   if (ls.decision && r.plan) r.plan.decisions = [...(r.plan.decisions || []), ls.decision];
   // What the plan read from the guides goes with the plan, so the trip report shows the same thing.
+  // Of the years of reports, only the block it was given (savedGuide), not some hundreds of them.
   const guide = await guideAsk;
-  if (guide && r.plan) r.plan.guideReports = guide;
+  if (guide && r.plan) r.plan.guideReports = savedGuide(guide, [T.species], T.dateStr);
   // THE WIND ACROSS THE WATER HE PICKED (change request 22). Each troll leg is stamped with its
   // roughest hour, and one that reaches his own 1 ft says so -- see wind-waves.js. He chose this
   // water himself, so it is said, never re-ordered. No boundary, no measurement, nothing said.
