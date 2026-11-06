@@ -36,6 +36,10 @@ const TOGGLES = [
   // The wood he has gone over (wood-layer.js), 2026-11-03. Off by default -- "i just don't want to
   // clutter up the screen".
   'btnWood',
+  // The places the fishing reports name for this time of year (report-spots-layer.js), 2026-11-06:
+  // "if the app can tell me that i should be throwing a certain type of topwater bait in a certain
+  // area at a certain time i will do that". Off by default, like the wood.
+  'btnReportSpots',
   // TWO BUTTONS WERE ADDED HERE ON 2026-09-15 AND BOTH CAME BACK OUT THE SAME DAY, which is the
   // reverse of the deletion this list was written for and worth keeping written down.
   //

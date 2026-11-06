@@ -28,6 +28,8 @@ import { gzipSync } from 'node:zlib';
 import { handleResearchReports } from '../Worker/research/storage.js';
 import { inWindow, pickThisWeek, reportFish, thisWeekBlock, forSaving, askThisWeek } from '../js/modules/reports-this-week.js';
 import { askGuideReports, guideReportsBlock, savedGuide } from '../js/modules/guide-reports.js';
+import { placesThisWeek, srcName } from '../js/modules/reports-this-week.js';
+import { spotHtml, pinRadiusPx } from '../js/modules/report-spots-layer.js';
 
 // ── the Worker's door ────────────────────────────────────────────────────────────────────────────
 
@@ -178,6 +180,14 @@ test('the block says what it cannot say', () => {
   assert.equal(thisWeekBlock(null, [], '2026-11-14'), '');
 });
 
+test('his own pastes are counted with the rest, and said to be his', () => {
+  const mine = [...STATEMENTS, st({ date: '2025-11-08', source: 'PASTED', who: ['Lakemurraystriper'], text: 'Stripers schooling at Buffalo Creek on top.',
+    sentences: [{ said: 'x', fish: ['top'], lures: [], his_way: [], time: [], ft: [] }] })];
+  const b = thisWeekBlock(pickThisWeek(mine, '2026-11-14'), ['Striped Bass'], '2026-11-14');
+  assert.match(b, /Stripers: 3 reports \([^)]*Pasted by Ryan 1/);
+  assert.match(b, /- 2025-11-08 Pasted by Ryan \(Lakemurraystriper\): "Stripers schooling/);
+});
+
 test('a saved plan keeps the block it read, not the statements', () => {
   const tw = pickThisWeek(STATEMENTS, '2026-11-14');
   const saved = forSaving(tw, ['Striped Bass'], '2026-11-14');
@@ -257,4 +267,50 @@ test('both planners save the guide through savedGuide', () => {
     const src = readFileSync(new URL(`../js/modules/${f}`, import.meta.url), 'utf8');
     assert.match(src, /r\.plan\.guideReports = savedGuide\(guide, /, f);
   }
+});
+
+// ── the map: the places the reports name for this time of year ──────────────────────────────────
+
+test('the places for this time of year: one a place, every fish there, most-named first', () => {
+  const more = [...STATEMENTS,
+    st({ date: '2023-11-10', species: ['crappie'], text: 'Crappie trolled on jigs off Blacks Bridge in 18 feet.',
+      lures: ['jig'], sentences: [{ said: 'x', fish: ['suspended'], lures: ['jig'], his_way: ['jig'], time: [], ft: [] }],
+      places: [{ name: 'Blacks Bridge', lon: -81.5691, lat: 34.0982 }] }),
+    st({ date: '2022-11-03', text: 'Stripers busting at Shull Island at first light.', places: [{ name: 'Shull Island', lon: -81.3565, lat: 34.0539 }],
+      sentences: [{ said: 'x', fish: ['top'], lures: [], his_way: [], time: ['first light'], ft: [] }], time_of_day: ['first light'] }),
+  ];
+  const pl = placesThisWeek(pickThisWeek(more, '2026-11-14'));
+  assert.deepEqual(pl.map((p) => [p.name, p.n]), [['Blacks Bridge', 2], ['Shull Island', 1]]);
+  const bb = pl[0];
+  assert.deepEqual(bb.fish.map((f) => [f.name, f.n]), [['Stripers', 1], ['Crappie', 1]]);
+  assert.deepEqual(bb.fish[1].lures, [{ lure: 'jig', n: 1, trolled: 1 }], 'he trolls jigs for crappie');
+  assert.equal(bb.years, '2023-2024');
+  assert.equal(pl[1].fish[0].times[0][0], 'first light');
+  assert.deepEqual(placesThisWeek(null), []);
+});
+
+test('a pin\'s popup says what the reports say there, in their words, and is safe', () => {
+  const p = { name: 'Blacks <Bridge>', lat: 34.1, lon: -81.5, far: true, approx: false, n: 2, years: '2023-2024',
+    fish: [{ name: 'Stripers', n: 1, position: [['top', 1]], lures: [{ lure: 'bucktail', n: 1, trolled: 1 }], times: [['first light', 1]],
+      fishDepth: null, waterDepth: { n: 1, mid: 25, lo: 25, hi: 25 }, baitOnly: 0 }],
+    quotes: [{ d: '2024-11-20', src: srcName('PASTED'), who: ['Brad Taylor'], t: 'Stripers on top at first light.' }] };
+  const h = spotHtml(p, { planDate: '2026-11-14', days: 21 });
+  assert.match(h, /Blacks &lt;Bridge&gt;/);
+  assert.match(h, /2 reports within 21 days of 2026-11-14, 2023-2024/);
+  assert.match(h, /more than one spot/);
+  assert.match(h, /Stripers 1<\/b>: sat top 1; bucktail 1 \(trolled 1\); first light 1; over 25 ft/);
+  assert.match(h, /2024-11-20 Pasted by Ryan \(Brad Taylor\): “Stripers on top at first light.”/);
+  assert.equal(pinRadiusPx(1, 1), 13);
+  assert.equal(pinRadiusPx(0, 10), 5);
+  assert.ok(pinRadiusPx(1, 16) < pinRadiusPx(16, 16));
+});
+
+test('the button is on the map\'s layer panel and the module is loaded', () => {
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  assert.match(html, /<button id="btnReportSpots"[^>]*>📍 Report spots<\/button>/);
+  const main = readFileSync(new URL('../js/main.js', import.meta.url), 'utf8');
+  assert.match(main, /import '\.\/modules\/report-spots-layer\.js';/);
+  const mod = readFileSync(new URL('../js/modules/report-spots-layer.js', import.meta.url), 'utf8');
+  assert.match(mod, /askThisWeek\(\{ worker: CF_WORKER_URL, slug, date \}\)/, 'the same read as the plan');
+  assert.match(mod, /pick a lake/, 'greyed and said, never silent, with no water picked');
 });

@@ -66,7 +66,8 @@ export function trim(s) {
     way: [...new Set(sent.flatMap((x) => x.his_way || []))],
     pos: [...new Set(sent.flatMap((x) => x.fish || []))],
     dep: (s.depths || []).map((x) => ({ ft: x.ft, k: x.kind })),
-    pl: (s.places || []).map((p) => ({ n: p.name, lon: p.lon, lat: p.lat, ...(p.far_apart ? { far: true } : {}) })),
+    pl: (s.places || []).map((p) => ({ n: p.name, lon: p.lon, lat: p.lat, ...(p.far_apart ? { far: true } : {}),
+                                       ...(p.approx ? { approx: true } : {}) })),
     ar: s.area || [], kw: s.kinds_of_water || [], f: s.water_temp_f_said ?? null,
   };
 }
@@ -164,15 +165,47 @@ export function summarize(tw, fishSet) {
   };
 }
 
+/** A source as the plan and the map print it; his own pastes say so (report_pasted.py, 11/6). */
+export const srcName = (src) => (src === 'PASTED' ? 'Pasted by Ryan' : src);
+
 const NAMES = { 'striped bass': 'Stripers', 'hybrid striped bass': 'Hybrids', 'black bass': 'Bass', 'largemouth bass': 'Largemouth',
   'spotted bass': 'Spotted bass', 'smallmouth bass': 'Smallmouth', crappie: 'Crappie', catfish: 'Catfish', bream: 'Bream',
   shellcracker: 'Shellcracker', 'white perch': 'White perch', 'yellow perch': 'Yellow perch', trout: 'Trout', 'white bass': 'White bass' };
+
+/**
+ * THE PLACES THE REPORTS NAME FOR THIS TIME OF YEAR, for the map (report-spots-layer.js): one per named place, with how
+ * many reports name it and, fish by fish, where they sat, the lures (and which are trolled), the time of day, the depths
+ * and the guides' own words. Every fish: he takes whatever bites (11/6). Most-named first. Pure.
+ */
+export function placesThisWeek(tw) {
+  const by = new Map();
+  for (const s of (tw && tw.statements) || []) {
+    for (const p of s.pl) {
+      if (!Number.isFinite(p.lat) || !Number.isFinite(p.lon)) continue;
+      const e = by.get(p.n) || { name: p.n, lat: p.lat, lon: p.lon, far: !!p.far, approx: !!p.approx, st: [] };
+      if (!e.st.includes(s)) e.st.push(s);
+      by.set(p.n, e);
+    }
+  }
+  return [...by.values()].map((e) => {
+    const fish = count(e.st.flatMap((s) => s.sp)).map(([f, n]) => {
+      const S = summarize({ statements: e.st }, new Set([f]));
+      return { fish: f, name: NAMES[f] || f, n, position: S.position, lures: S.lures.map((l) => ({ lure: l.lure, n: l.n, trolled: l.trolled })),
+               times: S.times, fishDepth: S.fishDepth, waterDepth: S.waterDepth, baitOnly: S.baitOnly };
+    });
+    const years = [...new Set(e.st.map((s) => String(s.d).slice(0, 4)))].sort();
+    const quotes = summarize({ statements: e.st }, null).quotes.slice(0, 3)
+      .map((q) => ({ d: q.d, src: srcName(q.src), who: q.who, t: q.t }));
+    return { name: e.name, lat: e.lat, lon: e.lon, far: e.far, approx: e.approx, n: e.st.length,
+             years: years.length ? `${years[0]}-${years[years.length - 1]}` : '', fish, quotes };
+  }).sort((a, b) => b.n - a.n || a.name.localeCompare(b.name));
+}
 
 /** One fish's lines. `full` adds the reports' own words; a fish he did not pick gets the facts only. */
 function fishLines(tw, f, full, quotes = 6) {
   const S = summarize(tw, new Set([f]));
   if (!S.n) return [];
-  const L = ['', `${NAMES[f] || f}: ${S.n} reports (${list(S.sources, 6)}).`];
+  const L = ['', `${NAMES[f] || f}: ${S.n} reports (${list(S.sources.map(([k, n]) => [srcName(k), n]), 6)}).`];
   if (S.position.length) L.push(`  Where they sat: ${list(S.position)}.`);
   if (S.fishDepth) L.push(`  Fish depth stated: ${bandText(S.fishDepth)}.`);
   if (S.waterDepth) L.push(`  Water depth they fished over: ${bandText(S.waterDepth)}.`);
@@ -189,7 +222,7 @@ function fishLines(tw, f, full, quotes = 6) {
   if (S.times.length) L.push(`  Time of day named: ${list(S.times)}.`);
   if (S.baitOnly) L.push(`  ${S.baitOnly} of these fished bait only: read them for where and how deep.`);
   if (S.temps.length) L.push(`  Water temperature the reports gave: ${Math.min(...S.temps)}-${Math.max(...S.temps)} F.`);
-  if (full) for (const q of S.quotes.slice(0, quotes)) L.push(`  - ${q.d} ${q.src}${q.who.length ? ` (${q.who.join(', ')})` : ''}: "${q.t}"`);
+  if (full) for (const q of S.quotes.slice(0, quotes)) L.push(`  - ${q.d} ${srcName(q.src)}${q.who.length ? ` (${q.who.join(', ')})` : ''}: "${q.t}"`);
   return L;
 }
 
