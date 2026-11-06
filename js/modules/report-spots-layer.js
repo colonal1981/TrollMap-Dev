@@ -41,8 +41,7 @@ const band = (b, what) => (b ? `${what} ${b.n === 1 ? `${b.mid} ft` : b.lo === b
 export function spotHtml(p, { planDate, days = WINDOW_DAYS, since = SINCE_YEAR } = {}) {
   const head = `<b style="color:${COLOR}">📍 ${esc(p.name)}</b><br>`
     + `${p.n} report${p.n === 1 ? '' : 's'} within ${days} days of ${esc(planDate || 'today')}, ${esc(p.years || `${since} on`)}`
-    + (p.far ? '<br><span style="color:#aaa">The chart prints this name in more than one spot; the pin is one of them.</span>' : '')
-    + (p.approx ? '<br><span style="color:#aaa">A river: the pin is where it meets the lake.</span>' : '');
+    + (p.far ? '<br><span style="color:#aaa">The chart prints this name in more than one spot; the pin is one of them.</span>' : '');
   const fish = p.fish.map((f) => {
     const bits = [
       f.position.length ? `sat ${pairs(f.position, 3)}` : '',
@@ -57,6 +56,9 @@ export function spotHtml(p, { planDate, days = WINDOW_DAYS, since = SINCE_YEAR }
     + `${q.who && q.who.length ? ` (${esc(q.who.join(', '))})` : ''}: “${esc(q.t)}”</div>`).join('');
   return `<div style="max-width:300px;font-size:12px">${head}${fish}${quotes}</div>`;
 }
+
+/** The places with a spot on this water: not a river put at the edge of the lake's box. */
+export const onTheWater = (places) => (places || []).filter((p) => !p.approx);
 
 const today = () => {
   const d = new Date();
@@ -112,7 +114,9 @@ const today = () => {
         const tw = await askThisWeek({ worker: CF_WORKER_URL, slug, date });
         if (!tw || tw.error) { _none = 'Reports could not be read'; console.warn('[report spots]', tw && tw.error); return null; }
         if (tw.none) { _none = 'No reports kept here'; return null; }
-        const places = placesThisWeek(tw);
+        // A RIVER THE READER COULD ONLY PUT AT THE EDGE OF THE LAKE'S BOX (`approx`) IS NOT PINNED: on Moultrie that put
+        // "Cooper River 7" on the houses at Moncks Corner, below the dam (11/6). It is not a spot on this water.
+        const places = onTheWater(placesThisWeek(tw));
         if (!places.length) { _none = 'No spots named this time of year'; return null; }
         return build(places, date, tw);
       } finally {

@@ -1431,6 +1431,9 @@ export async function trollForMe(opts = {}) {
   // From the map with no turn yet, the report turns are laid (and drawn there as his turns); once he has taken them all
   // off (opts.noReportTurns), they are not laid again until the water or the ramp changes.
   const reportVia = T.reportTurns.map((t) => t.at);
+  // Whether the turns are the reports' (said as theirs), or his own clicks and ticks (said as his).
+  const viaFromReports = fromMap ? !(opts.via.length || opts.noReportTurns) || (opts.via.length > 0
+    && opts.via.every((v) => reportVia.some((r) => r[0] === v[0] && r[1] === v[1]))) : !ticked.length;
   const via = (fromMap ? (opts.via.length || opts.noReportTurns ? opts.via : reportVia) : ticked.length ? ticked : reportVia)
     .filter(Array.isArray).slice(0, 4);   // a day is at most four loops (trollLoop's maxPetals)
   // HIS CATCHES OF THIS FISH: each fish once (two photos of one fish are one catch), each with the
@@ -1525,7 +1528,7 @@ export async function trollForMe(opts = {}) {
   }
   const lineFrom = ln.from === 'reports' && ln.rangeFt
     ? `the middle of the ${ln.rangeFt[0]}–${ln.rangeFt[1]} ft of water the fishing reports put your ${sp} over around this date `
-      + `(${ln.n} depth${ln.n === 1 ? '' : 's'} stated)`
+      + `(${rep.waterN} depth${rep.waterN === 1 ? '' : 's'} stated)`
     : ln.from === 'catches'
     ? `the depth with the most of your ${ln.n} ${sp} catch${ln.n === 1 ? '' : 'es'} within reach of this ramp inside the `
       + `${steer} ft you steer either side of it: ${ln.inBand} of the ${ln.n}, caught over ${Math.round(ln.rangeFt[0])}–${Math.round(ln.rangeFt[1])} ft`
@@ -1580,7 +1583,7 @@ export async function trollForMe(opts = {}) {
       : `. It passes ${loop.score.fish} of your ${cu.used} ${sp} catch${cu.used === 1 ? '' : 'es'} within reach`
         + (passes > loop.score.fish ? `, ${passes} times over` : '')
         + ` and ${loop.score.structure} charted mark${loop.score.structure === 1 ? '' : 's'}`)
-    + (via.length && !(byReports && !ticked.length && !fromMap) ? `, and turns at the ${via.length === 1 ? 'water' : `${via.length} places`} you ${fromMap ? 'clicked' : 'ticked'}` : '')
+    + (via.length && !(byReports && viaFromReports) ? `, and turns at the ${via.length === 1 ? 'water' : `${via.length} places`} you ${fromMap ? 'clicked' : 'ticked'}` : '')
     + leftOut
     + (guide ? `. ${onGuide} of its ${pieces.length} legs cross the ${guide[0]}–${guide[1]} ft of water the research says the fish are over` : '')
     // THE DOCKS CLOSED THE CANAL AT THE APP'S 25 m GRID, so the way out was found on the depth bands
@@ -1623,7 +1626,11 @@ async function reportTurns() {
   const budgetM = (budgetMin * TROLL_MPH * 1609.344) / 60;
   const reachM = budgetM / 2;
   const r = turnsFromReports(tw, T.species, { ramp: T.ramp, reachM, budgetM });
-  if (!r.turns.length) T.reportSaid = `no fishing report names a place within a day's reach of ${T.rampName || 'this ramp'} around this date`;
+  if (!r.turns.length) {
+    T.reportSaid = r.mentioned
+      ? `the reports talk about ${T.species || 'this fish'} around this date, but none of them names a place for it that a day from ${T.rampName || 'this ramp'} can reach`
+      : `no fishing report names a place within a day's reach of ${T.rampName || 'this ramp'} around this date`;
+  }
   // AND WHICH RAMP: the landings on the same water, by the same reports (rampsByReports). Never throws the day away.
   T.rampAdvice = null;
   try {

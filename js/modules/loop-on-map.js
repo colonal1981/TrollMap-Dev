@@ -424,7 +424,8 @@ function setBar(o) {
         // Every catch it goes past, the ones an earlier loop passed too -- going round again is the point. A loop the
         // reports laid says the place it turns at instead: his catches chose none of it.
         + (loop.byReports
-          ? ` · turns at ${esc((S.turns[p.via] && S.turns[p.via].name) || (p.via != null ? `turn ${p.via + 1}` : 'the water nearest'))}`
+          ? (p.via != null ? ` · turns at ${esc((S.turns[p.via] && S.turns[p.via].name) || `turn ${p.via + 1}`)}`
+            : ' · no report place: the same depth, where the day had time left')
             + ` · ${plural(s.structure || 0, 'charted mark')}`
           : ` · past ${s.passes != null ? s.passes : (s.fish || 0)} of your ${esc(snap.species || '')} catches and ${plural(s.structure || 0, 'charted mark')}`)
         + '</div>';

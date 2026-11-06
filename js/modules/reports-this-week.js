@@ -234,7 +234,9 @@ export function turnsFromReports(tw, species, { ramp = null, reachM = Infinity, 
   const pick = (all) => {
     const ranked = places.map((p) => ({ p, fish: forFish(p, all) }))
       .map((x) => ({ ...x, n: x.fish.reduce((a, f) => a + f.n, 0) }))
-      .filter((x) => x.n > 0 && (!ramp || crowM(ramp, [x.p.lon, x.p.lat]) <= reachM))
+      // A RIVER PUT AT THE LAKE'S EDGE (`approx`) IS NOT A TURN: on Moultrie the Cooper River is the tailrace below
+      // Pinopolis Dam, other water, and its reports' fish are not the lake's (11/6, his Short Stay day).
+      .filter((x) => x.n > 0 && !x.p.approx && (!ramp || crowM(ramp, [x.p.lon, x.p.lat]) <= reachM))
       .sort((a, b) => b.n - a.n || b.p.n - a.p.n || a.p.name.localeCompare(b.p.name));
     const out = [];
     let used = 0;
@@ -248,13 +250,17 @@ export function turnsFromReports(tw, species, { ramp = null, reachM = Infinity, 
     }
     return out;
   };
-  // a fish he picked that no report names (Bowfin), or one with no place near: the places for any fish, said so
+  // ANY FISH only where the reports say nothing of his fish around this date at all (Bowfin, or a fish out of season).
+  // Where they talk about his fish and name no place for it near the ramp, no turn: his Short Stay striper day on 11/6
+  // was laid at bream and bass places, which is no day for stripers.
   const asked = [].concat(species || []).filter(Boolean).length > 0;
+  const mentioned = want.size > 0 && ((tw && tw.statements) || []).some((s) => s.sp.some((f) => want.has(f)));
   let anyFish = false;
   let chosen = want.size ? pick(false) : [];
-  if (!chosen.length) { chosen = pick(true); anyFish = chosen.length > 0 && asked; }
-  const fishSet = anyFish || !want.size ? null : want;
-  const S = summarize(tw, fishSet);
+  if (!chosen.length && !mentioned) { chosen = pick(true); anyFish = chosen.length > 0 && asked; }
+  // The depth is his fish's wherever the reports give one, whatever the turns are.
+  const own = mentioned ? summarize(tw, want) : null;
+  const S = own && own.waterDepth ? own : summarize(tw, anyFish || !want.size ? null : want);
   const turns = chosen.map(({ p, fish, n }) => {
     const said = fish.map((f) => {
       const bits = [f.position.length ? `${f.position.slice(0, 2).map(([w, k]) => `${w} ${k}`).join(', ')}` : '',
@@ -266,7 +272,7 @@ export function turnsFromReports(tw, species, { ramp = null, reachM = Infinity, 
              why: `${p.name}: ${n} report${n === 1 ? '' : 's'} within ${tw.days} days of this date (${p.years})`
                + `${said ? ` — ${said}` : ''}${p.far ? '. The chart prints this name in more than one spot' : ''}` };
   });
-  return { turns, anyFish, waterFt: S.waterDepth ? [S.waterDepth.lo, S.waterDepth.hi] : null,
+  return { turns, anyFish, mentioned, waterFt: S.waterDepth ? [S.waterDepth.lo, S.waterDepth.hi] : null,
            waterN: S.waterDepth ? S.waterDepth.n : 0, places: places.length };
 }
 

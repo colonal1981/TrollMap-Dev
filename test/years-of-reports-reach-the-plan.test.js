@@ -29,7 +29,7 @@ import { handleResearchReports } from '../Worker/research/storage.js';
 import { inWindow, pickThisWeek, reportFish, thisWeekBlock, forSaving, askThisWeek } from '../js/modules/reports-this-week.js';
 import { askGuideReports, guideReportsBlock, savedGuide } from '../js/modules/guide-reports.js';
 import { placesThisWeek, srcName, turnsFromReports, rampsByReports, crowM } from '../js/modules/reports-this-week.js';
-import { spotHtml, pinRadiusPx } from '../js/modules/report-spots-layer.js';
+import { spotHtml, pinRadiusPx, onTheWater } from '../js/modules/report-spots-layer.js';
 
 // ── the Worker's door ────────────────────────────────────────────────────────────────────────────
 
@@ -338,6 +338,45 @@ test('the reports choose where the loops turn: most-named for his fish, within r
   assert.equal(bowfin.anyFish, true, 'no report names one: the places for any fish, said so');
   assert.deepEqual(bowfin.turns.map((t) => t.name), ['A', 'B']);
   assert.deepEqual(turnsFromReports(tw, ['Striped Bass'], { ramp: [-80, 33], reachM: 5000 }).turns, []);
+});
+
+// His Short Stay day on Moultrie, 11/6: the reports talk about stripers around the date but put none of them on a place
+// near the ramp; the places they do name are the Cooper River (the reader put it at the edge of the lake's box, on the
+// houses at Moncks Corner) and B, for crappie. The day was laid at those, for "any fish", turn 1 on land.
+const COOPER = { name: 'Cooper River', lon: -81.395, lat: 34.105, approx: 'the edge of the water toward it' };
+const SHORT_STAY = [
+  ...Array.from({ length: 8 }, (_, i) => st({ date: `${2013 + i}-11-0${(i % 8) + 1}`, species: ['crappie'], text: `Tailrace ${i}.`,
+    places: [COOPER], depths: [{ ft: [10], kind: 'water' }] })),
+  ...at('B', 2, ['crappie']),
+  ...Array.from({ length: 3 }, (_, i) => st({ date: `${2015 + i}-11-12`, text: `Stripers stacked up ${i}.`,
+    depths: [{ ft: [30, 40], kind: 'water' }] })),
+];
+
+test('a river put at the edge of the lake is no turn and no pin, and his fish is never swapped for another', () => {
+  const tw = pickThisWeek(SHORT_STAY, '2026-11-06');
+  const pl = placesThisWeek(tw);
+  assert.deepEqual(pl.map((p) => [p.name, p.n, p.approx]), [['Cooper River', 8, true], ['B', 2, false]]);
+  assert.deepEqual(onTheWater(pl).map((p) => p.name), ['B'], 'not pinned on the land at Moncks Corner');
+  const striper = turnsFromReports(tw, ['Striped Bass'], { ramp: [-81.39, 34.11], reachM: 5000 });
+  assert.deepEqual(striper.turns, [], 'the reports talk about stripers and name no place for them: no crappie places');
+  assert.equal(striper.mentioned, true);
+  assert.equal(striper.anyFish, false);
+  assert.deepEqual([striper.waterFt, striper.waterN], [[35, 35], 3], 'the depth is the stripers\' and says how many');
+  const bowfin = turnsFromReports(tw, ['Bowfin'], { ramp: [-81.39, 34.11], reachM: 5000 });
+  assert.equal(bowfin.anyFish, true, 'nothing about bowfin at all: the places for any fish, said so');
+  assert.deepEqual(bowfin.turns.map((t) => t.name), ['B'], 'and never the river at the edge');
+});
+
+test('the words say whose turns they are and how many depths the line came from', () => {
+  const ui = readFileSync(new URL('../js/modules/plan-water-ui.js', import.meta.url), 'utf8');
+  assert.match(ui, /via\.length && !\(byReports && viaFromReports\) \?/, 'the reports\' turns are not "the places you clicked"');
+  assert.match(ui, /\(\$\{rep\.waterN\} depth\$\{rep\.waterN === 1 \? '' : 's'\} stated\)/, 'never "undefined depths"');
+  assert.match(ui, /the reports talk about \$\{T\.species \|\| 'this fish'\} around this date, but none of them names a place for it/);
+  assert.doesNotMatch(ui, /rep\.n\} depth/);
+  const map = readFileSync(new URL('../js/modules/loop-on-map.js', import.meta.url), 'utf8');
+  assert.match(map, /no report place: the same depth, where the day had time left/);
+  const pins = readFileSync(new URL('../js/modules/report-spots-layer.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(pins, /where it meets the lake/, 'a pin at the box edge is not where a river meets the lake');
 });
 
 test('which ramp: every landing by the same reports, and a heads-up only when another is clearly better', () => {

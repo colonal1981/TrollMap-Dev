@@ -34,6 +34,24 @@ PLACE_WORD = re.compile(r"(Creek|Island|Islands|Point|Cove|Landing|Marina|Dam|Ri
 ATTRIB = re.compile(r"(?:Captain|Capt\.?)\s+[A-Z][\w.]*(?:\s+[A-Z][\w.]*)*|"
                     r"[A-Z][\w’'&.]*(?:\s+(?:[A-Z][\w’'&.]*|of|and|the))*\s*\(\s*\d{3}[-)\s]\s*\d{3}-\d{4}\s*\)")
 FAR_M = 6000            # labels of one name further apart than this: two places, said so
+# A ONE-WORD NAME ON THE CHART OR A LANDING IS A PLACE ("Bonneau", "Pinopolis", "Hatchery" on Moultrie), unless it is the
+# chart labelling a kind of thing. Before 11/6 every one-word name was left out, and so were those three, which the
+# Santee Cooper reports name again and again (his Short Stay day: no place for stripers around the date).
+KIND_WORDS = {'shoal', 'shoals', 'stump', 'stumps', 'pile', 'piles', 'piling', 'pilings', 'bridge', 'timber', 'house', 'rock',
+              'rocks', 'reef', 'hump', 'humps', 'tower', 'wreck', 'light', 'buoy', 'marker', 'island', 'point', 'cove', 'creek',
+              'channel', 'ledge', 'flat', 'flats', 'dam', 'spillway', 'intake', 'tree', 'trees', 'brush', 'obstruction', 'pier',
+              'dock', 'docks', 'marina', 'ramp', 'landing', 'camp', 'park', 'beach', 'canal', 'lake', 'river', 'grass', 'weeds',
+              'stumpfield', 'boathouse', 'ruins', 'foundation', 'cable', 'pipeline', 'restricted', 'danger', 'hazard', 'shallow',
+              'rockpile', 'riprap', 'jetty', 'breakwater', 'swim', 'church', 'cemetery', 'school', 'tank', 'water',
+              # found on the twelve charts, 11/6: a direction, a kind of thing, a misprint, and a county that is a surname
+              'north', 'south', 'east', 'west', 'upper', 'lower', 'store', 'helipad', 'obstn', 'boulder', 'boulders',
+              'abandoned', 'manor', 'brigde', 'waterfall', 'anderson'}
+# A GUIDE'S BASE IS NOT WHERE THE FISH WERE: "Guide Leroy Suggs out of Blacks Camp said...".
+BASE = re.compile(r"(?:\bout of|\bbased (?:at|in|out of)|\bowner of|\boperates?)\s+(?:the\s+)?$", re.I)
+# "THE DAM" ON A REPORT ABOUT ONE WATER IS THAT WATER'S DAM, where its chart names exactly one ("stacked up at the dam on
+# their way back out to the ocean", Moultrie, November: Pinopolis Dam). A report about Marion and Moultrie together does
+# not say which.
+THE_DAM = re.compile(r"\bthe\s+(?:main\s+)?dam\b", re.I)
 ALIASES = {             # his names for a place the chart names otherwise
     'Pinopolis Dam': (['Lake Moultrie Dam', 'Moultrie Dam'], 'Ryan, 2026-11-03: "lake moultrie dam = pinopolis dam"'),
 }
@@ -69,13 +87,18 @@ GENERIC = {'boat ramp', 'boat landing', 'public ramp', 'fishing pier', 'swim are
            'public access', 'boat launch'}   # a chart's label for a kind of thing, not a place
 
 
+def _load(path):
+    with open(path, encoding='utf-8') as fh:
+        return json.load(fh)
+
+
 def _norm(n):
     return re.sub(r'[^a-z0-9 ]', '', re.sub(r'\s+', ' ', (n or '').lower())).strip()
 
 
 def gazetteer(packs, regdir, slug):
     """Every name for this water, with where it is: [{'name', 'lon', 'lat', 'from', 'labels', 'spread_m', ...}]."""
-    idx = json.load(open(os.path.join(regdir, 'lake_index.json'), encoding='utf-8'))
+    idx = _load(os.path.join(regdir, 'lake_index.json'))
     row = idx.get(slug, {})
     own = {_norm(_bare(n)) for n in [row.get('name'), row.get('display_name')] + (row.get('legacy_display_names') or [])}
     own |= {re.sub(r' [a-z]{2}$', '', n) for n in own}
@@ -88,14 +111,16 @@ def gazetteer(packs, regdir, slug):
     def add(name, lon, lat, frm, **kw):
         n = _bare(name); k = _norm(n)
         if (not n or k in own or k in lakes or k in GENERIC or re.search(r'\b[A-Z]\.?$', n) or re.fullmatch(r'[\d"\'.\s-]+', n)
-                or len(n) < 4 or n.startswith('"') or (len(n.split()) < 2 and not kw.get('keep'))
+                or len(n) < 4 or n.startswith('"')
+                or (len(n.split()) < 2 and not kw.get('keep') and not (frm in ('chart', 'landing') and len(n) >= 5
+                                                                       and n[0].isupper() and k not in KIND_WORDS))
                 or (kw.get('bare') and (k in own_words or k in NO_BARE))):
             return
         e = raw.setdefault(n, {'pts': [], 'from': frm, **{k: v for k, v in kw.items() if k != 'keep'}})
         e['pts'].append((lon, lat))
     pack = os.path.join(packs, slug)
     try:
-        for f in json.load(open(os.path.join(pack, 'pois.geojson'), encoding='utf-8'))['features']:
+        for f in _load(os.path.join(pack, 'pois.geojson'))['features']:
             pr = f['properties']
             if pr.get('poi_type') == 'place_name' and f['geometry']['type'] == 'Point':
                 add(pr.get('name'), *f['geometry']['coordinates'][:2], 'chart')
@@ -105,7 +130,7 @@ def gazetteer(packs, regdir, slug):
     except FileNotFoundError:
         pass
     try:
-        for x in json.load(open(os.path.join(pack, 'launches.json'), encoding='utf-8')).get('landings', []):
+        for x in _load(os.path.join(pack, 'launches.json')).get('landings', []):
             if x.get('name'):
                 add(x['name'], x['lon'], x['lat'], 'landing')
                 for inner in re.findall(r'\(([^)]+)\)', x['name']):
@@ -131,7 +156,7 @@ def gazetteer(packs, regdir, slug):
                 add(n[:-len(' River')], cl[0], cl[1], 'registry water', slug=k, keep=True, bare=True, of=n,
                     **({'approx': 'the edge of the water toward it'} if approx else {}))
     try:
-        for x in json.load(open(os.path.join(regdir, 'gnis_historical.json'), encoding='utf-8'))['waters'].get(slug, []):
+        for x in _load(os.path.join(regdir, 'gnis_historical.json'))['waters'].get(slug, []):
             add(x['name'], x['lon'], x['lat'], 'gnis_historical')
     except (FileNotFoundError, KeyError):
         pass
@@ -139,6 +164,12 @@ def gazetteer(packs, regdir, slug):
         if name in raw:
             for a in aliases:
                 raw.setdefault(a, {'pts': raw[name]['pts'], 'from': raw[name]['from'], 'alias_of': name, 'said_by': said})
+    # the water's one dam, if its chart names exactly one, for "the dam" (Matcher.places, one_water)
+    # Not another lake's dam the chart prints at this one's head: Russell's chart has Hartwell Dam, and no Russell Dam.
+    lake_words = {w for n in lakes for w in n.split() if w not in ('lake', 'reservoir', 'pond', 'river', 'the', 'of')}
+    dams = {e.get('alias_of') or n for n, e in raw.items() if re.search(r'\bDam$', n) and not e.get('approx')
+            and not set(_norm(n[:-len('Dam')]).split()) & lake_words}
+    the_dam = next(iter(dams)) if len(dams) == 1 else None
     out = []
     for n, e in raw.items():
         (lon, lat), spread = _middle(e['pts'])
@@ -147,6 +178,7 @@ def gazetteer(packs, regdir, slug):
         if spread > FAR_M: g['far_apart'] = True
         for k in ('slug', 'bare', 'said_by', 'approx'):
             if e.get(k): g[k] = e[k]
+        if the_dam and n == the_dam: g['the_dam'] = True
         out.append(g)
     return out
 
@@ -162,18 +194,22 @@ class Matcher:
             (bare if g.get('bare') else full).append((len(g['as_written']), core, g))
         for _, core, g in full + bare:
             self.by.setdefault(g['as_written'].lower(), g)
+        self.dam = next((g for g in gaz if g.get('the_dam')), None)
         full.sort(key=lambda x: -x[0])
         self.full = re.compile(r"(?<![A-Za-z])(?:" + '|'.join(c for _, c, _ in full) + r")(?![A-Za-z])") if full else None
         self.bare = [(re.compile(r"(?<![A-Za-z])" + c + r"(?![A-Za-z])"), g) for _, c, g in bare]
 
-    def places(self, text):
+    def places(self, text, one_water=False):
         t = re.sub(r"[’'`]", '', ATTRIB.sub(' ', text))
         hit = []
         if self.full:
             for m in self.full.finditer(t):
+                if BASE.search(t[max(0, m.start() - 24):m.start()]): continue      # the guide's base, not his fish
                 key = re.sub(r'\s+', ' ', m.group(0)).lower()
                 g = self.by.get(key) or self.by.get(re.sub(r's$', '', key))
                 if g: hit.append(g)
+        if one_water and self.dam and THE_DAM.search(t):
+            hit.append(self.dam)
         for rx, g in self.bare:
             # "the Saluda" is the river; "Saluda Shoals" and "Lake Saluda" are not
             if any(not re.search(r"[A-Z][a-z]+[\s-]+$", t[:m.start()]) and not re.match(r"[\s-]+[A-Z]", t[m.end():])

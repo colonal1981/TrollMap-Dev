@@ -27,8 +27,10 @@ REGISTRY = {
 POIS = [('Colonel Creek', -80.80, 34.37), ('Colonel Creek', -80.79, 34.38), ('Shoal', -80.70, 34.30),
         ('Lake Test', -80.75, 34.35), ('Lake Keowee', -80.75, 34.36), ('Richard B.', -80.7, 34.3), ('Boat Ramp', -80.7, 34.31),
         ('River Bed - Little River', -80.85, 34.25), ('River Bed - Little River', -80.70, 34.45),
-        ('Blacks Camp', -80.72, 34.33)]
-LANDINGS = [{'name': 'Clearwater Cove Marina (Clearwater Cove)', 'lon': -80.73, 'lat': 34.37}]
+        ('Blacks Camp', -80.72, 34.33), ('Bonneau', -80.71, 34.40), ('Pinopolis Dam', -80.66, 34.21), ('Pinopolis', -80.67, 34.22),
+        ('Stumps', -80.74, 34.31), ('Timber', -80.74, 34.32), ('North', -80.74, 34.33), ('Keowee Dam', -80.75, 34.45)]
+LANDINGS = [{'name': 'Clearwater Cove Marina (Clearwater Cove)', 'lon': -80.73, 'lat': 34.37},
+            {'name': 'Hatchery', 'lon': -80.68, 'lat': 34.23}]
 
 
 class Places(unittest.TestCase):
@@ -56,6 +58,27 @@ class Places(unittest.TestCase):
             self.assertIn(n, self.names)
         for n in ('Shoal', 'Lake Test', 'Lake Keowee', 'Richard B.', 'Boat Ramp', 'Santee'):
             self.assertNotIn(n, self.names, 'a kind of thing, this water itself, another lake, a fragment, or "on Santee"')
+
+    def test_a_one_word_name_on_the_chart_or_a_landing_is_a_place_unless_it_is_a_kind_of_thing(self):
+        # Moultrie, 11/6: "Bonneau", "Pinopolis" and "Hatchery" were left out, and the striper reports name them
+        for n in ('Bonneau', 'Pinopolis', 'Pinopolis Dam', 'Hatchery'):
+            self.assertIn(n, self.names)
+        for n in ('Stumps', 'Timber', 'North'):
+            self.assertNotIn(n, self.names, 'the chart labelling a kind of thing')
+
+    def test_the_dam_is_the_waters_one_dam_on_a_report_about_this_water_only(self):
+        got = lambda t, one: [p['name'] for p in self.m.places(t, one_water=one)]
+        said = 'Stripers have stacked up at the dam on their way back out.'
+        self.assertEqual(got(said, True), ['Pinopolis Dam'], 'not Keowee Dam, another lake\'s dam on this chart')
+        self.assertEqual(got(said, False), [], 'a report about two lakes does not say which dam')
+        self.assertEqual(got('Below Pinopolis Dam and at the dam.', True), ['Pinopolis Dam'], 'once')
+        self.assertEqual(got('A dam on the river upstream.', True), [], '"a dam" is not the dam')
+
+    def test_a_guides_base_is_not_where_the_fish_were(self):
+        got = lambda t: [p['name'] for p in self.m.places(t)]
+        self.assertEqual(got('Guide Leroy Suggs out of Blacks Camp said stripers are schooling near Bonneau.'), ['Bonneau'])
+        self.assertEqual(got('Captain Joe, based out of Hatchery, reports fish at Blacks Camp.'), ['Blacks Camp'])
+        self.assertEqual(got('Stripers were caught at Blacks Camp.'), ['Blacks Camp'])
 
     def test_a_name_on_the_chart_twice_is_at_its_middle_and_far_apart_says_so(self):
         cc = next(g for g in self.gaz if g['as_written'] == 'Colonel Creek')
