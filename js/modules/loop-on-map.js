@@ -395,7 +395,7 @@ function showBar() {
       const d = L.DomUtil.create('div');
       d.style.cssText = 'background:rgba(11,22,35,.95);color:#e8eff4;border:1px solid rgba(232,239,244,.25);'
         + 'border-radius:10px;padding:10px 12px;max-width:340px;font:12px/1.45 system-ui,sans-serif;'
-        + 'box-shadow:0 4px 18px rgba(0,0,0,.45)';
+        + 'box-shadow:0 4px 18px rgba(0,0,0,.45);max-height:calc(100vh - 160px);overflow:auto';
       L.DomEvent.disableClickPropagation(d);
       L.DomEvent.disableScrollPropagation(d);
       d.addEventListener('click', (e) => {
@@ -403,7 +403,13 @@ function showBar() {
         if (!a) return;
         const what = a.dataset.lom;
         if (what === 'build') build();
-        else if (what === 'area-opt') pickArea(Number(a.dataset.i));
+        else if (what === 'area-opt') {
+          // NOT A TURN ON THE MAP: the bar is redrawn by the pick, and Leaflet, finding the clicked row gone from the
+          // bar, took the click for one on the water. Stopped here, and the pick laid after the click is done.
+          e.stopPropagation();
+          const i = Number(a.dataset.i);
+          setTimeout(() => pickArea(i), 0);
+        }
         else if (what === 'plan') document.querySelector('#bottomNav button[data-tab="plan"]')?.click();
         else if (what === 'close') { removeBar(); if (!S.building && !S.busy) endPreview(); }
       });

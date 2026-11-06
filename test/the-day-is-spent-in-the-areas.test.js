@@ -162,7 +162,8 @@ test('the one troll is laid in the areas where the reports name them, and the ma
   assert.match(ui, /day = layAreas\(\{/);
   assert.match(ui, /export function layAreaOption\(i\)/);
   const lom = read('../js/modules/loop-on-map.js');
-  assert.match(lom, /else if \(what === 'area-opt'\) pickArea\(Number\(a\.dataset\.i\)\);/);
+  // a pick is not a click on the water: stopped at the bar, and laid once the click is done (live check, 11/6)
+  assert.match(lom, /else if \(what === 'area-opt'\) \{\s+[\s\S]{0,400}e\.stopPropagation\(\);\s+const i = Number\(a\.dataset\.i\);\s+setTimeout\(\(\) => pickArea\(i\), 0\);/);
   assert.match(lom, /if \(loop\.mode === 'areas'\) drawAreas\(loop, g, pts\);/);
   assert.match(lom, /'Build this day<\/button><\/div>'/);
 });

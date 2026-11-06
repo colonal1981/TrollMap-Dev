@@ -1706,12 +1706,12 @@ export function areaDaySaid(day, i, { rampName = '', species = '' } = {}) {
   const lines = day.lines.length === 2 ? `the ${day.lines[0]} ft and ${day.lines[1]} ft lines` : `the ${day.lines[0]} ft line`;
   return `Laid by the fishing reports for this time of year: ${day.areas.length} area${day.areas.length === 1 ? '' : 's'} they name`
     + `${rep.anyFish ? ' (none names a place for your fish around this date, so for any fish)' : ` for ${sp}`} within 3 weeks of this date, `
-    + `each the water within ${miles(day.radiusM)} of the place: ${areas}. `
+    + `each the water within ${Math.abs(day.radiusM - 1207) < 20 ? '3/4 mile' : miles(day.radiusM)} of the place: ${areas}. `
     + `The day is ${op.label}: ${optionLines(day, op).join('; ')}. `
     + `The laps ride ${lines}, the middle of the ${day.waterFt[0]}–${day.waterFt[1]} ft of water the reports put your ${sp} over`
     + `${rep.waterN ? ` (${rep.waterN} depth${rep.waterN === 1 ? '' : 's'} stated)` : ''}, out one side and back the other; `
     + 'go round again where they bite. '
-    + (day.fishFt ? `The reports put the fish ${day.fishFt[0]}–${day.fishFt[1]} ft down. ` : '')
+    + (day.fishFt ? `The reports put the fish ${day.fishFt[0] === day.fishFt[1] ? `about ${day.fishFt[0]}` : `${day.fishFt[0]}–${day.fishFt[1]}`} ft down. ` : '')
     + `A run is trolled at ${RUN_MPH} mph with two deep divers that clear its water, lines up out of the cove. `
     + 'Your catches did not choose any of this.'
     + (day.left.length ? ` Left out: ${day.left.map((a) => `${a.name}, ${a.left}`).join('; ')}.` : '')
