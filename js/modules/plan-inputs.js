@@ -1430,6 +1430,9 @@ export function conditionsFrom(inp, ramp, sol, forecast, clarityAtRamp = null, m
   // kayak; a daily max makes a calm dawn and a blown-out noon the same number.
   if (forecast && forecast.windByHour && forecast.windByHour.length) {
     c.windByHour = forecast.windByHour;
+    // WHOSE FORECAST THAT IS, and the default model's where it is clearly windier (utils/nws-wind.js, 11/6).
+    if (forecast.windModel) c.windModel = forecast.windModel;
+    if (forecast.windOther) c.windOther = forecast.windOther;
   }
   if (forecast && forecast.sunrise) c.sunrise = forecast.sunrise;
   // THE PRESSURE AT LAUNCH AND 24 AND 48 HOURS BEFORE IT, for the front (change request 23).

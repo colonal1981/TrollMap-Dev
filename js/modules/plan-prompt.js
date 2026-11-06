@@ -2102,6 +2102,29 @@ export function riverSpeedNote(speed, currentMph) {
        + `${say(w.up, 'going up')}, ${say(w.down, 'coming back')} on the GPS`;
 }
 
+/**
+ * WHOSE WIND IT IS (utils/nws-wind.js, 2026-11-06). The hourly wind is the National Weather Service's blend, which is
+ * what the forecasts Ryan checks show; where Open-Meteo's default model is clearly windier at the middle of the water,
+ * both are said and the call is his. '' when the plan does not know whose it is.
+ */
+export function windSourceLine(c) {
+  if (!c || !c.windModel) return '';
+  const hh = (h) => `${String(h).padStart(2, '0')}:00`;
+  let s = `\nThe hourly wind in \`conditions.windByHour\` is the forecast of ${c.windModel} for the middle of this water.`;
+  if (/default/.test(c.windModel)) {
+    s += ' The National Weather Service blend had no answer for this date, so this may read windier than the '
+      + 'forecasts he checks; say so in `safety.warning`.';
+  }
+  const w = c.windOther;
+  if (w && isNum(w.otherMph) && isNum(w.mph) && isNum(w.hour)) {
+    s += ` ${w.model || 'Another model'} has a windier day there: ${Math.round(w.otherMph)} mph`
+      + `${isNum(w.otherGustMph) ? ` gusting ${Math.round(w.otherGustMph)}` : ''} at ${hh(w.hour)}, where the blend has `
+      + `${Math.round(w.mph)}. Over open water the wind can run stronger than at the towns around it, so give both `
+      + 'numbers in `safety.warning` and leave the call to him. Build the day on the blend.';
+  }
+  return s;
+}
+
 export function buildPlanRequest(o) {
   const day = {
     water: o.water, ramp: o.ramp, date: o.date,
@@ -2704,7 +2727,7 @@ RULES THAT ARE NOT NEGOTIABLE
 
 SAFETY — judge it honestly for a 12.5 ft kayak
 Sustained wind over 15 mph, or gusts over 20, is a no-go. Judge ${o.ramp || 'the ramp'} against the
-wind direction: is it a dangerous windward launch?${o.hazards && o.hazards.length
+wind direction: is it a dangerous windward launch?${windSourceLine(o.conditions)}${o.hazards && o.hazards.length
   ? `\nWHAT IS IN THE WAY on this water:\n`
     + o.hazards.map((h) => `- ${h}`).join('\n')
     + `\nEach line says where it came from. A CANNOT ENTER line is a hard constraint off Garmin's `

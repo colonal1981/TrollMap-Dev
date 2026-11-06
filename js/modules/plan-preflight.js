@@ -45,6 +45,7 @@ import { compassOf } from '../utils/compass.js';
 import { fogSpans, fogLowestVisibility, skyAt } from '../utils/light-state.js';
 import { seriesFrom, gaugeLine, daysFor } from '../utils/moving-water.js';
 import { movingWaterGaugesFor } from '../data/moving-water-gauges.js';
+import { nbmWind, nbmDaily, windierHour, NBM_NAME, DEFAULT_NAME } from '../utils/nws-wind.js';
 
 /** The coastal zone this water is, or null for everything inland. */
 export function detectCoastalZone(lakeName) {
@@ -273,17 +274,29 @@ export async function fetchForecast(lakeName, dateStr, o = {}) {
     // been wanting to chew". Asked separately because the hourly arrays above are read by hour of
     // day, and two more days in them would repeat every hour three times. Never fatal.
     const pressure = await pressureTrend(lat, lon, dateStr, o.launchTime).catch(() => null);
+    // THE WIND IS THE NATIONAL WEATHER SERVICE'S BLEND (utils/nws-wind.js). Ryan, 2026-11-06: "something is wayyyy
+    // off... i am not seeing anything close those wind forecasts on any of the apps". The request above names no
+    // model, and for the US Open-Meteo answers with the GFS: 12 mph at 06:00 in the middle of Moultrie on 11/8, where
+    // the NWS had 7 and Moncks Corner 3. The default's wind is kept, and said when it is clearly windier.
+    const nbm = await nbmWind(lat, lon, dateStr);
     const D = d && d.daily;
     if (!D) return null;
-    const dir = compassOf((D.winddirection_10m_dominant || [])[0] || 0);
-    const mph = Math.round(((D.windspeed_10m_max || [])[0] || 0) * 0.621371);
+    const nd = nbmDaily(nbm);
+    const dir = compassOf(nd && nd.dirDeg != null ? nd.dirDeg : ((D.winddirection_10m_dominant || [])[0] || 0));
+    const mph = Math.round((nd ? nd.maxKmh : ((D.windspeed_10m_max || [])[0] || 0)) * 0.621371);
     const precip = (D.precipitation_sum || [])[0] || 0;
     const hi = (D.temperature_2m_max || [])[0];
     const summary = `Wind ${dir} ${mph} mph · Precip ${precip}mm`
                   + (hi != null ? ` · High ${Math.round(hi)}°` : '');
+    const modelHours = hourlyWind(d && d.hourly, o.launchTime, o.returnTime);
+    const blendHours = nbm ? hourlyWind(nbm.hourly, o.launchTime, o.returnTime) : [];
+    const blend = blendHours.length > 0;
+    const windier = blend ? windierHour(blendHours, modelHours) : null;
     return {
       summary,
-      windByHour: hourlyWind(d && d.hourly, o.launchTime, o.returnTime),
+      windByHour: blend ? blendHours : modelHours,
+      windModel: blend ? NBM_NAME : DEFAULT_NAME,
+      windOther: windier ? { model: DEFAULT_NAME, ...windier } : null,
       weatherByHour: hourlyWeather(d && d.hourly, o.launchTime, o.returnTime),
       sunrise: clock((D.sunrise || [])[0]),
       sunset: clock((D.sunset || [])[0]),
@@ -832,10 +845,12 @@ export function hourlyWind(hourly, launchTime, returnTime) {
     if (h == null) continue;
     if (from != null && h < from) continue;
     if (to != null && h > to) continue;
+    // A NULL IS NO FORECAST FOR THE HOUR, NOT A CALM ONE: Number(null) is 0 (the blend leaves hours empty).
+    if (speed[i] === null || speed[i] === undefined || speed[i] === '') continue;
     const mph = Number(speed[i]);
     if (!Number.isFinite(mph)) continue;
     const e = { hour: h, mph: Math.round(mph * 0.621371), deg: Math.round(Number(deg[i]) || 0) };
-    const g = Number(gust[i]);
+    const g = gust[i] === null || gust[i] === undefined ? NaN : Number(gust[i]);
     if (Number.isFinite(g)) e.gustMph = Math.round(g * 0.621371);
     out.push(e);
   }

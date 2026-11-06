@@ -117,6 +117,7 @@ test('fetchForecast carries the pressure and the fog hours, and a failed pressur
   let pressureAsked = 0;
   globalThis.fetch = async (url) => {
     if (/surface_pressure/.test(String(url))) { pressureAsked++; throw new Error('offline'); }
+    if (/models=ncep_nbm_conus/.test(String(url))) return { ok: false };   // the wind blend: its own test file
     assert.match(String(url), /visibility,temperature_2m/);
     return { ok: true, json: async () => ({
       daily: { windspeed_10m_max: [8], winddirection_10m_dominant: [200], precipitation_sum: [0],

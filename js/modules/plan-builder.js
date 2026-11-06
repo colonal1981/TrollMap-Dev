@@ -44,6 +44,7 @@ import { loadAccessIndex, registryRecordFor } from "../data/access-index.js";
 import { fetchWaterConditions, todayDepthFt, statedDrawdown } from "../utils/water-conditions.js";
 import { distFt } from "../utils/geo.js";
 import { solunarFor } from "../utils/solunar.js";
+import { nbmWind, nbmDaily, withNbmWind } from "../utils/nws-wind.js";
 import { get as dbGet, put as dbPut, getAll as dbGetAll, del as dbDel, isReady as dbIsReady } from '../utils/db.js';
 
 // ─────────────────────────────────────────────────────────────
@@ -1467,6 +1468,15 @@ ${src}`;
       const res = await fetch(url, { signal: controller.signal });
       clearTimeout(timeoutId);
       const data = await res.json();
+      // THE NWS BLEND'S WIND, the same as the plan's (utils/nws-wind.js; Ryan, 2026-11-06: "i am not seeing anything
+      // close those wind forecasts on any of the apps"). The rest of the hour stays the default model's.
+      const nbm = await nbmWind(lat, lon, date);
+      if (nbm && data && data.hourly) data.hourly = withNbmWind(data.hourly, nbm);
+      const nd = nbmDaily(nbm);
+      if (nd && data && data.daily) {
+        data.daily = { ...data.daily, windspeed_10m_max: [nd.maxKmh],
+                       ...(nd.dirDeg != null ? { winddirection_10m_dominant: [nd.dirDeg] } : {}) };
+      }
       wxData = data;
 
       if(data && data.daily){
