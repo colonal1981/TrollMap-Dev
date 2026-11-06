@@ -8,7 +8,7 @@ Personal use only, not for distribution or resale; not for navigation.
 A two-lake registry and a cache of one Sumter Item story and two AHQ posts, written here, so the test needs nothing
 from the drive and fetches nothing.
 """
-import copy, gzip, json, os, shutil, sys, tempfile, unittest, urllib.parse
+import copy, gzip, http.client, json, os, shutil, socket, sys, tempfile, unittest, urllib.error, urllib.parse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import reports_step as R                                      # noqa: E402
@@ -154,19 +154,21 @@ class ReportsStep(unittest.TestCase):
         self.assertIsNone(R.find_slug(REGISTRY, 'Nowhere Lake'))
 
     def _save(self, worker, token='a-test-value'):
-        """A save with the Worker stood in for by `worker(url, data, headers) -> (status, body)`."""
-        sent, real = [], R._post
+        """A save with the Worker stood in for by `worker(url, data, headers) -> (status, body)`, which may raise as
+        the network does. The waits between tries go to self.waits instead of being slept; the log to self.logged."""
+        sent, real, real_sleep = [], R._post, R._sleep
+        self.waits, self.logged = [], []
         def fake(url, data, headers, timeout=180):
             sent.append((url, data, headers)); return worker(url, data, headers)
-        R._post = fake
+        R._post = fake; R._sleep = self.waits.append
         old = os.environ.get('TROLLMAP_SYNC_TOKEN')
         if token is None: os.environ.pop('TROLLMAP_SYNC_TOKEN', None)
         else: os.environ['TROLLMAP_SYNC_TOKEN'] = token
         try:
             r = R.run('wateree_lake', self.reg, self.cache, os.path.join(self.d, 'out_save'), dry_run=False,
-                      fetch=False, log=lambda *a: None)
+                      fetch=False, log=lambda *a: self.logged.append(' '.join(map(str, a))))
         finally:
-            R._post = real
+            R._post = real; R._sleep = real_sleep
             if old is None: os.environ.pop('TROLLMAP_SYNC_TOKEN', None)
             else: os.environ['TROLLMAP_SYNC_TOKEN'] = old
         return r, sent
@@ -198,13 +200,77 @@ class ReportsStep(unittest.TestCase):
         self.assertIn('run_research.ps1', r['error'])
         self.assertEqual(sent, [])
 
-    def test_the_worker_refusing_or_keeping_less_is_a_failure(self):
-        r, _ = self._save(lambda *a: (404, json.dumps({'ok': False, 'error': 'no research profile for X'}).encode()))
+    def test_the_worker_refusing_or_keeping_less_is_a_failure_and_is_not_tried_again(self):
+        r, sent = self._save(lambda *a: (404, json.dumps({'ok': False, 'error': 'no research profile for X'}).encode()))
         self.assertFalse(r['ok']); self.assertIn('no research profile', r['error']); self.assertNotIn('saved', r)
-        r, _ = self._save(lambda url, data, h: (200, json.dumps({'ok': True, 'bytes': len(data) - 1, 'key': 'k'}).encode()))
+        self.assertEqual((len(sent), self.waits), (1, []), 'a refusal is the answer; asking again changes nothing')
+        for code in (400, 401, 413):
+            r, sent = self._save(lambda *a, c=code: (c, b'{"ok":false,"error":"refused"}'))
+            self.assertFalse(r['ok']); self.assertEqual((len(sent), self.waits), (1, []), code)
+        r, sent = self._save(lambda url, data, h: (200, json.dumps({'ok': True, 'bytes': len(data) - 1,
+                                                                       'key': 'k'}).encode()))
         self.assertFalse(r['ok']); self.assertIn('bytes of the', r['error'])
-        r, _ = self._save(lambda *a: (502, b'<html>bad gateway</html>'))
-        self.assertFalse(r['ok']); self.assertIn('502', r['error'])
+        self.assertEqual((len(sent), self.waits), (1, []), 'a byte mismatch stops the water')
+
+    def _kept(self, url, data, headers):
+        return 200, json.dumps({'ok': True, 'bytes': len(data),
+                                'key': 'lake_packages/lake_wateree_sc/reports.json'}).encode()
+
+    def _then(self, *answers):
+        """A Worker that gives these answers in turn: an exception is raised, (status, body) returned, 'kept' keeps."""
+        left = list(answers)
+        def worker(url, data, headers):
+            a = left.pop(0)
+            if isinstance(a, BaseException): raise a
+            return self._kept(url, data, headers) if a == 'kept' else a
+        return worker
+
+    def test_a_lookup_that_fails_is_tried_again_and_the_file_is_saved(self):
+        # Lake Murray, 11/5 9:4x PM: "URLError: <urlopen error [Errno 11002] getaddrinfo failed>", nothing sent.
+        dns = urllib.error.URLError(socket.gaierror(11002, 'getaddrinfo failed'))
+        r, sent = self._save(self._then(dns, 'kept'))
+        self.assertTrue(r['ok'], r.get('error'))
+        self.assertEqual(r['saved'], 'lake_packages/lake_wateree_sc/reports.json')
+        self.assertEqual((len(sent), self.waits, r['save_tries']), (2, [5], 2))
+        self.assertEqual(sent[0][1], sent[1][1], 'the same bytes, to the same address')
+        self.assertEqual(sent[0][0], sent[1][0])
+        self.assertTrue(any('getaddrinfo failed' in l and 'trying again in 5 s' in l for l in self.logged), self.logged)
+
+    def test_a_worker_that_cannot_answer_is_tried_again(self):
+        r, sent = self._save(self._then((503, b'<html>Service Unavailable</html>'), (429, b''), 'kept'))
+        self.assertTrue(r['ok'], r.get('error'))
+        self.assertEqual((len(sent), self.waits, r['save_tries']), (3, [5, 30], 3))
+
+    def test_a_timeout_or_a_dropped_connection_is_tried_again(self):
+        r, sent = self._save(self._then(TimeoutError('timed out'),
+                                        http.client.RemoteDisconnected('Remote end closed connection'), 'kept'))
+        self.assertTrue(r['ok'], r.get('error')); self.assertEqual(len(sent), 3)
+        r, sent = self._save(self._then(http.client.IncompleteRead(b'{"ok":'), 'kept'))
+        self.assertTrue(r['ok'], r.get('error')); self.assertEqual(len(sent), 2)
+        r, sent = self._save(self._then(ConnectionResetError(10054, 'An existing connection was forcibly closed'), 'kept'))
+        self.assertTrue(r['ok'], r.get('error')); self.assertEqual(len(sent), 2)
+
+    def test_a_save_saved_first_time_waits_for_nothing(self):
+        r, sent = self._save(self._then('kept'))
+        self.assertTrue(r['ok']); self.assertEqual((len(sent), self.waits), (1, []))
+        self.assertNotIn('save_tries', r, 'the log says it only when a save needed more than one')
+
+    def test_the_network_down_on_every_try_fails_and_says_each_try(self):
+        dns = urllib.error.URLError(socket.gaierror(11002, 'getaddrinfo failed'))
+        r, sent = self._save(lambda *a: (_ for _ in ()).throw(dns), token='secret-looking-value')
+        self.assertFalse(r['ok']); self.assertNotIn('saved', r)
+        self.assertEqual((len(sent), self.waits), (1 + len(R.SAVE_WAITS_S), list(R.SAVE_WAITS_S)))
+        self.assertIn('all 3 tries', r['error']); self.assertEqual(r['error'].count('getaddrinfo failed'), 3)
+        self.assertNotIn('secret-looking-value', json.dumps(r, default=str) + ' '.join(self.logged))
+
+    def test_a_worker_that_never_answers_fails_after_its_tries(self):
+        r, sent = self._save(lambda *a: (502, b'<html>bad gateway</html>'))
+        self.assertFalse(r['ok']); self.assertIn('502', r['error']); self.assertIn('after 3 tries', r['error'])
+        self.assertEqual(len(sent), 3)
+        r, sent = self._save(self._then((502, b''), urllib.error.URLError('timed out'), (503, b'busy')))
+        self.assertFalse(r['ok']); self.assertIn('503', r['error']); self.assertEqual(len(sent), 3)
+        r, sent = self._save(self._then((502, b''), (502, b''), urllib.error.URLError('timed out')))
+        self.assertFalse(r['ok']); self.assertIn('HTTP 502; HTTP 502; URLError', r['error'])
 
     def test_one_broken_statement_and_nothing_is_sent(self):
         real = R.K.check

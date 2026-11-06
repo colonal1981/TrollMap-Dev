@@ -25,7 +25,8 @@ See THE_WHERE_AND_WHEN_MAP_2026-11-03.md and THE_REPORT_STATEMENT_CONTRACT_2026-
   4. KEEP: beside the water's research profile, lake_packages/<id>/reports.json, through the Worker's
      /research/save-reports, gzipped. That needs TROLLMAP_SYNC_TOKEN, so start it through Scripts\\run_research.ps1
      (`-Run '--lake wateree_lake --reports-only'`: a name with spaces needs \\" around it there, see the script's
-     header); the key is never seen or printed. --dry-run writes
+     header); the key is never seen or printed. A save that fails on the network, or that the Worker cannot answer
+     (5xx), is tried again after 5 s and 30 s; a refusal or a byte mismatch is not (SAVE_WAITS_S). --dry-run writes
      <out>/<slug>/reports.json on this machine instead and needs no key. Timed on Wateree, 11/5: 13 min the first
      time (the fetch, 2.9 s a post), 22 s after.
 
@@ -33,7 +34,8 @@ SC only: a water with no part in South Carolina is skipped, and the reason is sa
 
    py Scripts\\reports_step.py --lake "Wateree Lake" --registry F:\\TrollMapPipeline\\registry --dry-run
 """
-import argparse, collections, datetime as dt, gzip, json, os, re, sys, time, urllib.error, urllib.parse, urllib.request
+import argparse, collections, datetime as dt, gzip, http.client, json, os, re, sys, time, urllib.error, urllib.parse
+import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import report_column as C          # noqa: E402
@@ -43,6 +45,13 @@ import report_contract as K        # noqa: E402
 import report_cs as S                # noqa: E402
 
 PAUSE_S = 2.5                       # between two requests to the same site
+# A save that fails on the network, or that the Worker cannot answer (5xx, 429), tries again after these waits.
+# Lake Murray's save of 11/5 stopped on "getaddrinfo failed": his PC could not look up the Worker's address for a
+# moment, and nothing was sent. Ryan: "the worker hiccups quite often when I use the uploader. A retry would help
+# with that".
+# Sending the same bytes to the same key again is harmless. A refusal (4xx) or a byte mismatch is not retried.
+SAVE_WAITS_S = (5, 30)
+_sleep = time.sleep                 # the test stands in for it
 WORKER = os.environ.get('TROLLMAP_WORKER_URL', 'https://trollmap-worker.colonal1981.workers.dev')   # research_lakes.py's
 AHQ_SITEMAP = 'https://www.anglersheadquarters.com/sitemap.xml'
 
@@ -318,8 +327,9 @@ def run(slug, regdir, cache, out, dry_run=True, fetch=True, limit=0, log=print):
             with open(p, 'w', encoding='utf-8') as f: json.dump(body, f, ensure_ascii=False, indent=1)
             res['kept'] = p; res['bytes'] = os.path.getsize(p)
         else:
-            res['saved'], res['bytes'], res['bytes_before_gzip'] = save_beside_profile(body, res['name'], slug,
-                                                                                       len(statements))
+            res['saved'], res['bytes'], res['bytes_before_gzip'], tries = save_beside_profile(
+                body, res['name'], slug, len(statements), log=log)
+            if tries > 1: res['save_tries'] = tries
         clock.mark('save' if not dry_run else 'write')
         res['ok'] = True
     except Exception as e:                                       # noqa: BLE001 -- a water's failure is its own
@@ -337,10 +347,17 @@ def _post(url, data, headers, timeout=180):
         return e.code, e.read()
 
 
-def save_beside_profile(body, lake, slug, n):
+def _passing(code):
+    """A Worker answer worth asking again: it could not answer (5xx), or asked us to wait (429). A 4xx is a refusal."""
+    return code == 429 or code >= 500
+
+
+def save_beside_profile(body, lake, slug, n, log=print):
     """The file to lake_packages/<id>/reports.json through the Worker. Gzipped, because the Worker stores the bytes
     without reading them: it has 10 ms of CPU a request, and parsing 3 MB of JSON would spend it. Returns (key,
-    bytes sent, bytes before gzip); raises when the Worker did not keep exactly what was sent."""
+    bytes sent, bytes before gzip, tries); raises when the Worker did not keep exactly what was sent.
+
+    A network failure or a passing Worker error is tried again after each of SAVE_WAITS_S; a refusal is not."""
     token = os.environ.get('TROLLMAP_SYNC_TOKEN', '')
     if not token:
         raise RuntimeError('TROLLMAP_SYNC_TOKEN is not set: start the save through Scripts\\run_research.ps1 '
@@ -348,17 +365,33 @@ def save_beside_profile(body, lake, slug, n):
     raw = json.dumps(body, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
     gz = gzip.compress(raw, 9)
     q = urllib.parse.urlencode({'lake': lake, 'water': slug, 'statements': n})
-    code, resp = _post('%s/research/save-reports?%s' % (WORKER, q), gz,
-                       {'Content-Type': 'application/gzip', 'Accept': 'application/json',
-                        'User-Agent': A.UA['User-Agent'], 'X-Sync-Token': token})
+    url = '%s/research/save-reports?%s' % (WORKER, q)
+    headers = {'Content-Type': 'application/gzip', 'Accept': 'application/json',
+               'User-Agent': A.UA['User-Agent'], 'X-Sync-Token': token}
+    failed = []                                 # what went wrong on each try, said without the key
+    for tries, wait in enumerate((0,) + tuple(SAVE_WAITS_S), 1):
+        if wait:
+            log('   save: %s; trying again in %d s' % (failed[-1], wait))
+            _sleep(wait)
+        try:
+            code, resp = _post(url, gz, headers)
+        except (OSError, http.client.HTTPException) as e:   # URLError (a lookup or a refused connection), a timeout,
+            code, resp = None, None                          # a dropped connection, a body cut short
+            failed.append('%s: %s' % (type(e).__name__, e))
+            continue
+        if not _passing(code): break
+        failed.append('HTTP %s' % code)
+    if code is None:
+        raise RuntimeError('the save failed on all %d tries (%s)' % (tries, '; '.join(failed)))
     try: got = json.loads(resp)
     except (ValueError, TypeError): got = None
     if code != 200 or not isinstance(got, dict) or not got.get('ok'):
         why = (got or {}).get('error') if isinstance(got, dict) else (resp or b'')[:300].decode('utf-8', 'replace')
-        raise RuntimeError('the Worker did not keep it (HTTP %s): %s' % (code, why))
+        raise RuntimeError('the Worker did not keep it (HTTP %s%s): %s'
+                           % (code, ', after %d tries' % tries if tries > 1 else '', why))
     if got.get('bytes') != len(gz):
         raise RuntimeError('the Worker kept %s bytes of the %d sent (%s)' % (got.get('bytes'), len(gz), got.get('key')))
-    return got['key'], len(gz), len(raw)
+    return got['key'], len(gz), len(raw), tries
 
 
 def report(res, log=print):
@@ -369,7 +402,7 @@ def report(res, log=print):
     for k in ('ahq_posts_listed', 'ahq_new_in_sitemap', 'ahq_fetched', 'ahq_teasers', 'cs_posts_listed', 'cs_new_in_sitemap',
               'cs_fetched', 'scdnr_page_read', 'documents_read',
               'paragraphs_folded', 'one_page_two_waters', 'statements', 'broken_n', 'by_source', 'by_year', 'by_species', 'kept', 'saved',
-              'bytes', 'bytes_before_gzip'):
+              'save_tries', 'bytes', 'bytes_before_gzip'):
         if k in res: log('   %-20s %s' % (k, res[k]))
     for u, e in ((res.get('ahq_failed') or []) + (res.get('cs_failed') or []))[:5]: log('   failed %s: %s' % (u, e))
     for b in res.get('broken') or []: log('   broken %s' % (b,))
