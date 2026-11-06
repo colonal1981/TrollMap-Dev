@@ -71,6 +71,21 @@ test('a post on the water\'s own guides\' page counts by the page, and is named 
   assert.equal(p.when, '2026-11-02');
 });
 
+test('a guide\'s page counts by the post\'s address, never by what the search\'s preview says', () => {
+  const WOLFE = { kind: 'facebook', label: "Wolfe's Guide Service on Facebook", author: "Wolfe's Guide Service LLC",
+    url: 'https://www.facebook.com/p/Wolfes-Guide-Service-LLC-100068648221854/' };
+  const hits = [
+    // measured 11/6: a reel of ladyfish, with the guide's name in a preview the search wrote
+    { title: 'Joseph Garcia on Reels', snippet: "A male narrator notes he has caught about a dozen ladyfish. Wolfe's Guide Service LLC ...",
+      url: 'https://www.facebook.com/joseph.garcia.526875/videos/27882891198053153/' },
+    { title: 'November fishing report', snippet: 'Crappie are on the brush.', date: '3 days ago',
+      url: 'https://www.facebook.com/100068648221854/posts/pfbid0abc/' },
+  ];
+  const posts = pickPosts(hits, { tokens: new Set(['wateree']), pages: [WOLFE], nowMs: NOW });
+  assert.deepEqual(posts.map((p) => p.source), ["Wolfe's Guide Service on Facebook"]);
+  assert.equal(posts[0].page, "Wolfe's Guide Service LLC");
+});
+
 test('the day a search names, and whose post it is', () => {
   assert.deepEqual(searchDay('4 days ago', NOW), { date: '2026-11-02', approx: false });
   assert.deepEqual(searchDay('1 month ago', NOW), { date: '2026-10-07', approx: true });

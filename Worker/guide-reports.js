@@ -729,6 +729,18 @@ const postKey = (u) => {
 const wordsOf = (s) => new Set(String(s || '').toLowerCase().split(/[^a-z]+/)
   .map((w) => (w.length > 3 && w.endsWith('s') ? w.slice(0, -1) : w)).filter(Boolean));
 
+/** The first part of a Facebook address, lower case: the page's handle, its number, "groups". */
+const handleOf = (u) => String(u || '').replace(/^https?:\/\/[^/]+\//, '').split(/[/?#]/)[0].toLowerCase();
+/** A page's handles: "santeecoopercountrysouthcarolina"; for /p/Name-123/, the name and the number. */
+function pageHandles(u) {
+  const path = String(u || '').replace(/^https?:\/\/[^/]+\//, '').split(/[/?#]/);
+  if (path[0] === 'p' && path[1]) {
+    const m = path[1].match(/^(.*?)-(\d{6,})$/);
+    return m ? [m[1].toLowerCase(), m[2]] : [path[1].toLowerCase()];
+  }
+  return [path[0].toLowerCase()];
+}
+
 /** Whose post, from its address: the page's handle, or "a Facebook group". */
 export function postPage(url) {
   const path = String(url || '').replace(/^https?:\/\/[^/]+\//, '').split(/[/?#]/);
@@ -772,7 +784,11 @@ export function pickPosts(results, { tokens = [], pages = [], nowMs = Date.now()
     const key = postKey(url);
     if (seen.has(key)) continue;
     const said = `${(r && r.title) || ''} ${(r && r.snippet) || ''}`;
-    const known = pages.find((p) => key.startsWith(postKey(p.url)) || (p.author && lettersOf(said).includes(lettersOf(p.author))));
+    // A guide's page by the post's ADDRESS (or a title that is the page's own name), never by the
+    // search's preview: measured 11/6, a reel of ladyfish came back with "Wolfe's Guide Service LLC"
+    // in a preview the search wrote.
+    const known = pages.find((p) => pageHandles(p.url).includes(handleOf(url))
+      || (p.author && lettersOf(r && r.title) === lettersOf(p.author)));
     const words = wordsOf(`${said} ${url.replace(/[^a-z]+/gi, ' ')}`);
     if (!known && !want.some((t) => words.has(t))) continue;
     if (!/fish|report|bite|striper|bass|crappie|catfish|bream|perch/i.test(said)) continue;
