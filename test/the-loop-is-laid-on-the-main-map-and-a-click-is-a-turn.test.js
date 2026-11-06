@@ -101,12 +101,14 @@ test('Troll it for me takes the turns from the map exactly where he clicked, not
   assert.ok(ui.includes("loop-on-map.js')).planAsOneTroll();"));
 });
 
-test('the reports choose the water where they name it; elsewhere it is his catches and the structure', () => {
+test('the reports choose the water where they name it or give his fish\'s depth; elsewhere it is his catches', () => {
   // Ryan, 11/6: "even with catches i dont like it... because i am telling the app where to tell me to fish instead of the
   // app telling me". Where the water's reports name places for this time of year, the loops turn there and his catches
-  // choose nothing; where they do not, the line comes from his catches as before, and the day is chosen fish first.
+  // choose nothing; where they talk about his fish and name no place within reach, the loops ride the depth they give,
+  // still without his catches (Short Stay, 11/6). Where the reports say nothing of it, the line comes from his catches
+  // as before, and the day is chosen fish first.
   assert.ok(ui.includes('let fallback = loopLine({ waterFt: repWater || guide, band, holding: T.holding, steerFt: steer });'));
-  assert.ok(ui.includes('marks: T.spots, catches: byReports ? [] : catches, via, contourOnly: byReports,'));
+  assert.ok(ui.includes('marks: T.spots, catches: reportsLead ? [] : catches, via, contourOnly: reportsLead,'));
   // and the bar says what each loop passes, or where the reports turn it
   assert.ok(lom.includes('catches and ${plural(s.structure || 0, \'charted mark\')}'));
   assert.ok(lom.includes('Laid by the fishing reports'));

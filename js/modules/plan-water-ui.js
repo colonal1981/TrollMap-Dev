@@ -1420,6 +1420,11 @@ export async function trollForMe(opts = {}) {
   const rep = await reportTurns();
   T.reportTurns = rep && rep.turns.length ? rep.turns : [];
   const byReports = T.reportTurns.length > 0;
+  // THE REPORTS' DEPTH WITHOUT A PLACE: they talk about his fish around this date and give the water it is over, but name
+  // no place for it that a day from this ramp reaches (Moultrie from Short Stay, stripers, 11/6). His catches still choose
+  // nothing ("i am telling the app where to tell me to fish instead of the app telling me"): the loops ride that depth.
+  const byReportDepth = !byReports && !!(rep && rep.mentioned && rep.waterFt);
+  const reportsLead = byReports || byReportDepth;
   // WHERE HE SAID TO TURN: where he clicked the water on the main map (loop-on-map.js), exactly
   // there; or on Pick Water, a spot he ticked, or the middle of a piece he ticked. On the map the report turns are
   // laid there as numbered turns he can take off or add to; on Pick Water they are the turns when he ticked none.
@@ -1465,11 +1470,11 @@ export async function trollForMe(opts = {}) {
   // water, then the band. With his catches the loop decides, from the ones within reach. See loopLine().
   // LAID BY THE REPORTS, the water they put his fish over this time of year, lake-wide, before the research's.
   const steer = HAND_STEER_BAND_FT;
-  const repWater = byReports && rep.waterFt ? rep.waterFt : null;
+  const repWater = reportsLead && rep.waterFt ? rep.waterFt : null;
   let fallback = loopLine({ waterFt: repWater || guide, band, holding: T.holding, steerFt: steer });
   if (fallback && repWater) fallback = { ...fallback, from: 'reports', n: rep.waterN };
   // No depth in the reports, the research or the band: the water under his catches gives the depth, and only the depth.
-  if (byReports && !fallback) fallback = loopLine({ catches, depthAt: T.depthAt, offsetFt: T.offsetFt || 0, steerFt: steer });
+  if (reportsLead && !fallback) fallback = loopLine({ catches, depthAt: T.depthAt, offsetFt: T.offsetFt || 0, steerFt: steer });
   if (!fallback && !catches.some((c) => c.chartFt != null)) {
     return fail('No catches of this fish on this lake, no water the research names and no fish band, so nothing '
              + 'says what depth to troll.', true);
@@ -1485,7 +1490,7 @@ export async function trollForMe(opts = {}) {
       lineFt: fallback ? fallback.lineFt : undefined, lineFrom: fallback ? fallback.from : undefined,
       lineRangeFt: fallback ? fallback.rangeFt : undefined,
       windowMin: T.windowMin, stopMin: stopsWanted() * DEFAULT_STOP_MIN, minM: T.minM,
-      marks: T.spots, catches: byReports ? [] : catches, via, contourOnly: byReports,
+      marks: T.spots, catches: reportsLead ? [] : catches, via, contourOnly: reportsLead,
       ...(T.packLayers || {}), allCatches, sounderMarks,
     }, (n, step) => say(step === 'opt'
       ? `Laying the options from ${T.rampName || 'the ramp'}… measuring the water like your fish's`
@@ -1517,14 +1522,15 @@ export async function trollForMe(opts = {}) {
   const ln = loop.line || {};
   const sp = T.species || '';
   // His catches along the loops the reports laid: a note, never the reason. Each fish once, within 100 m of a loop.
-  if (byReports) {
+  if (reportsLead) {
     const onChart = catches.filter((c) => c.chartFt != null);
     const along = new Set();
     for (const p of loop.petals || []) {
       const coords = [...(p.out || []), ...(p.back || [])].filter((c) => Array.isArray(c) && c.length >= 2);
       for (const a of marksAlong(coords, onChart, SAME_WATER_M)) along.add(a.mark);
     }
-    loop.byReports = { turns: T.reportTurns, anyFish: !!rep.anyFish, yourFish: along.size, yourFishOnChart: onChart.length };
+    loop.byReports = { turns: T.reportTurns, depthOnly: byReportDepth, anyFish: !!rep.anyFish, yourFish: along.size,
+                       yourFishOnChart: onChart.length };
   }
   const lineFrom = ln.from === 'reports' && ln.rangeFt
     ? `the middle of the ${ln.rangeFt[0]}–${ln.rangeFt[1]} ft of water the fishing reports put your ${sp} over around this date `
@@ -1552,7 +1558,7 @@ export async function trollForMe(opts = {}) {
   // water like his fish's, numbered on the map for him to choose from on the water.
   // WHERE THE REPORTS COULD NOT LAY THE DAY, the status says why first, and which ramp they would have.
   const adv = rampAdviceSaid(T.rampAdvice, T.rampName, sp);
-  const notByReports = byReports ? '' : `${T.reportSaid ? `Not laid by the fishing reports: ${T.reportSaid}. ` : ''}${adv ? `${adv} ` : ''}`;
+  const notByReports = reportsLead ? '' : `${T.reportSaid ? `Not laid by the fishing reports: ${T.reportSaid}. ` : ''}${adv ? `${adv} ` : ''}`;
   if (loop.mode === 'options') {
     say(notByReports + optionsSaid(loop, { rampName: T.rampName, species: sp, steer, zones, leftOut }));
     T.lastLoop = loop;
@@ -1567,7 +1573,13 @@ export async function trollForMe(opts = {}) {
       + T.reportTurns.map((t, i) => `turn ${i + 1}, ${t.why}`).join('; ')
       + `. ${loop.byReports.yourFish ? `The loops pass ${loop.byReports.yourFish} of your ${loop.byReports.yourFishOnChart} ${sp} catches on this chart, ` : `None of your ${sp} catches is along them; `}`
       + 'your catches did not choose this water. '
-      + (rampAdviceSaid(T.rampAdvice, T.rampName, sp) ? `${rampAdviceSaid(T.rampAdvice, T.rampName, sp)} ` : '')
+      + (adv ? `${adv} ` : '')
+    : byReportDepth
+    ? `Laid on the fishing reports' depth: ${T.reportSaid}, so the loops ride the water they put ${sp} over around this date, `
+      + 'where the day has time. '
+      + `${loop.byReports.yourFish ? `The loops pass ${loop.byReports.yourFish} of your ${loop.byReports.yourFishOnChart} ${sp} catches on this chart, ` : `None of your ${sp} catches is along them; `}`
+      + 'your catches did not choose this water. '
+      + (adv ? `${adv} ` : '')
     : '';
   say(repSaid + notByReports + `${n} loop${n === 1 ? '' : 's'} from ${T.rampName || 'the ramp'} and back: ${fmtMi(loop.trolledM)} trolled, `
     + `${fmtMi(loop.runM)} with the lines up (out of the cove and back in)`
@@ -1579,7 +1591,7 @@ export async function trollForMe(opts = {}) {
     + `; no loop goes shallower than the shallow edge of its own Contour alarm, its line less the ${steer} ft you steer `
     + `within (${[...new Set(loop.petals.map((p) => Math.round(p.edgeFt != null ? p.edgeFt : p.lineFt - steer)))].map((e) => `${e} ft`).join(', ')})`
     + (zones ? `; out of ${zones} keep-out zone${zones === 1 ? '' : 's'}` : '')
-    + (byReports ? `. It passes ${loop.score.structure} charted mark${loop.score.structure === 1 ? '' : 's'}`
+    + (reportsLead ? `. It passes ${loop.score.structure} charted mark${loop.score.structure === 1 ? '' : 's'}`
       : `. It passes ${loop.score.fish} of your ${cu.used} ${sp} catch${cu.used === 1 ? '' : 'es'} within reach`
         + (passes > loop.score.fish ? `, ${passes} times over` : '')
         + ` and ${loop.score.structure} charted mark${loop.score.structure === 1 ? '' : 's'}`)

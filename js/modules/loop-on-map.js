@@ -433,7 +433,12 @@ function setBar(o) {
     const missed = S.turns.filter((t) => t.reached === false && t.passedBy == null).length;
     // WHICH LINE EACH LOOP RIDES -- his fish's line first, then round the same water a band over.
     const lines = [...new Set((loop.petals || []).map((p) => Math.round(p.lineFt != null ? p.lineFt : loop.lineFt)))];
-    const byReports = loop.byReports
+    const byReports = loop.byReports && loop.byReports.depthOnly
+      ? `<div style="margin-top:6px;color:#ffb300"><b>Laid on the fishing reports' depth</b>: ${esc(snap.reportSaid || 'they name no place for it')}, `
+        + `so the loops ride the water they put your ${esc(snap.species || 'fish')} over within 3 weeks of this date, where the day has time. `
+        + `Click the water where a loop should turn to choose a place.`
+        + `${loop.byReports.yourFish ? ` It passes ${plural(loop.byReports.yourFish, 'of your catches', 'of your catches')}; they did not choose it.` : ''}</div>`
+      : loop.byReports
       ? `<div style="margin-top:6px;color:#ffb300"><b>Laid by the fishing reports</b>: the numbered turns are the places they name most `
         + `for your ${esc(snap.species || 'fish')}${loop.byReports.anyFish ? ' (none names one for it, so any fish)' : ''} within 3 weeks of this date, `
         + `in any year from 2008. Hover a number for what they say there.`

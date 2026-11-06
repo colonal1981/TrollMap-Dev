@@ -373,8 +373,16 @@ test('the words say whose turns they are and how many depths the line came from'
   assert.match(ui, /\(\$\{rep\.waterN\} depth\$\{rep\.waterN === 1 \? '' : 's'\} stated\)/, 'never "undefined depths"');
   assert.match(ui, /the reports talk about \$\{T\.species \|\| 'this fish'\} around this date, but none of them names a place for it/);
   assert.doesNotMatch(ui, /rep\.n\} depth/);
+  // Short Stay: the reports talk about stripers and name no place near the ramp. The day rides their striper depth; his
+  // catches still choose nothing.
+  assert.match(ui, /const byReportDepth = !byReports && !!\(rep && rep\.mentioned && rep\.waterFt\);/);
+  assert.match(ui, /const reportsLead = byReports \|\| byReportDepth;/);
+  assert.match(ui, /const repWater = reportsLead && rep\.waterFt/);
+  assert.match(ui, /Laid on the fishing reports' depth: \$\{T\.reportSaid\}/);
   const map = readFileSync(new URL('../js/modules/loop-on-map.js', import.meta.url), 'utf8');
   assert.match(map, /no report place: the same depth, where the day had time left/);
+  assert.match(map, /loop\.byReports && loop\.byReports\.depthOnly/);
+  assert.match(map, /Laid on the fishing reports' depth<\/b>/);
   const pins = readFileSync(new URL('../js/modules/report-spots-layer.js', import.meta.url), 'utf8');
   assert.doesNotMatch(pins, /where it meets the lake/, 'a pin at the box edge is not where a river meets the lake');
 });
@@ -394,7 +402,7 @@ test('which ramp: every landing by the same reports, and a heads-up only when an
 
 test('the one-troll button lays the reports\' turns, his catches only noted, and says the ramp', () => {
   const ui = readFileSync(new URL('../js/modules/plan-water-ui.js', import.meta.url), 'utf8');
-  assert.match(ui, /catches: byReports \? \[\] : catches, via, contourOnly: byReports/, 'his catches choose nothing');
+  assert.match(ui, /catches: reportsLead \? \[\] : catches, via, contourOnly: reportsLead/, 'his catches choose nothing');
   assert.match(ui, /askThisWeek\(\{ worker: CF_WORKER_URL, slug: T\.r2Key, date: T\.dateStr \}\)/);
   assert.match(ui, /rampsByReports\(tw, T\.species, landings/);
   assert.match(ui, /your catches did not choose this water/);
