@@ -19,8 +19,10 @@ import { markLabel } from '../js/modules/plan-candidates.js';
 
 test('a thing with a symbol of its own keeps it, whatever the depth', () => {
   // These are the ones Ryan read off the picker. A ledge is a ledge at 4 ft and at 40.
-  for (const [kind, sym] of [['ledge', 'Ledge'], ['hump', 'Hump'], ['pile', 'Brush Pile'],
-                             ['timber', 'Underwater Tree'], ['dock', 'Dock'],
+  // Pilings and submerged bridges are `Bridge`, off his own export of 2026-11-09; pilings were
+  // `Brush Pile` before, and a bridge had no symbol at all.
+  for (const [kind, sym] of [['ledge', 'Ledge'], ['hump', 'Hump'], ['pile', 'Bridge'],
+                             ['bridge', 'Bridge'], ['timber', 'Underwater Tree'], ['dock', 'Dock'],
                              ['attractor', 'Fish Attractor']]) {
     assert.equal(markSymbol(kind, null, 4), sym);
     assert.equal(markSymbol(kind, null, 40), sym);

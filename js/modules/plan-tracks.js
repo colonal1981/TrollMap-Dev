@@ -441,7 +441,10 @@ function legAtM(plan, atM) {
 // lists Garmin publishes carry none of this. `Triangle, Red`, `Square, Red`, `Underwater Tree`,
 // `Boat Ramp`, `Flag, Green`, `Flag, Red` and `Waypoint` came out of exports he made; `Ledge`,
 // `Hump`, `Brush Pile`, `Dock`, `Fish Attractor`, `Rocks`, `Stump`, `Reef`, `Laydown` and
-// `Underwater Grass` are ones he read off the picker. The shape-comma-colour form is his unit's,
+// `Underwater Grass` are ones he read off the picker. His ActiveCaptain export of 2026-11-09 put
+// `Underwater Tree`, `Stump`, `Underwater Grass`, `Brush Pile` and `Bridge` on old marks of his, only
+// to show the spellings: *"It was just giving you more symbols that we can use when putting them onto
+// my fish finder from the app"*. The shape-comma-colour form is his unit's,
 // and the full grid -- circle, diamond, flag, pin, square, triangle in red, yellow, blue, green --
 // is his account of what the picker holds.
 //
@@ -450,7 +453,14 @@ function legAtM(plan, atM) {
 const MARK_SYMBOL = {
   ledge: 'Ledge',
   hump: 'Hump',
-  pile: 'Brush Pile',
+  // BRIDGE PILINGS AND SUBMERGED BRIDGES ARE TARGETS, AND HIS UNIT HAS A BRIDGE. Garmin's `pile` is
+  // bridge pilings (plan-water.js), and this line drew them as `Brush Pile`; a brushpile is
+  // `attractor`. `bridge` (Garmin's submerged_bridge, plan-candidates.js) had no line and fell to the
+  // default pin. Ryan, 2026-11-09: *"Look at the symbol I changed LAUNCH to... It is the Garmin symbol
+  // for bridge"*, and *"Yup"* to giving both of them it. Not `Rocks`: that is for things not to hit,
+  // and he calls both of these targets.
+  pile: 'Bridge',
+  bridge: 'Bridge',
   timber: 'Underwater Tree',
   dock: 'Dock',
   dock_line: 'Dock',
