@@ -13,6 +13,17 @@
 import { describe, expect, it } from './expect-shim.mjs';
 import { handleResearchDeterministicFacts } from '../Worker/research/deterministic.js';
 
+// NO NETWORK IN THIS FILE. The handler reads two live SCDNR ArcGIS layers (the ramps and the attractors) and degrades
+// when they fail. On 2026-11-09 one of those calls hung on the CI runner, this file hit the 45 s test timeout, and the
+// Worker deploy for that push was refused, with failure e-mails to Ryan. These tests are about the registry read, not
+// about ArcGIS, so every outside call fails at once, the way the handler already copes with.
+const realFetch = globalThis.fetch;
+globalThis.fetch = async (u, o) => {
+  const url = String((u && u.url) || u);
+  if (/^https?:\/\/worker\//.test(url)) return realFetch(u, o);
+  throw new TypeError(`no network in deterministic-regression.test.js: ${url.slice(0, 80)}`);
+};
+
 const ask = (env) => handleResearchDeterministicFacts(
   new Request('https://worker/research/deterministic-facts', {
     method: 'POST', body: JSON.stringify({ lakeName: 'Lake Wateree, SC', state: 'SC' }),
