@@ -67,8 +67,7 @@ import { todayDepthFt } from '../utils/water-conditions.js';
 import { HIS_CLEAR_FT } from '../utils/wood.js';
 import { ozLabel } from '../utils/oz.js';
 import { lightLabel } from '../utils/light-state.js';
-import { TACKLE_INVENTORY, JIGHEADS_OWNED_OZ } from '../data/tackle-inventory.js';
-import { jigheadRangeOz } from '../data/lure-knowledge.js';
+import { castHeadOz } from '../utils/cast-head.js';
 
 // THE MAP AND THE CARD SHARE ONE PALETTE, and this is where it lives.
 //
@@ -455,17 +454,8 @@ function woodLine(leg) {
   return `Wood under this pass: ${w.length} piece${w.length === 1 ? '' : 's'}, ${parts.join(', ')}.`;
 }
 
-// THE HEAD A CAST-ONLY PADDLE TAIL GOES ON. Ryan, 11/7, of his Moultrie plan: "the casting stop doesn't say what size
-// jighead or color of swimbait". A trolled swimbait has the head capBaitDepth() fitted on its leg; a rod that is only ever
-// cast had none, and both the stop and Rods At Launch printed nothing for it. This is the lightest head he owns that the
-// bait carries (jigheadRangeOz(): a 5" takes 3/4 to 1 oz), for a slow count-down at the stop. The lightest is MINE.
-export function castHeadOz(lureName) {
-  const l = TACKLE_INVENTORY.find((x) => x && x.name === lureName);
-  const range = l && jigheadRangeOz(l.lengthIn, l.type);
-  if (!range) return null;
-  const fits = JIGHEADS_OWNED_OZ.filter((w) => w >= range.startOz - 1e-9 && w <= range.maxOz + 1e-9);
-  return fits.length ? fits[0] : null;
-}
+// THE HEAD A CAST-ONLY PADDLE TAIL GOES ON: castHeadOz() in utils/cast-head.js, re-exported for the readers here.
+export { castHeadOz };
 
 // WHAT IS ON A ROD AT A STOP: its lure, colour, and the head or weight on it at that point of the day -- the same facts
 // the rod card and Rods At Launch give, so a stop that names a rod says what is tied to it. The head is the one fitted
@@ -487,6 +477,29 @@ export function stopRodLine(r, leg, legs) {
     : over && over.inlineWeightOz != null ? `behind the ${ozLabel(over.inlineWeightOz)} inline weight`
     : castOz != null ? `on the ${ozLabel(castOz)} head` : '';
   return [`${r.id}: ${clean(r.lure)}`, clean(r.color), weight].filter(Boolean).join(' · ');
+}
+
+// THE LADDER AS THE CARDS PRINT IT. `rows` keep the assembler's numbers; `text` is the one sentence a row is, so the
+// planner card, the report and the phone say it the same way. Ryan, 11/10: "we need to write the plan to have options
+// that fit what i see on the sounder".
+const mphLabel = (v) => (Math.abs(v - 0.75) < 1e-9 ? '0.75' : Number(v).toFixed(1));
+export function ladderRowText(row) {
+  const rods = row.rods.map((r) => `${r.id} ${clean(r.lure)}${r.rated ? '' : ` (about ${r.runsFt[0]}\u2013${r.runsFt[1]} ft)`}`);
+  return `Fish at ${row.fromFt}\u2013${row.toFt} ft: ${rods.join(' + ')}, ${row.asRigged ? `as rigged at ${mphLabel(row.mph)} mph`
+    : `at ${mphLabel(row.mph)} mph`}${row.alone ? ' (the only rigged rod that gets there on this leg)' : ''}.`;
+}
+function ladderFor(leg, rodsById) {
+  const L = leg && leg.depthLadder;
+  if (!L || !Array.isArray(L.rows) || !L.rows.length) return null;
+  const rows = L.rows.map((row) => ({ ...row,
+    rods: row.rods.map((r) => ({ ...r, color: clean((rodsById.get(r.id) || {}).color) })) }));
+  const deepest = rows[rows.length - 1].toFt;
+  const water = Number(todayDepthFt(leg.depthMaxFt ?? leg.depthFt, leg.drawdownFt));
+  return { rows: rows.map((row) => ({ ...row, text: ladderRowText(row) })), ceilingFt: L.ceilingFt,
+           // Deeper than this, nothing goes on this leg: its shallowest water would take the bait (one bait, the whole pass).
+           note: Number.isFinite(water) && water > deepest + 2
+             ? `Deeper than ${deepest} ft: this leg's shallowest water is about ${L.ceilingFt} ft, so no bait goes deeper on it.`
+             : '' };
 }
 
 function fallbackLine(leg, rodsById) {
@@ -673,7 +686,12 @@ export function planToTimeline(plan, o = {}) {
       // print, the HTML export and the phone without five readers having to learn a new name. The
       // rod's own lure is named from the loadout, because "put R2 on" is not an instruction anybody
       // can follow with four rods behind the seat.
-      longDesc: [clean(leg.why), fallbackLine(leg, rodsById), sonarLine(leg), woodLine(leg)]
+      // THE LADDER REPLACES THE ONE-LINE SONAR CHECK where the leg has one: it answers the same question ("the sounder
+      // shows fish deeper than what I am pulling") for every 5 ft, by speed, which is the lever he has (11/10).
+      // Two surface baits keep their sentence: the ladder has no row for a bait worked on top.
+      longDesc: [clean(leg.why), fallbackLine(leg, rodsById),
+                 leg.depthLadder && !(leg.sonarCheck && leg.sonarCheck.pairSurfaceOnly) ? '' : sonarLine(leg),
+                 woodLine(leg)]
         .filter(Boolean).join(' '),
       ifNotProducing: leg.ifNotProducing || null,
       // Carried as well as said, because the panel draws the depths and wants the numbers, not the
@@ -711,6 +729,8 @@ export function planToTimeline(plan, o = {}) {
     // are using; it rides along under its own name so nothing has to guess which is which.
     legEntries.push({
       ...card, type: 'troll', rods,
+      // FISH AT -> WHICH TWO RODS, WHAT SPEED (depthLadder() in plan-assemble.js), with each rod's colour for the card.
+      ladder: ladderFor(leg, rodsById),
       depthMin: leg.depthMinFt ?? leg.depthFt ?? (band ? band[0] : null),
       depthMax: leg.depthMaxFt ?? leg.depthFt ?? (band ? band[1] : null),
       depthFt: leg.depthFt ?? null,

@@ -2475,6 +2475,14 @@ you named — nobody knows what is on the ones you did not.
 Anything you expect to CHANGE during the day belongs on a snap rod if it can be — that change is
 seconds, where a leader rod is a knot with wet hands.
 
+**FISH AT 25 FT AND DEEPER ARE REACHED BY SLOWING DOWN, NOT BY A CRANKBAIT.** Ryan, 2026-11-10:
+"honestly for 25 and down the safest bet is slowing down an a-rig, spoon, paddletail, or bucktail", and
+of his deepest diver, "the dd4 doesn't get as low as it says". Where any water you plan to troll is
+25 ft or deeper, rig at least TWO of those four kinds as troll rods (an A-rig; a spoon on its trolling
+weight; a paddle-tail swimbait on a jighead; a bucktail), so that whatever the sounder shows below
+25 ft, two rigged rods can be slowed down to it. Each leg's card carries a ladder the app works out
+from the rods you rig: for each 5 ft of fish depth, which two rods and what speed.
+
 Colour is a free string; assume any colour combination is aboard. Use ONLY these exact lure names:
 ${gate ? gate.names : ((o.tackle || []).map(promptSafeTackleName).join(', ') || '(inventory unavailable)')}
 ${gate ? gate.block : ''}

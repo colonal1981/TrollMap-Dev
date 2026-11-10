@@ -27,7 +27,8 @@ import { ampHours, ampHoursAlong, minutesFor, metresBetween, cumulative, pointAt
          travelOrder, trimReach, riverPassFlipped, historyForModel } from './plan-candidates.js';
 import { depthWindow, lightWindowFor, leadForDepth, jigheadForSwimbait,
          requiresInlineWeight, changeCostFor, presentationDelta,
-         LURE_KNOWLEDGE, gpsWindowFor, sharedSpeedWindow } from '../data/lure-knowledge.js';
+         LURE_KNOWLEDGE, gpsWindowFor, sharedSpeedWindow, CRANK_MAX_MPH } from '../data/lure-knowledge.js';
+import { castHeadOz } from '../utils/cast-head.js';
 import { JIGHEADS_OWNED_OZ, TROLLING_WEIGHTS_OWNED_OZ,
          RIGGED_TROLLING_WEIGHT_OZ } from '../data/tackle-inventory.js';
 import { FISHING_STYLE } from '../data/fishing-style-profile.js';
@@ -920,6 +921,133 @@ function sonarContingency(rods, deploy, rodPlan, speedMph, lureByName) {
     reach: bench,
     deepestInBoatFt: Math.max(...everyMax),
   };
+}
+
+/**
+ * THE DEPTH LADDER: FISH AT -> WHICH TWO RIGGED RODS, AT WHAT SPEED. One per troll leg.
+ *
+ * Ryan, 2026-11-10: "one day on the lake doesn't help us get depths of fish... for a-rigs or spoons it is simple to slow
+ * down to drop the baits lower... but for plans that call for deep diving crank baits i can't make them just drop... so
+ * we need to write the plan to have options that fit what i see on the sounder". Then, of the DD4: "the dd4 doesn't get
+ * as low as it says... i let out all the line almost and wasn't getting bites", and his rule: "honestly for 25 and down
+ * the safest bet is slowing down an a-rig, spoon, paddletail, or bucktail". The on-the-water tap was put to him and
+ * dropped (*"lets skip number 3"*); the sonar is read after the trip.
+ *
+ * A row is a 5 ft band of fish depth and the pair that fishes it at one speed:
+ *   - only rods this plan rigged to troll, each on this leg's own lead (held to the line he runs), head and weight;
+ *   - 25 ft and deeper: only his four (DEEP_TYPES), slowed; a crankbait is never the answer there (his rule);
+ *   - shallower: a crankbait counts at the shallow end of its box (the app's rule since 8/30) at a speed it dives at;
+ *   - a weighted bait counts where the middle of its window sits in the band at that speed (the app's speed curve,
+ *     MINE, not measured; the lead is a guess, so the speed is the lever he has);
+ *   - no bait's deep end goes past this leg's shallowest water (the whole-pass rule, SETTLED 10/1);
+ *   - never under 0.75 mph (his motor at 1%), and a bait's own slowest where it has one, except his four;
+ *   - the pair kept closest to what is in the water, then to the leg's speed.
+ * Rows run from the band the pair in the water starts in down to the leg's shallowest water.
+ */
+export const DEEP_TYPES = Object.freeze(['umbrella_rig', 'flutter_spoon', 'spoon_casting', 'swimbait_paddle', 'bucktail']);
+const DEEP_FROM_FT = 25;
+const LADDER_STEP_FT = 5;
+const LADDER_ABOVE_FT = 5;
+const LADDER_BELOW_FT = 2;
+const MOTOR_MIN_MPH = 0.75;
+const LADDER_SPEEDS = [MOTOR_MIN_MPH, ...Array.from({ length: 27 }, (_, i) => Number((0.8 + i * 0.1).toFixed(1)))];
+
+export function depthLadder(rods, deploy, rodPlan, legMph, lureByName, ceilingFt) {
+  if (typeof lureByName !== 'function' || !Array.isArray(rods) || !(ceilingFt > 0)) return undefined;
+  const maxLead = FISHING_STYLE.rigging?.maxLeadFt ?? 120;
+  const out = deploy ? [deploy.port, deploy.starboard].filter(Boolean) : [];
+  // Each rod: how it sits in the water at a given speed, or null when it cannot be placed.
+  const cands = [];
+  for (const rod of rods) {
+    if (!rod || !rod.lure || rod.staged || (rod.role && rod.role !== 'troll')) continue;
+    const lure = lureByName(rod.lure);
+    const k = lure && LURE_KNOWLEDGE[lure.type];
+    if (!k || k.depthMode === 'none' || k.depthMode === 'surface') continue;
+    const planned = rodPlan && rodPlan[rod.id] ? rodPlan[rod.id] : null;
+    const lead = Math.min(maxLead, Number((planned && planned.leadFt) ?? rod.leadFt) || 0);
+    const rated = k.depthMode !== 'lead';
+    if (!rated && !(lead > 0)) continue;
+    let rigged = lure;
+    if (!rated) {
+      const head = planned && planned.jigheadOz != null ? planned.jigheadOz
+        : (k.jigheadOzByLengthIn && lure.weightOz == null ? castHeadOz(lure.name) : null);
+      if (head != null) rigged = { ...rigged, weightOz: head };
+      const inline = planned && planned.inlineWeightOz != null ? planned.inlineWeightOz
+        : (requiresInlineWeight(lure.type) && !(Number(lure.inlineWeightOz) > 0) ? RIGGED_TROLLING_WEIGHT_OZ : null);
+      if (inline != null) rigged = { ...rigged, inlineWeightOz: inline };
+    }
+    const deep = DEEP_TYPES.includes(lure.type);
+    const spMin = rated ? (k.speed && k.speed.min) || MOTOR_MIN_MPH
+      : deep ? MOTOR_MIN_MPH : Math.max(MOTOR_MIN_MPH, (k.speed && k.speed.min) || MOTOR_MIN_MPH);
+    const spMax = Math.min(CRANK_MAX_MPH, (k.speed && k.speed.max) || CRANK_MAX_MPH);
+    const at = new Map();
+    for (const v of LADDER_SPEEDS) {
+      if (v < spMin - 1e-9 || v > spMax + 1e-9) continue;
+      const w = rated ? (k.ratedDepth || null) : depthWindow(rigged, { speedMph: v, leadFt: lead });
+      if (w && Number.isFinite(w.min) && Number.isFinite(w.max)) at.set(v, { min: w.min, max: w.max });
+    }
+    cands.push({ id: rod.id, lure: rod.lure, rated, deep, inWater: out.includes(rod.id), at });
+  }
+  if (!cands.length) return undefined;
+
+  // `slack` widens the band for the second rod of a pair: up to LADDER_ABOVE_FT over the fish (they look up, his 8/11)
+  // and LADDER_BELOW_FT under. Two baits on two leads rarely sit in one 5 ft band at one speed, and the speed is his
+  // only lever, so the second rod is said with its own depth. Both numbers are MINE.
+  const fits = (c, v, lo, hi, slack) => {
+    const w = c.at.get(v);
+    if (!w || w.max > ceilingFt + 1e-9) return false;
+    if (lo >= DEEP_FROM_FT && !c.deep) return false;
+    // A crankbait boxed at 25 ft and deeper is not counted at all: "the dd4 doesn't get as low as it says" (11/10).
+    if (c.rated && w.min >= DEEP_FROM_FT) return false;
+    const x = c.rated ? w.min : (w.min + w.max) / 2;
+    return slack ? x >= lo - LADDER_ABOVE_FT - 1e-9 && x <= hi + LADDER_BELOW_FT + 1e-9
+                 : x >= lo - 1e-9 && x <= hi + 1e-9;
+  };
+  const near = (v) => Math.abs(v - (Number(legMph) || 2.0));
+  const lexLess = (a, b) => { for (let n = 0; n < a.length; n += 1) { if (a[n] !== b[n]) return a[n] < b[n]; } return false; };
+
+  // From the band the pair in the water starts in, so the first rows are where he is now.
+  const nowMin = Math.min(...cands.filter((c) => c.inWater)
+    .map((c) => (c.at.get(Number(legMph)) || [...c.at.values()][0] || { min: Infinity }).min));
+  let lo = Number.isFinite(nowMin) ? Math.max(LADDER_STEP_FT, Math.floor(nowMin / LADDER_STEP_FT) * LADDER_STEP_FT) : LADDER_STEP_FT;
+  const rows = [];
+  for (; lo < ceilingFt - 1e-9; lo += LADDER_STEP_FT) {
+    const hi = Math.min(lo + LADDER_STEP_FT, ceilingFt);
+    let best = null;
+    for (let i = 0; i < cands.length; i += 1) {
+      for (let j = i; j < cands.length; j += 1) {
+        const pair = i === j ? [cands[i]] : [cands[i], cands[j]];
+        for (const v of LADDER_SPEEDS) {
+          const strict = pair.filter((c) => fits(c, v, lo, hi, false)).length;
+          if (!strict || !pair.every((c) => fits(c, v, lo, hi, true))) continue;
+          // Two rods before one; then both in the band before one; then the most of the pair already in the water;
+          // then the speed nearest the leg's.
+          const score = [-pair.length, -strict, -pair.filter((c) => c.inWater).length, near(v)];
+          if (!best || lexLess(score, best.score)) best = { pair, v, score };
+        }
+      }
+    }
+    if (!best) continue;
+    const ids = best.pair.map((c) => c.id);
+    rows.push({ fromFt: lo, toFt: Math.round(hi * 10) / 10, mph: best.v,
+                rods: best.pair.map((c) => {
+                  const w = c.at.get(best.v);
+                  return { id: c.id, lure: c.lure, runsFt: [Math.round(w.min), Math.round(w.max)], rated: c.rated };
+                }),
+                asRigged: ids.length === out.length && out.every((id) => ids.includes(id))
+                  && Math.abs(best.v - (Number(legMph) || 0)) < 0.051,
+                alone: best.pair.length === 1 });
+  }
+  if (!rows.length) return undefined;
+  // THE SAME TWO RODS AT THE SAME SPEED READ AS ONE ROW: "15-25 ft", not two rows saying the same thing.
+  const merged = [];
+  const key = (r) => `${r.rods.map((x) => x.id).sort().join('+')}@${r.mph}`;
+  for (const r of rows) {
+    const last = merged[merged.length - 1];
+    if (last && key(last) === key(r) && Math.abs(last.toFt - r.fromFt) < 1e-9) { last.toFt = r.toFt; continue; }
+    merged.push({ ...r });
+  }
+  return { rows: merged, ceilingFt: Math.round(ceilingFt * 10) / 10, deepFromFt: DEEP_FROM_FT };
 }
 
 /** "06:00" → minutes since midnight. */
@@ -1984,6 +2112,8 @@ export function assemblePlan(o) {
       // Priced at the WATER speed, the same one capBaitDepth() judged the pair at, so the two can
       // never disagree about how deep the same rod is running on the same leg.
       sonarCheck: sonarContingency(rods, deploy, rodPlan, waterMph, o.lureByName),
+      // FISH AT -> WHICH TWO RODS, WHAT SPEED, down to this leg's shallowest water today. See depthLadder().
+      depthLadder: depthLadder(rods, deploy, rodPlan, waterMph, o.lureByName, ceilingTodayFt),
       // THE WOOD THE LURES PASS OVER, in the order the boat meets it, each piece with its top today
       // and each rod's verdict -- for the card, the cues and the exports. Absent when there is none.
       // Never a waypoint: "i just don't want to clutter up the screen with waypoints".
@@ -2368,6 +2498,24 @@ export function assemblePlan(o) {
   const fluoro = changes.filter((c) => c.cost === 'fluoro').length;
   if (fluoro >= FLUORO_RETIE_WARN) {
     warnings.push(`${fluoro} fluoro reties — each one is a knot in a moving kayak`);
+  }
+  // TWO RODS THAT CAN BE SLOWED DOWN TO FISH AT 25 FT AND DEEPER, on any day that trolls water that deep. His rule,
+  // 11/10: "for 25 and down the safest bet is slowing down an a-rig, spoon, paddletail, or bucktail". The prompt asks
+  // for it; this says so when the plan did not do it, so the depth ladder's deep rows are not one rod or none.
+  if (typeof o.lureByName === 'function') {
+    const deepWater = (plan.legs || []).some((l) => l && l.type === 'troll'
+      && Number(l.depthMaxFt ?? l.depthFt) >= DEEP_FROM_FT);
+    const deepRods = rods.filter((r) => r && !r.staged && (!r.role || r.role === 'troll'))
+      .filter((r) => { const l = o.lureByName(r.lure); return l && DEEP_TYPES.includes(l.type); });
+    if (deepWater && deepRods.length < 2) {
+      warnings.push(deepRods.length
+        ? `This day trolls water ${DEEP_FROM_FT} ft and deeper, and only one rod rigged to troll can be slowed down to fish `
+          + `that deep: ${deepRods[0].id} (${deepRods[0].lure}). Rig a second of the A-rig, a spoon, a paddletail or a `
+          + 'bucktail before you leave.'
+        : `This day trolls water ${DEEP_FROM_FT} ft and deeper, and no rod rigged to troll is an A-rig, a spoon, a `
+          + `paddletail or a bucktail, the baits that reach fish at ${DEEP_FROM_FT} ft and deeper by slowing down. Rig two `
+          + 'before you leave.');
+    }
   }
 
   return plan;

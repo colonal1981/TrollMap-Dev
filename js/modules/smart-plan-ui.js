@@ -778,6 +778,11 @@ export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeed
             ${rodSlotHtml(rods[0] || null, phaseOrderIndex(entry.key, cards), 0)}
             ${rodSlotHtml(rods[1] || null, phaseOrderIndex(entry.key, cards), 1)}
           </div>
+          ${entry.ladder && entry.ladder.rows && entry.ladder.rows.length ? `<div style="font-size:11px;border-top:1px dashed var(--line);padding-top:6px;margin-bottom:6px">
+            <div style="color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px">If the sounder shows fish at</div>
+            ${entry.ladder.rows.map((r) => `<div style="margin:2px 0;color:var(--text)${r.asRigged ? ';font-weight:600' : ''}"><span style="color:var(--accent)">${esc(`${r.fromFt}\u2013${r.toFt} ft`)}</span> · ${esc(r.rods.map((x) => `${x.id} ${x.lure}${x.rated ? '' : ` ~${x.runsFt[0]}\u2013${x.runsFt[1]}`}`).join(' + '))} · <b>${esc(Math.abs(r.mph - 0.75) < 1e-9 ? '0.75' : Number(r.mph).toFixed(1))} mph</b>${r.asRigged ? ' (as rigged)' : ''}</div>`).join('')}
+            ${entry.ladder.note ? `<div style="color:var(--muted);font-style:italic;margin-top:2px">${esc(entry.ladder.note)}</div>` : ''}
+          </div>` : ''}
           ${(entry.warnings || []).length ? `<div style="font-size:11px;color:var(--warn);border-top:1px dashed var(--line);padding-top:6px">
             ${entry.warnings.map((w) => `<div style="margin:2px 0">⚠ ${esc(w)}</div>`).join('')}
           </div>` : ''}

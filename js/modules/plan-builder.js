@@ -974,7 +974,11 @@ export async function buildPlanPreviewHtml(p){
           return `${esc(r.side||'')}: ${esc(r.lure||'')}${r.jigWeight?` ${esc(r.jigWeight)}`:''}`
                + `${r.depth?` — runs ${esc(String(r.depth))} ft`:''}${esc(gap)}`;
         }).join('<br>');
-        return `<tr style="background:#eef7ff"><td><b>${icon} TROLL — ${esc(label)}</b><br><span class="rp-small">${esc(e.desc||e.phaseName||'')}</span></td><td>${esc(speed)}<br>${esc(depth)}</td><td class="rp-small">${rods || `${esc(e.port||'')} / ${esc(e.starboard||'')}`}${e.bottomNote?`<br><i>${esc(e.bottomNote)}</i>`:''}</td><td class="rp-small">${esc(e.why||'')}</td></tr>`;
+        // THE LADDER, under the rods: fish at -> which two rods, what speed (11/10). Its sentences are plan-to-timeline's.
+        const ladder = e.ladder && Array.isArray(e.ladder.rows) && e.ladder.rows.length
+          ? `<br><b>If the sounder shows fish at:</b><br>${e.ladder.rows.map((r) => esc(r.text || '')).join('<br>')}${e.ladder.note ? `<br><i>${esc(e.ladder.note)}</i>` : ''}`
+          : '';
+        return `<tr style="background:#eef7ff"><td><b>${icon} TROLL — ${esc(label)}</b><br><span class="rp-small">${esc(e.desc||e.phaseName||'')}</span></td><td>${esc(speed)}<br>${esc(depth)}</td><td class="rp-small">${rods || `${esc(e.port||'')} / ${esc(e.starboard||'')}`}${e.bottomNote?`<br><i>${esc(e.bottomNote)}</i>`:''}${ladder}</td><td class="rp-small">${esc(e.why||'')}</td></tr>`;
       } else if (e.type === 'change') {
         return `<tr style="background:#fffde7"><td><b>🔁 SWAP — ${esc(String(e.rodId||''))}</b><br><span class="rp-small">${esc(e.mark||'')} in</span></td><td colspan="2">${esc(e.from||'—')} → <b>${esc(e.to||'')}</b><br><span class="rp-small">${esc(e.costLabel||e.cost||'')}</span></td><td class="rp-small">${esc(e.why||'')}</td></tr>`;
       } else {
