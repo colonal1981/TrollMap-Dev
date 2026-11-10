@@ -159,8 +159,8 @@ describe('plan-to-timeline — a v2 plan in the shape the export path reads', ()
     expect(built.timeline.find((e) => e.id === 'S1.1').targetDepth).toBe(18);
   });
 
-  it('names the lure on a cast rod, not just its id', () => {
-    expect(built.timeline.find((e) => e.id === 'S1.1').recommendedLures).toEqual(['R6: Ned Rig']);
+  it('names the lure on a cast rod, not just its id, and its colour (item 81)', () => {
+    expect(built.timeline.find((e) => e.id === 'S1.1').recommendedLures).toEqual(['R6: Ned Rig · green pumpkin']);
   });
 
   it('sends only the rods that stay in the boat to the pre-rig table', () => {

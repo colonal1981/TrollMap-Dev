@@ -67,6 +67,8 @@ import { todayDepthFt } from '../utils/water-conditions.js';
 import { HIS_CLEAR_FT } from '../utils/wood.js';
 import { ozLabel } from '../utils/oz.js';
 import { lightLabel } from '../utils/light-state.js';
+import { TACKLE_INVENTORY, JIGHEADS_OWNED_OZ } from '../data/tackle-inventory.js';
+import { jigheadRangeOz } from '../data/lure-knowledge.js';
 
 // THE MAP AND THE CARD SHARE ONE PALETTE, and this is where it lives.
 //
@@ -453,6 +455,40 @@ function woodLine(leg) {
   return `Wood under this pass: ${w.length} piece${w.length === 1 ? '' : 's'}, ${parts.join(', ')}.`;
 }
 
+// THE HEAD A CAST-ONLY PADDLE TAIL GOES ON. Ryan, 11/7, of his Moultrie plan: "the casting stop doesn't say what size
+// jighead or color of swimbait". A trolled swimbait has the head capBaitDepth() fitted on its leg; a rod that is only ever
+// cast had none, and both the stop and Rods At Launch printed nothing for it. This is the lightest head he owns that the
+// bait carries (jigheadRangeOz(): a 5" takes 3/4 to 1 oz), for a slow count-down at the stop. The lightest is MINE.
+export function castHeadOz(lureName) {
+  const l = TACKLE_INVENTORY.find((x) => x && x.name === lureName);
+  const range = l && jigheadRangeOz(l.lengthIn, l.type);
+  if (!range) return null;
+  const fits = JIGHEADS_OWNED_OZ.filter((w) => w >= range.startOz - 1e-9 && w <= range.maxOz + 1e-9);
+  return fits.length ? fits[0] : null;
+}
+
+// WHAT IS ON A ROD AT A STOP: its lure, colour, and the head or weight on it at that point of the day -- the same facts
+// the rod card and Rods At Launch give, so a stop that names a rod says what is tied to it. The head is the one fitted
+// on the stop's own leg, or on the last leg before it that fitted one (a head stays on until it is changed), or, for a
+// rod that is only cast, castHeadOz().
+function headAt(id, leg, legs) {
+  const upto = legs.slice(0, Math.max(0, legs.indexOf(leg)) + 1).reverse();
+  for (const l of upto) {
+    const over = l && l.rodPlan && l.rodPlan[id];
+    if (over && (over.jigheadOz != null || over.inlineWeightOz != null)) return over;
+  }
+  return null;
+}
+export function stopRodLine(r, leg, legs) {
+  if (!r || !r.lure) return '';
+  const over = leg && Array.isArray(legs) ? headAt(r.id, leg, legs) : null;
+  const castOz = !over && r.role === 'cast' ? castHeadOz(r.lure) : null;
+  const weight = over && over.jigheadOz != null ? `on the ${ozLabel(over.jigheadOz)} head`
+    : over && over.inlineWeightOz != null ? `behind the ${ozLabel(over.inlineWeightOz)} inline weight`
+    : castOz != null ? `on the ${ozLabel(castOz)} head` : '';
+  return [`${r.id}: ${clean(r.lure)}`, clean(r.color), weight].filter(Boolean).join(' · ');
+}
+
 function fallbackLine(leg, rodsById) {
   const f = leg && leg.ifNotProducing;
   if (!f || !f.rodId || !f.insteadOf) return '';
@@ -745,7 +781,7 @@ export function planToTimeline(plan, o = {}) {
         presentation: clean(s.presentation),
         recommendedLures: (s.rods || []).map((id) => {
           const r = rodsById.get(id);
-          return r && r.lure ? `${r.id}: ${r.lure}` : id;
+          return r && r.lure ? stopRodLine(r, leg, plan.legs) : id;
         }),
         tacticalNote: clean(s.why),
         positioning: clean(s.positioning) || clean(s.why),
@@ -806,7 +842,8 @@ export function planToTimeline(plan, o = {}) {
     .filter((r) => r.role === 'cast' || r.staged)
     .map((r) => ({ rod: r.id, lure: clean(r.lure), rigging: r.rig === 'fluoro'
                      ? '20 lb fluoro leader — tie direct' : 'swivel snap',
-                   jigheadWeight: '', presentation: clean(r.why) }));
+                   jigheadWeight: r.role === 'cast' && castHeadOz(r.lure) != null ? ozLabel(castHeadOz(r.lure)) : '',
+                   presentation: clean(r.why) }));
 
   // ONE PROSE BLOCK, BOTH HALVES, EACH LABELLED. Written as two paragraphs rather than two fields
   // because every reader of the scout report -- the panel, the print, the HTML export, the saved plan

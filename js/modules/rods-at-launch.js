@@ -203,7 +203,7 @@ export function rodsAtLaunch(p) {
       row.inlineWeight ? `Weight: ${str(row.inlineWeight)} inline` : '',
       row.jigWeight ? `Head: ${str(row.jigWeight)}` : '',
       row.trailerSize ? `Trailer: ${str(row.trailerSize)}` : '',
-    ].filter(Boolean).join(' · ') : str(castRow && castRow.jigheadWeight);
+    ].filter(Boolean).join(' · ') : (str(castRow && castRow.jigheadWeight) ? `Head: ${str(castRow.jigheadWeight)}` : '');
     // A SPOON SAYS ITS RIG HERE EVEN WHEN IT IS ONLY THE BACKUP (spoonRig() in plan-prompt.js). Ryan, 11/6: "nothing in
     // the html i am looking at says that the spoon is supposed to be tied to a weight and if so what weight".
     if (lo && lo.rigSaid && lure === str(lo.lure)) {
