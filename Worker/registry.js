@@ -447,23 +447,30 @@ export async function regulationsTable(env, opts = {}) {
 
 const lower = (v) => String(v == null ? '' : v).trim().toLowerCase();
 
+/** The county parenthetical is metadata, not part of the water's name. */
+const bare = (v) => lower(v).replace(/\s*\([^)]*\)\s*/g, ' ').replace(/\s+/g, ' ').trim();
+
 /**
- * The county parenthetical is metadata, not part of the water's name.
+ * bare(), AND THE SPACE IT LEAVES BEFORE A COMMA TAKEN OUT -- for the name lookup's last pass only.
  *
- * AND THE SPACE IT LEAVES BEFORE A COMMA IS NOT PART OF IT EITHER. The registry spells the Congaree
- * `Congaree River (to SC-601), SC`; taking the parenthetical out left `congaree river , sc`, and the
- * app's `Congaree River, SC` is `congaree river, sc`, so the one row this pass exists to reach was
- * never reached. The regulations route then said "No closure information for this water" on a river
- * the book closes to stripers June 16 - Sept 30 (Santee River system, SC 2026-2027 guide). Ryan,
- * 2026-11-09: "yes congaree closes from june 16th through sept 30".
+ * The registry spells the Congaree `Congaree River (to SC-601), SC`; bare() makes that
+ * `congaree river , sc`, and the app's `Congaree River, SC` is `congaree river, sc`, so the one row
+ * this pass exists to reach was never reached. The regulations route then said "No closure
+ * information for this water" on a river the book closes to stripers June 16 - Sept 30 (Santee River
+ * system, SC 2026-2027 guide). Ryan, 2026-11-09: "yes congaree closes from june 16th through sept 30".
+ *
+ * NOT IN bare() ITSELF, because bare() also groups the identity names a research profile is filed
+ * under (identityNameOwners), and test/identity-names.test.js pins those to the client's copy. Changed
+ * there, Saluda River, SC and the Nolichucky lost names the client still gives them; CI caught it on
+ * 2026-11-10 and the Worker was not deployed.
  *
  * The state suffix is still part of the name and must still match: this joins `river , sc` to
- * `river, sc`, never `river, sc` to `river`. Measured on the 1,174 water names the app offers,
- * 2026-11-09: five newly resolve -- the Congaree, Broad River SC, Catawba River NC, Pee Dee River NC
- * (each to the row the app's own registry lookup already gives it) and Skidaway River (ICW), GA -- and
- * no name that resolved before resolves differently.
+ * `river, sc`, never `river, sc` to `river`. Measured on the 1,174 water names the app offers: five
+ * newly resolve -- the Congaree, Broad River SC, Catawba River NC, Pee Dee River NC (each to the row
+ * the app's own registry lookup already gives it) and Skidaway River (ICW), GA -- and no name that
+ * resolved before resolves differently.
  */
-const bare = (v) => lower(v).replace(/\s*\([^)]*\)\s*/g, ' ').replace(/\s+,/g, ',').replace(/\s+/g, ' ').trim();
+const bareLookup = (v) => bare(v).replace(/ ,/g, ',');
 
 /**
  * One registry row for a name, or null.
@@ -511,13 +518,13 @@ export function resolveRegistryRow(index, lakeName) {
     if (hit !== undefined) return hit;         // null here means AMBIGUOUS, and stops the search
   }
 
-  const key = bare(lakeName);
+  const key = bareLookup(lakeName);
   if (!key) return null;
   const buckets = new Map();
   for (const r of rows) {
     for (const cand of [r.display_name, r.name, r.legacy_display_name,
                         ...(Array.isArray(r.legacy_display_names) ? r.legacy_display_names : [])]) {
-      const b = bare(cand);
+      const b = bareLookup(cand);
       if (!b) continue;
       if (!buckets.has(b)) buckets.set(b, new Set());
       buckets.get(b).add(r);
