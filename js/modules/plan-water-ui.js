@@ -2197,6 +2197,7 @@ export async function buildFromPicked() {
       ? `Majors ${(T.conditions && T.conditions.solunar
                    ? T.conditions.solunar.majors : []).join(', ')}` : '',
     cardDefs: built.cards, unified: built.timeline,
+    rodsSource: { plan: r.plan, timeline: built.timeline, castRods: built.castRods },
   });
   syncSpread(built.cards, built.routeRods, built.routeSpeeds);
 

@@ -601,6 +601,7 @@ export async function runSmartPlanV2(opts = {}) {
         solunar: sol ? `Majors ${conditionsFrom(inp, ramp, sol, null).solunar.majors.join(', ')}` : '',
         cardDefs: shown.cards, unified: shown.timeline,
         preview: 'benchPlan',
+        rodsSource: { plan: r.plan, timeline: shown.timeline, castRods: shown.castRods },
       });
       // WHAT WAS DRAWN, KEPT SO IT CAN BE WRITTEN OUT. Ryan, 2026-09-14, on the first version of
       // the bench's HTML export: "i was looking for the html plan output just like if i ran a
@@ -648,6 +649,7 @@ export async function runSmartPlanV2(opts = {}) {
     // The two that make this v2's plan rather than a four-phase day: one card per leg, and a
     // timeline the assembler already ordered.
     cardDefs: built.cards, unified: built.timeline,
+    rodsSource: { plan: r.plan, timeline: built.timeline, castRods: built.castRods },
   });
   syncSpread(built.cards, built.routeRods, built.routeSpeeds);
 

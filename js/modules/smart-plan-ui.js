@@ -18,6 +18,7 @@ import { esc } from '../utils/escape.js';
 import { LURE_PRESETS, autoCalculateLead } from './spread-builder.js';
 import { getLureColor } from '../data/lure-knowledge.js';
 import { ROD_RIG } from './plan-prompt.js';
+import { rodsAtLaunchPanelHtml } from './rods-at-launch.js';
 
 // ── Reel assignment rule ──────────────────────────────────────────────────────
 const REEL_LEADER = 'Spinning / 30lb 8-strand braid + 20lb fluoro leader';
@@ -504,7 +505,7 @@ export function buildUnifiedTimeline({ routeRods, timeline, stopCandidates, rout
  * So `preview` is one option, not two: it names the container to draw into AND suppresses every
  * global write and the waypoint injection. Absent, behaviour is exactly what it has always been.
  */
-export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeeds = {}, phases, solunar, stopCandidates, timeline, cardDefs = null, unified = null, preview = null }) {
+export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeeds = {}, phases, solunar, stopCandidates, timeline, cardDefs = null, unified = null, preview = null, rodsSource = null }) {
   const previewEl = typeof preview === 'string' ? document.getElementById(preview) : preview;
   let container = previewEl || document.getElementById('smartPlanUIContainer');
   if (!container) {
@@ -626,6 +627,13 @@ export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeed
 
   if (solunar) {
     html += `<div style="background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 12px;margin-bottom:14px;font-size:11px;color:var(--muted)">🌙 ${esc(solunar)}</div>`;
+  }
+
+  // ── Rods At Launch, above Leg 1 (item 81, his pick 11/10) ──────────────────
+  // `rodsSource` is collectPlan()-shaped ({ plan, timeline, castRods }); a caller with no plan block passes nothing and
+  // the tab draws as it did. A failure here must not take the plan off the screen.
+  if (rodsSource) {
+    try { html += rodsAtLaunchPanelHtml(rodsSource, esc); } catch (e) { console.warn('[smart-plan-ui] rods at launch failed', e && e.message); }
   }
 
   // ── Single Unified Chronological Timeline ──────────────────────────────────
@@ -912,7 +920,7 @@ export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeed
     rod.reel  = reelForRod(rod.rod, picked);
     rod.color = getLureColor(picked, 'clear');
     rod.lead  = String(autoCalculateLead({ ...rod, lure: picked }, card.speedMph));
-    renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeeds, phases, solunar, stopCandidates, timeline });
+    renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeeds, phases, solunar, stopCandidates, timeline, rodsSource });
     syncSpread(cards, routeRods, routeSpeeds);
   };
 }

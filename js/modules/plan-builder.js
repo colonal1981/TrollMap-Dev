@@ -816,6 +816,7 @@ function restorePlanView(p) {
     scoutReport: p.rationale || '',
     solunar: (p.meta && p.meta.solunar) || '',
     cardDefs, unified: unifiedLoops,
+    rodsSource: p,
   });
 
   // THE LINES AND THE MARKS, owned the way materialisePlan() owns them: flagged as the plan's, so

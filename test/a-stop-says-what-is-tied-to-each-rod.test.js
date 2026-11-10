@@ -60,3 +60,35 @@ describe('a stop names each rod\'s lure, colour and head', () => {
     expect(r6.where.some((w) => /cast at S2\.1/.test(w))).toBe(true);
   });
 });
+
+// AND THE RODS AT LAUNCH LIST IS ON THE PLANNER TAB, ABOVE LEG 1. His pick, 11/10: "Top, above Leg 1".
+import { rodsAtLaunchPanelHtml } from '../js/modules/rods-at-launch.js';
+import { readFileSync } from 'node:fs';
+
+describe('Rods At Launch on the planner tab, above the first leg (item 81)', () => {
+  const built = planToTimeline(PLAN, {});
+  const esc = (v) => String(v).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const html = rodsAtLaunchPanelHtml({ plan: PLAN, timeline: built.timeline, castRods: built.castRods }, esc);
+
+  it('lists each rod with its lure, colour and head, and where it fishes', () => {
+    expect(html).toContain('Rods At Launch');
+    expect(html).toContain('<b>Swimbait 5&quot; – Jighead</b> · pearl/chartreuse tail · Head: 3/4oz');
+    expect(html).toMatch(/R6<\/div>[\s\S]*Swimbait 5&quot; – Jighead<\/b> · pearl · Head: 3\/4oz/);
+    expect(html).toMatch(/cast at S2\.1/);
+    expect(html).toContain('Lure changes');
+  });
+
+  it('is drawn before the timeline, and every path that builds a plan hands it the plan', () => {
+    const ui = readFileSync(new URL('../js/modules/smart-plan-ui.js', import.meta.url), 'utf8');
+    expect(ui.indexOf('rodsAtLaunchPanelHtml(rodsSource')).toBeGreaterThan(0);
+    expect(ui.indexOf('rodsAtLaunchPanelHtml(rodsSource')).toBeLessThan(ui.indexOf('Unified Trip Timeline — Troll'));
+    for (const f of ['plan-water-ui.js', 'smart-plan-v2-wiring.js', 'plan-builder.js']) {
+      const src = readFileSync(new URL(`../js/modules/${f}`, import.meta.url), 'utf8');
+      expect(/rodsSource:/.test(src)).toBe(true);
+    }
+  });
+
+  it('draws nothing when no rod fishes, rather than an empty box', () => {
+    expect(rodsAtLaunchPanelHtml({ plan: { loadout: { rods: [] } }, timeline: [], castRods: [] }, esc)).toBe('');
+  });
+});

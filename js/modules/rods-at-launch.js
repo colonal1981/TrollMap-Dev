@@ -303,3 +303,41 @@ export function rodsAtLaunchHtml(p, esc) {
     ${changeBlock}
     ${swapBlock}`;
 }
+
+/**
+ * THE SAME LIST ON THE PLANNER TAB, above the first leg (item 81). Ryan, 11/7: "the rods at launch tell me everything i
+ * need to know... problem is that the rods at launch isn't on the planner tab... maybe that should be on the actual
+ * planner screen after the plan runs?"; his "81 can do be done", 11/10, and his pick, "Top, above Leg 1".
+ *
+ * The facts are rodsAtLaunch()'s, the same ones the report prints; only the drawing is the tab's: its dark panel, one
+ * block a rod so it reads on the phone without a table scrolling sideways. `p` is collectPlan()-shaped: `plan`, the
+ * exported `timeline`, `castRods`.
+ */
+export function rodsAtLaunchPanelHtml(p, esc) {
+  const { rods, changes } = rodsAtLaunch(p);
+  const lit = rods.filter((r) => r.status === 'fishes' || r.status === 'backup');
+  if (!lit.length) return '';
+  const tied = (r) => (r.rig === 'fluoro' ? 'fluoro leader' : r.rig === 'snap' ? 'swivel snap' : (r.terminal || ''));
+  const whereLine = (r) => (r.status === 'backup' ? `${r.backup} — tie it on before you leave`
+    : [r.where.join(', '), r.backup].filter(Boolean).join(' · '));
+  const rodBlock = (r) => `
+      <div style="display:flex;gap:10px;align-items:flex-start;padding:6px 0;border-top:1px dashed var(--line)">
+        <div style="min-width:28px;font-weight:700;color:var(--accent)">${esc(r.id)}</div>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:12px;color:var(--text)"><b>${esc(r.lure || '—')}</b>${r.color ? ` · ${esc(r.color)}` : ''}${r.weight ? ` · ${esc(r.weight)}` : ''}</div>
+          <div style="font-size:11px;color:var(--muted)">${esc(tied(r))}${r.runs ? ` · runs ${esc(r.runs)} ft` : ''}${whereLine(r) ? ` · ${esc(whereLine(r))}` : ''}</div>
+        </div>
+      </div>`;
+  const rest = rods.filter((r) => !lit.includes(r) && r.lure);
+  const changeLines = changes.length
+    ? changes.map((c) => `<div style="font-size:11px;color:var(--text);padding:2px 0">${c.beforeLeg ? `<b>Before ${esc(c.beforeLeg)}</b>${c.at ? ` (${esc(c.at)})` : ''}: ` : ''}${esc(c.rodId)} ${esc(c.from || '—')} → <b>${esc(c.to || '—')}</b>${c.cost ? ` · ${esc(c.cost)}` : ''}</div>`).join('')
+    : '<div style="font-size:11px;color:var(--muted)">None. Every rod keeps what it was rigged with at launch all day.</div>';
+  return `
+    <div style="background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:14px">
+      <div style="font-size:11px;font-weight:700;color:var(--accent2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">🎣 Rods At Launch — tie these on before you leave the ramp</div>
+      ${lit.map(rodBlock).join('')}
+      ${rest.length ? `<div style="font-size:11px;color:var(--muted);padding-top:6px;border-top:1px dashed var(--line)">Not used today: ${esc(rest.map((r) => r.id).join(', '))}</div>` : ''}
+      <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-top:8px">Lure changes</div>
+      ${changeLines}
+    </div>`;
+}
