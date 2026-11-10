@@ -61,7 +61,7 @@ import { CHART_LEVELS, chartLevelFor, measuredDays } from '../data/chart-levels.
 import { compassOf } from '../utils/compass.js';
 import { isNum, num } from '../utils/num.js';
 import { depthWindow, jigheadRangeOz, trollableBaits, describeBait, LURE_KNOWLEDGE,
-         gpsWindowFor, leadForDepth, requiresInlineWeight } from '../data/lure-knowledge.js';
+         gpsWindowFor, leadForDepth, requiresInlineWeight, levelsOffFt } from '../data/lure-knowledge.js';
 import { RIGGED_TROLLING_WEIGHT_OZ, JIGHEADS_OWNED_OZ, TROLLING_WEIGHTS_OWNED_OZ, TACKLE_INVENTORY, RIGGED_SPOON } from '../data/tackle-inventory.js';
 import { ozLabel } from '../utils/oz.js';
 import { promptSafeTackleName } from '../utils/tackle-name.js';
@@ -2254,6 +2254,17 @@ export function buildPlanRequest(o) {
              + `carries (${range.startOz}-${range.maxOz} oz) and works out the line from that, `
              + `the speed and the depth you asked for. A lead you pick is a number about a bait `
              + `with no weight on it yet.`;
+      }
+      // A BAIT THAT LEVELS OFF IS NOT "as deep as you feed it" (the lipless, 11/8-11/10): more line stops taking it
+      // down, and only a slower boat does.
+      const ceil = levelsOffFt(lure, 2.0);
+      if (ceil != null) {
+        const slowest = kSpeed && isNum(kSpeed.min) && num(kSpeed.min) > 0 ? num(kSpeed.min) : null;
+        const atSlow = slowest != null && slowest < 2.0 ? levelsOffFt(lure, slowest) : null;
+        return `${name} — depth set by LEAD and SPEED up to where it LEVELS OFF: about ${ceil} ft at 2 mph `
+             + `however much line is out${atSlow != null ? `, about ${atSlow} ft at ${slowest} mph, the slowest it keeps `
+             + `its action` : ''}. Slower is deeper, faster is shallower; past that depth more line buys nothing. `
+             + `Treat it as a shallow bait unless the leg is trolled slow for it.`;
       }
       return `${name} — depth set by LEAD and SPEED. More line out or slower is deeper; `
            + `shorter or faster is shallower. No ceiling: it will go as deep as you feed it.`;

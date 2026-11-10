@@ -55,6 +55,30 @@ BASE = re.compile(r"(?:\bout of|\bbased (?:at|in|out of)|\bowner of|\boperates?)
 # Short Stay day, 11/6: 86 of the 87 striper reports around the date are about both lakes, and 12 of them say dam.
 THE_DAM = re.compile(r"\bthe\s+(?:main\s+)?dam\b", re.I)
 SENTENCE = re.compile(r'(?<=[.!?])\s+')
+# A PLACE NAMED ONLY AS WHERE TO BUY BAIT OR TO LAUNCH IS NOT WHERE THE FISH ARE (11/10). His Wateree bar on 11/8 offered
+# Taylor Creek for his stripers from one report, Carolina Sportsman 11/5/2024: "Check Suttons Landing in Taylors Creek on
+# Lake Wateree for live bait." So an occurrence is passed over where its sentence is about getting bait and the place is
+# the shop's address or the shop itself, or where it is only where a boat goes in. The app applies the same rule to the
+# files already built (namedOnlyForBaitOrLaunch() in js/modules/reports-this-week.js); keep the two the same.
+BAIT_WORDS = re.compile(r'\b(?:bait|herring|shad|minnows?|shiners?|crickets|worms|bluebacks?)\b', re.I)
+SHOP_BEFORE = re.compile(r'\b[A-Z][\w&.-]*(?:\s+(?:[A-Z][\w&.-]*|&|and))*\s+(?:Landing|Marina|Bait(?:\s+(?:&|and)\s+Tackle)?|Tackle|Store|'
+                         r'Shop|Outdoors)s?\s+(?:in|on|at|off)\s+(?:the\s+)?$')
+BUY_BEFORE = re.compile(r'\b(?:buy(?:ing)?|bought|purchas\w*|pick(?:ed|ing)?\s+up|available|carr(?:y|ies)|sells?|selling|stock(?:s|ed)?|'
+                        r'get(?:ting)?\s+(?:\w+\s+){0,3}(?:bait|herring|shad|minnows|shiners))\b[^.!?]{0,60}\b(?:at|from)\s+(?:the\s+)?$', re.I)
+SHOP_AFTER = re.compile(r'^\s*(?:(?:in|on)\s+[A-Z][\w-]*(?:\s+[A-Z][\w-]*)*\s*)?(?:,[^,.]{0,60},\s*)?(?:has|have|carries|carry|sells|stocks|'
+                        r'is\s+(?:the\s+)?(?:\w+\s+)?sources?\s+for)\b|^[^.!?]{0,60}\bfor\s+(?:live\s+)?bait\b', re.I)
+LAUNCH_BEFORE = re.compile(r'\b(?:launch(?:ed|es|ing)?|put(?:s|ting)?\s+in)\s+(?:at|from|out\s+of)\s+(?:the\s+)?$', re.I)
+
+
+def bait_or_launch(t, a, b):
+    """Is the name at t[a:b] a bait shop's address, the shop itself, or a launch, in its sentence?"""
+    s0 = max(t.rfind('.', 0, a), t.rfind('!', 0, a), t.rfind('?', 0, a)) + 1
+    ends = [k for k in (t.find(c, b) for c in '.!?') if k >= 0]
+    s1 = min(ends) if ends else len(t)
+    before, after, sentence = t[s0:a], t[b:s1], t[s0:s1]
+    bait = bool(BAIT_WORDS.search(sentence)) and bool(SHOP_BEFORE.search(before) or BUY_BEFORE.search(before)
+                                                      or SHOP_AFTER.search(after))
+    return bait or bool(LAUNCH_BEFORE.search(before))
 ALIASES = {             # his names for a place the chart names otherwise
     'Pinopolis Dam': (['Lake Moultrie Dam', 'Moultrie Dam'], 'Ryan, 2026-11-03: "lake moultrie dam = pinopolis dam"'),
 }
@@ -233,6 +257,7 @@ class Matcher:
         if self.full:
             for m in self.full.finditer(t):
                 if BASE.search(t[max(0, m.start() - 24):m.start()]): continue      # the guide's base, not his fish
+                if bait_or_launch(t, m.start(), m.end()): continue                  # a bait shop or a launch
                 key = re.sub(r'\s+', ' ', m.group(0)).lower()
                 g = self.by.get(key) or self.by.get(re.sub(r's$', '', key))
                 if g: hit.append(g)
@@ -241,6 +266,7 @@ class Matcher:
         for rx, g in self.bare:
             # "the Saluda" is the river; "Saluda Shoals" and "Lake Saluda" are not
             if any(not re.search(r"[A-Z][a-z]+[\s-]+$", t[:m.start()]) and not re.match(r"[\s-]+[A-Z]", t[m.end():])
+                   and not bait_or_launch(t, m.start(), m.end())
                    for m in rx.finditer(t)):
                 hit.append(g)
         seen, out = set(), []

@@ -1,7 +1,7 @@
 import { describe, it, expect } from './expect-shim.mjs';
 import { TACKLE_INVENTORY, RIGGED_TROLLING_WEIGHT_OZ } from '../js/data/tackle-inventory.js';
 import { LURE_KNOWLEDGE, LURE_COLORS, depthWindow, leadForDepth, canReachDepth,
-         requiresInlineWeight } from '../js/data/lure-knowledge.js';
+         requiresInlineWeight, levelsOffFt } from '../js/data/lure-knowledge.js';
 import { TYPE_LABELS } from '../js/modules/tackle-inventory-ui.js';
 import { FISHING_STYLE } from '../js/data/fishing-style-profile.js';
 
@@ -261,11 +261,15 @@ describe('depth model — one source, four modes', () => {
       // bare asks a planing bait for a depth, which since 2026-09-14 correctly answers `null`.
       const l = requiresInlineWeight(bought.type)
         ? { ...bought, inlineWeightOz: RIGGED_TROLLING_WEIGHT_OZ } : bought;
+      // A BAIT THAT LEVELS OFF (the lipless, 11/10) round-trips up to its ceiling at this speed; asked for more, it is there.
+      const ceil = levelsOffFt(l, 1.8);
       for (const d of [8, 15, 25, 35]) {
         const lead = leadForDepth(l, d, 1.8);
         const back = depthWindow(l, { speedMph: 1.8, leadFt: lead });
-        expect(back.min, `${l.id} @${d}ft -> ${lead}ft lead`).toBeLessThanOrEqual(d);
-        expect(back.max, `${l.id} @${d}ft -> ${lead}ft lead`).toBeGreaterThanOrEqual(d);
+        const want = ceil != null ? Math.min(d, Math.floor(ceil)) : d;
+        expect(back.min, `${l.id} @${d}ft -> ${lead}ft lead`).toBeLessThanOrEqual(want);
+        expect(back.max, `${l.id} @${d}ft -> ${lead}ft lead`).toBeGreaterThanOrEqual(want);
+        if (ceil != null) expect(back.max, `${l.id} never past ${ceil}`).toBeLessThanOrEqual(Math.round(ceil));
       }
     }
   });

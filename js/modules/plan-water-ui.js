@@ -48,12 +48,13 @@ import { fetchForecast,
          detectCoastalZone, fogNote, fetchMovingWater, movingWaterNote } from './plan-preflight.js';
 import { lakeSurfaceTemp, poolOffsetFt } from '../utils/water-conditions.js';
 import { landingsFor } from '../data/launch-reach.js';
+import { closureFor } from '../data/landing-closures.js';
 import { rampWater, poolsFor, sameWaterLandings, cutOffPool, poolOnlyState, cutOffNote } from '../data/lake-pools.js';
 import { closerLanding, closerLandingNote } from './closer-landing.js';
 import { askLaunchStatus, launchStatusNote } from './launch-status.js';
 import { askGuideReports, savedGuide } from './guide-reports.js';
 import { askThisWeek, turnsFromReports, rampsByReports, areasFromReports } from './reports-this-week.js';
-import { layAreas, optionLoop, optionLines, runCrankbaits, RUN_MPH, AREA_R_M, hm } from './plan-areas.js';
+import { layAreas, optionLoop, optionLines, runCrankbaits, RUN_MPH, AREA_R_M, hm, landingSaid } from './plan-areas.js';
 import { shoreRays, roughLegs } from '../utils/wind-waves.js';
 import { inshoreSeasonFor } from '../data/inshore-season.js';
 import { seabedHabitatFor } from '../data/seabed-habitat.js';
@@ -1438,12 +1439,19 @@ export async function trollForMe(opts = {}) {
     say(`Measuring the areas the reports name from ${T.rampName || 'the ramp'}…`);
     await new Promise((res) => setTimeout(res, 0));
     let day = null;
+    // The landings on his water, each with any closure known for it: an area names the one nearest it (plan-areas.js).
+    let landings = [];
+    try {
+      landings = sameWaterLandings(await poolsFor(T.r2Key), T.ramp, await landingsFor(T.r2Key))
+        .filter((l) => Number.isFinite(Number(l.lon)) && Number.isFinite(Number(l.lat)))
+        .map((l) => ({ name: l.name, at: [Number(l.lon), Number(l.lat)], closed: closureFor(T.r2Key, l) }));
+    } catch (e) { console.warn('[pick-water] landings for the areas:', e && e.message); }
     try {
       day = layAreas({
         ramp: T.ramp, daFeatures: T.daFeatures, koFeatures: T.koFeatures, shoreFeatures: T.shoreFeatures,
         offsetFt: T.offsetFt || 0, places: T.reportAreas.turns, waterFt, fishFt: T.reportAreas.fishFt,
         windowMin: T.windowMin, stopMin: stopsWanted() * DEFAULT_STOP_MIN, cranks: runCrankbaits(TACKLE_INVENTORY),
-        marks: T.spots, launchTime: T.launchTime,
+        marks: T.spots, launchTime: T.launchTime, landings,
       });
     } catch (e) { day = { error: e.message }; }
     if (day && !day.error && day.options.length) {
@@ -1697,13 +1705,14 @@ export function layAreaOption(i) {
 
 const miles = (m) => `${((Number(m) || 0) / 1609.344).toFixed(1)} mi`;
 
+
 /** The area day in words: the areas, then the option chosen, step by step. For the status line and the prompt. */
 export function areaDaySaid(day, i, { rampName = '', species = '' } = {}) {
   const op = day.options[i];
   const sp = species || 'fish';
   const rep = day.reports || {};
   const areas = day.areas.map((a) => `${a.name} (${a.n} report${a.n === 1 ? '' : 's'}; ${a.near ? 'by the ramp' : `${miles(a.run.lengthM)} by water, about ${hm(a.runMin)} at ${RUN_MPH} mph`}`
-    + `${a.tooFar ? ', too far to leave a lap in this window' : ''})`).join('; ');
+    + `${a.tooFar ? ', too far to leave a lap in this window' : ''}${a.landing ? `; ${landingSaid(a.landing)}` : ''})`).join('; ');
   const ls = day.lines.map((l) => `${l}`);
   const lines = ls.length > 1 ? `the ${ls.slice(0, -1).join(', ')} and ${ls[ls.length - 1]} ft lines` : `the ${ls[0]} ft line`;
   return `Laid by the fishing reports for this time of year: ${day.areas.length} area${day.areas.length === 1 ? '' : 's'} they name`

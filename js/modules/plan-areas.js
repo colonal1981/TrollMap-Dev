@@ -75,6 +75,10 @@ export const RUN_RODS = 2;
 export const MIN_RUN_TROLLED_M = 800;
 /** The farthest a lap goes round its line before it turns: about an hour's lap at 2 mph, out one side and back. */
 export const LAP_OUT_M = 1700;
+/** A landing this close to where he launches is his ramp (his own spot by Clearwater Cove is 220 m from it). */
+export const RAMP_SAME_M = 300;
+/** At most this many two-area options, nearest together first: the bar is a list he reads on a phone. Mine. */
+export const MAX_PAIR_OPTIONS = 3;
 /** A deeper pair of divers is used while it keeps this much of the most of the run any pair could troll. */
 const RUN_KEEP = 0.85;
 
@@ -96,13 +100,45 @@ export function runCrankbaits(inventory) {
     .sort((a, b) => b.max - a.max || b.min - a.min || a.name.localeCompare(b.name));
 }
 
+/** How many feet of the fish's depth one bait's rated depth reaches into. */
+const reach = (r, fishFt) => Math.max(0, Math.min(r.max, fishFt[1]) - Math.max(r.min, fishFt[0]));
+/** The feet of the fish's depth a pair's two baits reach into, added up: both in the fish counts twice. */
+export function inFish(p, fishFt) {
+  if (!Array.isArray(fishFt) || fishFt.length !== 2) return 0;
+  return p.rods.reduce((a, r) => a + reach(r, fishFt), 0);
+}
+/**
+ * THE PAIRS TO CHOOSE FROM, BY HIS RULE OF 11/6: "2 deep diving crankbaits that match the fishing depth and allowable
+ * depth for that run". The pairs whose two baits each reach into the fish's depth; only where there is none, the pairs
+ * with one bait in it; where none reaches it, every pair. 11/9 on Wateree, fish 10-20 ft: the moves went out with an
+ * MR (6-12) and an SR (3-5), because the pair as a whole touched the fish (the MR's last 2 ft) and the SR, rated 15 ft
+ * above the fish, came along. {set, tier: 'both'|'one'|'none'}.
+ */
+/**
+ * How many of a pair's baits run wholly below the fish. Ryan, 8/11: "fish look up" -- a bait above them still gets
+ * eaten, one below them is behind them and out of sight. So between pairs as much in the fish, the one with fewer
+ * baits under it, and only then the deeper.
+ */
+export function belowFish(p, fishFt) {
+  if (!Array.isArray(fishFt) || fishFt.length !== 2) return 0;
+  return p.rods.filter((r) => r.min > fishFt[1]).length;
+}
+export function pairTiers(pairs, fishFt) {
+  if (!Array.isArray(fishFt) || fishFt.length !== 2) return { set: pairs, tier: 'none' };
+  const both = pairs.filter((p) => p.rods.length >= RUN_RODS && p.rods.every((r) => reach(r, fishFt) > 0));
+  if (both.length) return { set: both, tier: 'both' };
+  const one = pairs.filter((p) => p.rods.some((r) => reach(r, fishFt) > 0));
+  return one.length ? { set: one, tier: 'one' } : { set: pairs, tier: 'none' };
+}
+
 /**
  * WHICH TWO DEEP DIVERS GO OUT ON A RUN, AND WHERE THE LINES GO IN.
  *
  * `depths` is today's water at each station along the run, `cum` the metres to each. A pair of divers needs the water
  * at least its deeper bait's rated depth plus his steering band under it; the lines go in where the water holds that
  * (two soundings in a row, the app's "sustained") the rest of the way. Of the pairs that reach the fish's depth and keep
- * most of the run trolled (RUN_KEEP of the best), the one whose depths best cover the fish's, then the deeper. Only baits rated under RUN_MPH's ceiling are used.
+ * most of the run trolled (RUN_KEEP of the best), the one whose depths best cover the fish's, then the deeper; a pair
+ * with both baits in the fish's depth before one with only one (pairTiers()). Only baits rated under RUN_MPH's ceiling are used.
  *
  * @returns {{rods: object[], linesInM: number, floorFt: number, trolledM: number, needFt: number}|{rods: [], why: string}}
  */
@@ -137,20 +173,18 @@ export function runDivers(depths, cum, cranks, { steerFt = HAND_STEER_BAND_FT, f
              why: pairs.length ? `the water deep enough for a deep diver holds for under ${(MIN_RUN_TROLLED_M / 1609.344).toFixed(1)} mi of it`
                : `it never holds water deep enough for any crankbait in the bag (about ${floor} ft at most)` };
   }
-  const cover = (p) => {
-    if (!Array.isArray(fishFt) || fishFt.length !== 2) return 0;
-    const lo = Math.min(...p.rods.map((r) => r.min)), hi = Math.max(...p.rods.map((r) => r.max));
-    return Math.max(0, Math.min(hi, fishFt[1]) - Math.max(lo, fishFt[0]));
-  };
   // A shallower pair can always go in sooner, so "the most of the run trolled" alone picks the shallowest baits in the
-  // bag. Of the pairs that reach the fish's depth, those that keep most of the run trolled (RUN_KEEP of the best); of
-  // those the nearest the fish, then the deeper. Where none reaches the fish, the deepest pair that keeps it.
+  // bag. BOTH BAITS IN THE FISH FIRST (pairTiers()): of the pairs whose two baits each reach into the fish's depth,
+  // those that keep most of the run trolled (RUN_KEEP of the best); of those the most of the two in the fish, then the
+  // fewer below the fish (belowFish()), then the deeper. Only where no pair has both in it, a pair with one; where none
+  // reaches the fish, the deepest that keeps it.
   const near = (set) => { const b = Math.max(...set.map((p) => p.trolledM)); return set.filter((p) => p.trolledM >= RUN_KEEP * b); };
-  const covering = trollable.filter((p) => cover(p) > 0);
-  const usable = covering.length ? near(covering) : near(trollable);
-  usable.sort((a, b) => cover(b) - cover(a) || b.needFt - a.needFt);
+  const tier = pairTiers(trollable, fishFt);
+  const usable = near(tier.set);
+  usable.sort((a, b) => inFish(b, fishFt) - inFish(a, fishFt) || belowFish(a, fishFt) - belowFish(b, fishFt) || b.needFt - a.needFt);
   const u = usable[0];
-  return { rods: u.rods, linesInM: u.linesInM, floorFt: u.floorFt, trolledM: u.trolledM, needFt: u.needFt, i0: u.i0 };
+  return { rods: u.rods, linesInM: u.linesInM, floorFt: u.floorFt, trolledM: u.trolledM, needFt: u.needFt, i0: u.i0,
+           inFish: tier.tier };
 }
 
 /** The water along a path, every `stepM`: today's depth (the grid's), and the metres to each station. */
@@ -220,6 +254,7 @@ export function diversStretch(depths, cum, needFt, minM = MIN_MOVE_M) {
  * @param {object[]} [o.cranks]     runCrankbaits(inventory)
  * @param {object[]} [o.marks]      [{at, type, what, depthFt}] structure: the laps are laid past it, the area lists it
  * @param {string}   [o.launchTime] 'HH:MM', for the clock on each option
+ * @param {object[]} [o.landings]   [{name, at, closed?}] the landings on his water, a closure known for each (landing-closures.js)
  */
 export function layAreas(o) {
   if (!(o && Array.isArray(o.daFeatures) && o.daFeatures.length)) return { error: 'this pack has no depth areas, so the water in an area cannot be read' };
@@ -456,25 +491,29 @@ export function layAreas(o) {
   // finder map is not going to help me". So a move is routed over water the area's two divers clear, around a shoal
   // rather than over it; one that cannot avoid shallow water is run with the lines up from its start, and the plan he
   // reads before he launches says which. A move under MIN_MOVE_M is a join (loopSteps()).
-  /** The area's two divers: the run's, or where there is no run, the pair that reaches the fish's depth over its water. */
+  /**
+   * The area's two divers: the run's, or where there is no run, the pair for its moves. A move trolls only where the
+   * water holds the pair's need and goes lines up elsewhere (diversStretch()), so the pair need clear only the deepest
+   * line the loops ride, not the shallowest of the reports' water: held to that (`needFt <= lo`), the 11/9 Clearwater
+   * moves over 29-35 ft floors could take nothing deeper than an MR, with an SR beside it. Chosen as a run's pair is:
+   * both baits in the fish's depth first (pairTiers()), then the most of the two in it, then fewer below it, then the
+   * deeper.
+   */
   const movePairFor = (area) => {
     if (area.run && area.run.rods && area.run.rods.length) return { rods: area.run.rods, needFt: area.run.needFt };
     const ok = cranks.filter((c) => c.maxMph == null || c.maxMph >= RUN_MPH);
+    const deepestLine = Math.max(...lineSet);
     const pairs = [];
     for (const cap of [...new Set(ok.map((c) => c.max))]) {
       const pair = ok.filter((c) => c.max <= cap).slice(0, RUN_RODS);
       const needFt = Math.max(...pair.map((r) => r.max)) + steer;
-      if (pair.length && needFt <= lo && !pairs.some((q) => q.rods.map((r) => r.name).join() === pair.map((r) => r.name).join())) {
+      if (pair.length && needFt <= deepestLine && !pairs.some((q) => q.rods.map((r) => r.name).join() === pair.map((r) => r.name).join())) {
         pairs.push({ rods: pair, needFt });
       }
     }
-    const cover = (q) => {
-      if (!fishFt) return 0;
-      const a = Math.min(...q.rods.map((r) => r.min)), b = Math.max(...q.rods.map((r) => r.max));
-      return Math.max(0, Math.min(b, fishFt[1]) - Math.max(a, fishFt[0]));
-    };
-    pairs.sort((x, y) => cover(y) - cover(x) || y.needFt - x.needFt);
-    return pairs[0] || null;
+    const { set } = pairTiers(pairs, fishFt);
+    set.sort((x, y) => inFish(y, fishFt) - inFish(x, fishFt) || belowFish(x, fishFt) - belowFish(y, fishFt) || y.needFt - x.needFt);
+    return set[0] || null;
   };
   /** Any open water costs the same: the shortest way by water, for a move with the lines up. */
   let flatCost = null;
@@ -576,6 +615,44 @@ export function layAreas(o) {
     };
   };
 
+  // ── THE LANDING NEAREST AN AREA, WHEN IT IS NOT HIS ───────────────────────────────────────────
+  // Ryan, 11/8, of the Wateree bar: "for taylor creek or colonel creek this should tell you to launch at those instead
+  // maybe?", and "i think taylors landing is closed temporarily because of a invasive grass". So each area names the
+  // landing nearest it by water where that is nearer than his ramp, with a closure known for it (its source and the day
+  // read) and then the nearest open one. Measured from the place the reports name, on any open water. His ramp is
+  // whichever landing is within RAMP_SAME_M of where he launches (his own spot by Clearwater Cove is 220 m from it).
+  const lands = (o.landings || []).filter((l) => l && Array.isArray(l.at) && l.at.every(Number.isFinite));
+  const snapOpen = (pt, radius = 40) => {
+    const c = G.cellOf(pt);
+    if (c < 0) return -1;
+    if (flat()[c] < Infinity) return c;
+    const i0 = c % G.w, j0 = (c - i0) / G.w;
+    let best = -1, bd = Infinity;
+    for (let dj = -radius; dj <= radius; dj++) for (let di = -radius; di <= radius; di++) {
+      const i = i0 + di, j = j0 + dj;
+      if (i < 0 || j < 0 || i >= G.w || j >= G.h) continue;
+      const k = j * G.w + i;
+      if (flat()[k] < Infinity && Math.hypot(di, dj) < bd) { bd = Math.hypot(di, dj); best = k; }
+    }
+    return best;
+  };
+  const landingFor = (area) => {
+    if (!lands.length) return null;
+    const from = snapOpen(area.at);
+    if (from < 0) return null;
+    const t = shortestFrom(G, flat(), from);
+    const byWater = (pt) => { const c = snapOpen(pt); return c >= 0 && t.len[c] < Infinity ? t.len[c] : Infinity; };
+    const rampM = byWater(ramp);
+    const rows = lands.map((l) => ({ name: l.name, at: l.at, closed: l.closed || null, m: byWater(l.at),
+                                     mine: metresBetween(l.at, ramp) <= RAMP_SAME_M }))
+      .filter((r) => Number.isFinite(r.m)).sort((a, b) => a.m - b.m);
+    const near = rows[0];
+    if (!near || near.mine || !(near.m < rampM)) return null;
+    const open = near.closed ? rows.find((r) => !r.closed && !r.mine && r.m < rampM) || null : null;
+    return { name: near.name, m: Math.round(near.m), closed: near.closed, rampM: Math.round(rampM),
+             open: open ? { name: open.name, m: Math.round(open.m) } : null };
+  };
+
   // ── EACH AREA ───────────────────────────────────────────────────────────────────────────────
   const areas = [];
   const left = [];
@@ -614,6 +691,7 @@ export function layAreas(o) {
     area.marks = (o.marks || []).filter((m) => m && Array.isArray(m.at) && metresBetween(m.at, p.at) <= R
       && (!fin(m.depthFt) || (Number(m.depthFt) >= lo - 2 * steer && Number(m.depthFt) <= hi + steer)));
     area.E = E;
+    area.landing = landingFor(area);
     areas.push(area);
   });
 
@@ -703,11 +781,17 @@ export function layAreas(o) {
                          { kind: 'run', run: a.run, home: true }], `${a.name} all day`);
     if (op) options.push(op);
   }
-  // BOTH: the two areas the reports name most that each fit a lap, the nearer first.
+  // BOTH: every two areas that each fit a lap, nearest together first, the nearer the ramp of the two first. Ryan, 11/8,
+  // of the Wateree bar: "clearwater and the dam make sense together though". It paired the two named most, and with
+  // every area named once that was list order: Clearwater and Colonel Creek, never Clearwater and the dam.
   const fit = areas.filter((a) => !a.tooFar);
-  if (fit.length >= 2) {
-    const pair = fit.slice(0, 2).sort((x, y) => x.run.lengthM - y.run.lengthM);
-    const [a1, a2] = pair;
+  const twos = [];
+  for (let i = 0; i < fit.length; i++) for (let j = i + 1; j < fit.length; j++) twos.push([fit[i], fit[j]]);
+  twos.sort((p, q) => metresBetween(p[0].at, p[1].at) - metresBetween(q[0].at, q[1].at));
+  let paired = 0;
+  for (const two of twos) {
+    if (paired >= MAX_PAIR_OPTIONS) break;
+    const [a1, a2] = two.slice().sort((x, y) => x.run.lengthM - y.run.lengthM);
     const t12 = shortestFrom(G, runCost, a1.E, { dst: a2.E });
     const cells = pathTo(t12.prev, a1.E, a2.E);
     const across = cells ? runOf(cells, { fromCove: false }) : null;
@@ -723,7 +807,7 @@ export function layAreas(o) {
                              { kind: 'run', run: across, between: true, to: a2.key },
                              { kind: 'area', area: a2, min: inAreas - first.usedMin },
                              { kind: 'run', run: a2.run, home: true }], `${a1.name}, then ${a2.name}`);
-        if (op) { op.across = across; options.push(op); }
+        if (op) { op.across = across; options.push(op); paired++; }
       }
     }
   }
@@ -812,6 +896,19 @@ export const hm = (min) => {
   return h ? `${h} h${r ? ` ${r} min` : ''}` : `${r} min`;
 };
 const mi = (m) => `${((Number(m) || 0) / 1609.344).toFixed(1)} mi`;
+
+/**
+ * The landing nearest an area, when it is not his ramp, in words: "nearest landing Colonel Creek, by it", or with a
+ * closure "nearest landing Taylor Creek, by it, closed: closed by Duke Energy while ... (SCDES, Aquatic Nuisance
+ * Plants, read 2026-11-08); nearest open Lake Wateree State Park, 1.4 mi". Plain text: the bar escapes it.
+ */
+export function landingSaid(l) {
+  if (!l) return '';
+  const at = (m) => (m < 200 ? 'by it' : `${mi(m)} by water`);
+  return `nearest landing ${l.name}, ${at(l.m)}`
+    + (l.closed ? `, closed: ${l.closed.why} (${l.closed.source}, read ${l.closed.read})` : '')
+    + (l.closed && l.open ? `; nearest open ${l.open.name}, ${at(l.open.m)}` : l.closed ? '; no open landing nearer than yours' : '');
+}
 
 /** An option's timeline in words, one line a step. */
 export function optionLines(day, op) {

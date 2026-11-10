@@ -12,10 +12,11 @@ On 9/26 and 9/28 they were there all day; what the recordings added was the dept
 
     python Scripts/sonar_depths.py F:\\TrollMapPipeline\\28Sep26_Trip [--plan plan.json]
 
-READS, from the folder: every *.RSD (Garmin sonar recording) and the unit's *EXPORT*.GPX (its
-ACTIVE LOG, and the plan's legs if they were loaded on the unit). From --plan, the JSON the app
-exports with "JSON": the fish band, each leg's line and what the baits ran at. WRITES
-sonar_depths_<date>.txt beside them. Never writes to a recording.
+READS, from the folder: every *.RSD (Garmin sonar recording) and the unit's GPX: one with EXPORT in its name, or else
+the one with the most ACTIVE LOG points on the recordings' days (11/10: his 11/9 GPX was 09NOV2026.GPX). From the GPX,
+the ACTIVE LOG and the plan's legs if they were loaded on the unit. From --plan, the JSON the app exports with "JSON":
+the fish band, each leg's line and what the baits ran at. WRITES sonar_depths_<folder>.txt beside them. Never writes
+to a recording.
 
 EVERY RULE BELOW WAS MEASURED ON HIS OWN RECORDINGS, and each says where:
   - Decoding is Scripts/rsd_track.py's and _scratch/rsd_down3.py's: the AC 8E F9 trailer, the
@@ -28,16 +29,15 @@ EVERY RULE BELOW WAS MEASURED ON HIS OWN RECORDINGS, and each says where:
   - The clock is aligned to the ACTIVE LOG by position: the file's name gives the minute it began,
     and the offset that puts the pings on the track is searched from a minute before to two after.
     Misread clocks (2-3% of pings) are found by a running median and interpolated (9/26).
-  - A FISH MARK, from THE_DEEP_WATER_WAS_NOT_EMPTY (2026-09-28): a cell at or above the bar, where
-    the bar is the brightest plain water in this recording -- at each 1 ft depth from 4 to 28 ft, the
-    99th percentile of the quietest tenth of 40 s stretches. That rises with the unit's gain and
-    levels off; the bar is where it levels, the median of the deeper half of those depths. 9/28 read
-    3.8 off one file; it is measured on each recording again, because a range or gain change moves
-    it. Cells are counted from 3.5 ft (where the recording begins: quiet water below that is stored
-    as 0, and is water, 9/28) to 2 ft off the unit's bottom. Joined cells are a mark; one lasting 4
-    or more pings and no taller than 3 ft is arch-like (a fish or a tight school).
-  - THE BIGGER MARKS are the brightest quarter of the day's arch-like marks by their peak. Brighter
-    is likelier a bigger fish, or a tight school; a count cannot tell those apart (9/26).
+  - A FISH MARK IS WHAT HIS SCREEN WOULD SHOW (11/10, from the 11/9 trip read by hand; screen_marks()). Every 2
+    minutes of the down beam are put on the screen's scale, 0 at the 95th percentile of the water and 1 at the 99th of
+    the bottom's face, and a mark is joined cells at 0.25 or more, 4 pings or more, no taller than 8 ft, from 3.5 ft to
+    2 ft off the bottom. Until 11/10 it was a cell over one plain-water bar per recording, measured in 4-28 ft of water
+    (9/28), which on 30-60 ft of water was not his screen.
+  - THE BIGGER MARKS are the solid arches: peak 0.5 or more on that scale and 15 pings or more (11/9). Until 11/10 they
+    were the brightest quarter of the day's marks, which is always a quarter whatever was there.
+  - WHERE THEY SAT is said plainly as well: depth and height off the bottom as quartiles, and the share within 6 ft of
+    the bottom, for all marks and for the solid arches (11/9: a median 29 ft, 6 ft off the bottom).
   - PER VOLUME OF WATER. The beam is narrow at the transducer and wide at depth, so a layer at 20 ft
     is swept four times as wide as one at 5 ft. Marks per 100 m trolled over water that has the
     layer, divided by the layer's depth, compare fish per volume (9/28). 2 ft layers from 3.5 ft.
@@ -46,22 +46,48 @@ EVERY RULE BELOW WAS MEASURED ON HIS OWN RECORDINGS, and each says where:
     carry it; and the band against the water above it and below it.
   - TROLLING SPEED ONLY. At full throttle a fish passes in fewer pings and draws as a dim tick
     (9/28: the bright echoes fell fivefold the moment he throttled up). The line is the plan's own
-    transit speed when a plan is given, and 3 mph without one (9/28's).
+    transit speed when a plan is given, and 3 mph without one (9/28's). And not under 0.75 mph, where
+    he is drifting or sitting (his words, 11/9) and one fish under the boat is drawn again and again.
+  - HOURS ARE EASTERN, EST or EDT by the date, and the label says which. Without a tz database (Python
+    on Windows without tzdata) the US rule is applied here; it used to be EDT all year.
   - ON A LEG means within 25 m of its line: he has no GPS steering and wanders +/-25 m
     (js/modules/plan-water.js).
 """
 import argparse, glob, json, os, re, struct, sys
 from collections import Counter, defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 
 import numpy as np
 from scipy import ndimage
 
+class USEastern(tzinfo):
+    """America/New_York without a tz database: EST, and EDT from 2 AM on the second Sunday of March to 2 AM on the
+    first Sunday of November (the US rule since 2007). The fallback used to be EDT all year, which put a November
+    recording's start an hour out (11/9: 09NOV26-0901 read as 8:01 EST) and its hours under the wrong label."""
+    @staticmethod
+    def _sunday_on_or_after(y, m, d):
+        day = datetime(y, m, d)
+        return day + timedelta(days=(6 - day.weekday()) % 7)
+
+    def dst(self, dt):
+        if dt is None:
+            return timedelta(0)
+        start = self._sunday_on_or_after(dt.year, 3, 8).replace(hour=2)
+        end = self._sunday_on_or_after(dt.year, 11, 1).replace(hour=2)
+        return timedelta(hours=1) if start <= dt.replace(tzinfo=None) < end else timedelta(0)
+
+    def utcoffset(self, dt):
+        return timedelta(hours=-5) + self.dst(dt)
+
+    def tzname(self, dt):
+        return 'EDT' if self.dst(dt) else 'EST'
+
+
 try:
     from zoneinfo import ZoneInfo
     EASTERN = ZoneInfo('America/New_York')
-except Exception:                                   # no tz database: EDT, which is fishing season
-    EASTERN = timezone(timedelta(hours=-4))
+except Exception:                                   # no tz database (Python on Windows without tzdata)
+    EASTERN = USEastern()
 
 # ── decoding (rsd_down3.py) ────────────────────────────────────────────────────────────────────
 MARK = bytes.fromhex('ac8ef9')
@@ -214,6 +240,32 @@ def read_gpx(path):
     return np.array(log), legs
 
 
+def pick_gpx(folder, rsds):
+    """The unit's track for these recordings: (path, why, log, legs), or (None, why, empty, {}).
+
+    A GPX whose name says EXPORT first, as before. Otherwise the GPX with the most ACTIVE LOG points on the days the
+    recordings were made. Ryan's 11/9 folder had one GPX, 09NOV2026.GPX, after he took the app's waypoints, tracks and
+    routes out of the unit's export and saved it under the date; the old rule read no track at all from it."""
+    gpxs = sorted({os.path.normcase(g): g for g in glob.glob(os.path.join(folder, '*.GPX'))
+                   + glob.glob(os.path.join(folder, '*.gpx'))}.values())
+    export = [g for g in gpxs if 'EXPORT' in os.path.basename(g).upper()]
+    if export:
+        log, legs = read_gpx(export[0])
+        return export[0], 'its name says EXPORT', log, legs
+    days = {datetime.fromtimestamp(t, EASTERN).date() for t in (start_of(r) for r in rsds) if t is not None}
+    best = None
+    for g in gpxs:
+        log, legs = read_gpx(g)
+        n = sum(1 for t in log[:, 0] if datetime.fromtimestamp(t, EASTERN).date() in days) if len(log) else 0
+        if n and (best is None or n > best[1]):
+            best = (g, n, log, legs)
+    if best:
+        g, n, log, legs = best
+        return g, f'the most track points on the recordings\' day{"s" if len(days) > 1 else ""} ({n:,})', log, legs
+    return None, f'none of the {len(gpxs)} GPX here has a track on the recordings\' days' if gpxs else 'no GPX here', \
+        np.zeros((0, 3)), {}
+
+
 def read_plan(path):
     with open(path, encoding='utf-8') as fh:
         j = json.load(fh)
@@ -306,58 +358,84 @@ def column(d, dz=0.1):
     return Z, E, top
 
 
-def measure_bar(Z, E, D, top, tsec):
-    """The brightest plain water: per 1 ft layer from 4 to 28 ft, the 99th percentile of the cells in
-    the quietest tenth of 40 s stretches; the highest of those."""
-    win = np.floor((tsec - tsec[0]) / 40).astype(int)
-    prof = []
-    for z0 in range(4, 28):
-        zz = (Z >= z0) & (Z < z0 + 1)
-        ok = (D - 2 >= z0 + 1)
-        if ok.sum() < 1000:
-            continue
-        L = E[:, zz][ok].astype(np.float32)
-        w = win[ok]
-        means = defaultdict(list)
-        for k, v in zip(w, np.nanmean(L, axis=1)):
-            means[k].append(v)
-        wm = {k: np.nanmean(v) for k, v in means.items() if len(v) >= 10}
-        if len(wm) < 10:
-            continue
-        q = np.nanpercentile(list(wm.values()), 10)
-        quiet = np.isin(w, [k for k, v in wm.items() if v <= q])
-        prof.append((z0, float(np.nanpercentile(L[quiet], 99))))
-    if not prof:
-        return None, prof
-    deep = [p for _, p in prof[len(prof) // 2:]]
-    return float(np.median(deep)), prof
+# A FISH MARK AS HIS SCREEN SHOWS IT (11/9, replacing the per-recording plain-water bar of 10/1). Every 2 minutes of
+# the down beam are put on the screen's scale: 0 is the 95th percentile of the water (from 1.5 ft to 0.7 ft over each
+# ping's bottom), 1 the 99th percentile of the bottom's own face (0.3 ft over it to 1 ft under). That is how his unit
+# draws it: the water's speckle at the bottom of the palette and the bottom at the top, so a gain or range change, or
+# a stretch of stained water, moves the scale with it. The old bar was one number for a whole recording, measured in
+# 4-28 ft of water; on 11/9's 30-60 ft it was not his screen. A mark is joined cells at or above SCREEN_T on that
+# scale (blue going purple on his palette), MIN_PINGS pings or more and no taller than MAX_TALL_FT (a fish with its
+# arch's legs, or a tight school), from 3.5 ft to 2 ft off the bottom. Samples as recorded, not their log: they are
+# already on the unit's scale. All four numbers are MINE, set on 11/9 by drawing the marks over 0030 and his two
+# screen photos; the 2 minutes is short enough for the scale to follow the water and long enough to hold a bottom.
+WIN_S = 120.0
+SCREEN_T = 0.25
+MIN_PINGS = 4
+MAX_TALL_FT = 8.0
+# A SOLID ARCH, the "bigger" marks (11/9, replacing the brightest quarter of the day): peak 0.5 or more on the scale
+# (purple-red) and 15 pings or more (a whole arch at trolling speed, not a fragment). Mine, read off 0030 and his 2:27
+# photo. A count by brightness rank always found a quarter; this finds what is there.
+SOLID_PEAK = 0.5
+SOLID_PINGS = 15
 
 
-def marks_in(Z, E, D, top, bar):
+def screen_marks(Z, E, D, tsec):
+    """Marks on the screen's scale: [(ping, depth ft, peak 0-1, pings, tall ft)], the valid water, windows used."""
+    dz = float(Z[1] - Z[0])
     valid = (Z[None, :] >= ZTOP) & (Z[None, :] <= D[:, None] - 2.0) & np.isfinite(E)
-    Ef = np.nan_to_num(E.astype(np.float32))
-    tgt = valid & (Ef >= bar)
-    lab, n = ndimage.label(tgt, structure=np.ones((3, 3)))
-    del tgt
-    if not n:
-        return [], valid
-    peak = ndimage.maximum(Ef, lab, index=np.arange(1, n + 1))
-    del Ef
-    out = []
-    for j, s in enumerate(ndimage.find_objects(lab)):
-        p0, p1, z0, z1 = s[0].start, s[0].stop, s[1].start, s[1].stop
-        tall = Z[z1 - 1] - Z[z0] + (Z[1] - Z[0])
-        if (p1 - p0) < 4 or tall > 3.0:
+    win = np.floor((tsec - tsec[0]) / WIN_S).astype(int)
+    out, used = [], 0
+    for k in np.unique(win):
+        m = np.nonzero(win == k)[0]
+        dep = D[m]
+        good = np.isfinite(dep) & (dep > 2)
+        if good.sum() < 50:
             continue
-        sub = lab[s] == j + 1
-        zc = Z[z0:z1][np.argmax(sub.sum(axis=0))]
-        out.append(((p0 + p1) // 2, float(zc), float(peak[j])))
-    return out, valid
+        S = np.power(10.0, E[m].astype(np.float32))
+        Zc, Dd = Z[None, :], dep[:, None]
+        fin = np.isfinite(S)
+        wat = S[fin & good[:, None] & (Zc > 1.5) & (Zc < Dd - 0.7)]
+        bot = S[fin & good[:, None] & (Zc > Dd - 0.3) & (Zc < Dd + 1.0)]
+        if wat.size < 500 or bot.size < 100:
+            continue
+        lo, hi = np.percentile(wat, 95), np.percentile(bot, 99)
+        Sc = np.clip((np.nan_to_num(S) - lo) / max(hi - lo, 1.0), 0, 1)
+        del S
+        used += 1
+        lab, n = ndimage.label(valid[m] & good[:, None] & (Sc >= SCREEN_T), structure=np.ones((3, 3)))
+        if not n:
+            continue
+        pk = ndimage.maximum(Sc, lab, index=np.arange(1, n + 1))
+        for j, sl in enumerate(ndimage.find_objects(lab)):
+            p0, p1, z0, z1 = sl[0].start, sl[0].stop, sl[1].start, sl[1].stop
+            tall = (z1 - z0) * dz
+            if p1 - p0 < MIN_PINGS or tall > MAX_TALL_FT:
+                continue
+            sub = lab[sl] == j + 1
+            zc = float(Z[z0:z1][np.argmax(sub.sum(axis=0))])
+            out.append((int(m[(p0 + p1) // 2]), zc, float(pk[j]), int(p1 - p0), float(tall)))
+    return out, valid, used
 
 
 # ── the report ────────────────────────────────────────────────────────────────────────────────
 ZTOP = 3.5
 LAYERS = np.arange(ZTOP, 80, 2.0)
+
+
+# HE IS DRIFTING OR SITTING UNDER 0.75 MPH. Ryan, 11/9: "Anything lower than .75mph is probably drifting as my motor
+# won't go slower than that at 1%". A boat sitting over a fish draws it again every few seconds, so a mark there is
+# the same fish counted again and the water swept is next to nothing; both are left out.
+DRIFT_MPH = 0.75
+
+
+def where_they_sat(z, off_bottom):
+    """Depth and height off the bottom, as quartiles: the plain answer the 11/9 trip was read for by hand."""
+    z, ob = np.asarray(z, float), np.asarray(off_bottom, float)
+    if z.size < 10:
+        return f'{z.size} mark{"s" if z.size != 1 else ""}, too few to say where they sat'
+    q = lambda v: '/'.join(f'{x:.0f}' for x in np.percentile(v, [25, 50, 75]))
+    return (f'{z.size:,}; depth {q(z)} ft (quartiles), off the bottom {q(ob)} ft; '
+            f'{np.mean(ob <= 6) * 100:.0f}% within 6 ft of the bottom')
 
 
 def table(acc, keys):
@@ -430,9 +508,7 @@ def main():
     rsds = sorted(r for r in set(rsds) if not a.only or a.only in os.path.basename(r))
     if not rsds:
         sys.exit(f'No .RSD recordings in {a.folder}')
-    gpxs = [g for g in glob.glob(os.path.join(a.folder, '*.GPX')) + glob.glob(os.path.join(a.folder, '*.gpx'))
-            if 'EXPORT' in os.path.basename(g).upper()]
-    log, gpx_legs = (read_gpx(gpxs[0]) if gpxs else (np.zeros((0, 3)), {}))
+    gpx, gpx_why, log, gpx_legs = pick_gpx(a.folder, rsds)
     plan = read_plan(a.plan) if a.plan else None
     legs = (plan['legs'] if plan and plan['legs'] else gpx_legs)
     band = plan['band'] if plan else None
@@ -444,17 +520,18 @@ def main():
     say = L.append
     say('Personal use only, not for distribution or resale; not for navigation.')
     say(f'SONAR DEPTHS -- {os.path.basename(os.path.normpath(a.folder))}' + (f' -- plan "{plan["name"]}"' if plan and plan['name'] else ''))
-    say(f'Track: {os.path.basename(gpxs[0]) if gpxs else "none (no *EXPORT*.GPX), so no speed and no clock check"}; '
+    say(f'Track: {f"{os.path.basename(gpx)} ({gpx_why})" if gpx else f"none ({gpx_why}), so no speed and no clock check"}; '
         f'legs from {"the plan" if plan and plan["legs"] else "the GPX" if gpx_legs else "nowhere"} ({len(legs)}); '
         f'band: {f"{ft(band[0])}-{ft(band[1])} ft ({band_from})" if band else "none given"}; '
-        f'trolling = under {slow_mph} mph ({"the plan transit speed" if plan and plan["transit"] else "9/28 line"}).')
+        f'trolling = {DRIFT_MPH}-{slow_mph} mph ({"the plan transit speed" if plan and plan["transit"] else "9/28 line"}; '
+        f'under {DRIFT_MPH} he is drifting or sitting).')
 
     keys = ('all', 'big')
     day = {'dist': np.zeros(len(LAYERS)), 'all': np.zeros(len(LAYERS)), 'big': np.zeros(len(LAYERS))}
     per_leg = defaultdict(lambda: {'dist': np.zeros(len(LAYERS)), 'all': np.zeros(len(LAYERS)),
                                    'big': np.zeros(len(LAYERS)), 'D': []})
     per_hour = defaultdict(lambda: {'dist': np.zeros(len(LAYERS)), 'all': np.zeros(len(LAYERS)), 'big': np.zeros(len(LAYERS))})
-    all_marks = []
+    all_marks, zones = [], set()
     if len(log) > 1:
         lat0 = float(np.median(log[:, 1]))
         lx, ly = metres(log[:, 1], log[:, 2], lat0)
@@ -469,15 +546,15 @@ def main():
         off, gap = align(d, t0, log)
         t = (t0 or 0) + off + d['clock'] / 1000
         Z, E, top = column(d)
-        bar, prof = measure_bar(Z, E, d['D'], top, t)
-        if bar is None:
-            say(f'{os.path.basename(f)}: too little water from 4 to 28 ft to measure the plain water; skipped')
+        marks, valid, used = screen_marks(Z, E, d['D'], t)
+        if not used:
+            say(f'{os.path.basename(f)}: no 2-minute stretch with enough water and bottom to put on the screen\'s scale; skipped')
             continue
-        marks, valid = marks_in(Z, E, d['D'], top, bar)
         if len(log) > 1:
             dd = np.interp(t, log[:, 0], cum)
             step = np.r_[0, np.clip(np.diff(dd), 0, None)]
-            slow = np.interp(t, log[:, 0], np.nan_to_num(mph)) < slow_mph
+            sog = np.interp(t, log[:, 0], np.nan_to_num(mph))
+            slow = (sog < slow_mph) & (sog >= DRIFT_MPH)
             inside = (t >= log[0, 0]) & (t <= log[-1, 0])
             slow &= inside
         else:
@@ -497,6 +574,8 @@ def main():
             dl = dist_to_line(px, py, leg_xy[lid])
             hit = (dl <= 25) & (dl < best)
             on_leg[hit], best[hit] = lid, dl[hit]
+        local = [datetime.fromtimestamp(x, EASTERN) for x in t[::max(1, len(t) // 50)]]
+        zones.update(x.tzname() for x in local)
         hours = np.array([datetime.fromtimestamp(x, EASTERN).hour for x in t])
         # The water each ping swept, layer by layer: a layer counts where over half of it is in the
         # ping's valid water (9/28).
@@ -513,28 +592,30 @@ def main():
                 per_hour[h]['dist'][i] += sw[hours == h].sum()
         for lid in legs:
             per_leg[lid]['D'].extend(d['D'][(on_leg == lid) & slow].tolist())
-        for p, z, pk in marks:
+        for p, z, pk, npg, tall in marks:
             if slow[p]:
-                all_marks.append((z, pk, on_leg[p], hours[p]))
+                all_marks.append((z, pk, on_leg[p], hours[p], float(d['D'][p]) - z, npg >= SOLID_PINGS and pk >= SOLID_PEAK))
         say(f'{os.path.basename(f)}: down beam ch {ch}, {len(t):,} pings, '
             f'{datetime.fromtimestamp(t[0], EASTERN):%H:%M}-{datetime.fromtimestamp(t[-1], EASTERN):%H:%M}, '
             f'clock {off:+.1f} s{f" (median {gap:.1f} m off the track)" if gap is not None else " (not checked)"}, '
             f'{nbad} misread clocks fixed; bottom {np.nanpercentile(d["D"], 10):.0f}-{np.nanpercentile(d["D"], 90):.0f} ft (p10-p90); '
-            f'plain water levels at {bar:.2f} (9/28: 3.80), {len(marks):,} arch-like marks')
+            f'{used} two-minute stretches on the screen\'s scale, {len(marks):,} marks')
         del E, valid, d
     if not all_marks:
         say('No marks at trolling speed.')
     else:
-        M = np.array([(z, pk) for z, pk, _, _ in all_marks])
-        big_bar = float(np.percentile(M[:, 1], 75))
-        say(f'{len(M):,} arch-like marks at trolling speed; the bigger marks are the brightest quarter, peak {big_bar:.2f} or more.')
-        for z, pk, lid, h in all_marks:
+        M = np.array([(z, ob, sol) for z, _, _, _, ob, sol in all_marks], float)
+        say(f'{len(M):,} marks at trolling speed, {int(M[:, 2].sum()):,} of them solid arches (peak {SOLID_PEAK} or more on '
+            f'the screen\'s scale, {SOLID_PINGS} pings or more): "bigger" below.')
+        say(f'  all marks: {where_they_sat(M[:, 0], M[:, 1])}.')
+        say(f'  solid arches: {where_they_sat(M[M[:, 2] > 0, 0], M[M[:, 2] > 0, 1])}.')
+        for z, pk, lid, h, ob, sol in all_marks:
             i = int((z - LAYERS[0]) // 2)
             if not 0 <= i < len(LAYERS):
                 continue
             for acc in [day] + ([per_leg[lid]] if lid else []) + [per_hour[h]]:
                 acc['all'][i] += 1
-                if pk >= big_bar:
+                if sol:
                     acc['big'][i] += 1
         rows, rel = table(day, keys)
         say('')
@@ -560,7 +641,7 @@ def main():
                 f'{int(acc["all"].sum())} marks, {int(acc["big"].sum())} bigger{baits}')
             say(f'     bigger: {summary(acc, "big", band)}')
         say('')
-        say('BY HOUR (EDT)')
+        say(f'BY HOUR ({"/".join(sorted(zones))})')
         for h in sorted(per_hour):
             acc = per_hour[h]
             if not acc['all'].sum():

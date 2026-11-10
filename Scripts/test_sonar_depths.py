@@ -105,5 +105,108 @@ class Sums(unittest.TestCase):
         self.assertIn('no band given', SD.summary(acc_with({21.5: 5}), 'all', None))
 
 
+def gpx_on(day, n, name='ACTIVE LOG'):
+    pts = ''.join(f'<trkpt lat="34.38" lon="-80.73"><time>{day}T15:{i // 60:02d}:{i % 60:02d}Z</time></trkpt>'
+                  for i in range(n))
+    return f'<?xml version="1.0"?><gpx><trk><name>{name}</name><trkseg>{pts}</trkseg></trk></gpx>'
+
+
+class WhichGpx(unittest.TestCase):
+    """11/10: his 11/9 folder had 09NOV2026.GPX, no EXPORT in the name, and the script read no track from it."""
+    def folder(self, files):
+        d = tempfile.mkdtemp()
+        for name, text in files.items():
+            with open(os.path.join(d, name), 'w', encoding='utf-8') as fh:
+                fh.write(text)
+        return d
+
+    def test_a_gpx_without_export_in_its_name_is_read_when_it_has_the_days_track(self):
+        d = self.folder({'09NOV2026.GPX': gpx_on('2026-11-09', 30), 'old.GPX': gpx_on('2026-10-31', 90)})
+        g, why, log, _ = SD.pick_gpx(d, [os.path.join(d, '09NOV26-0901-01.RSD')])
+        self.assertEqual(os.path.basename(g), '09NOV2026.GPX')
+        self.assertIn('most track points', why)
+        self.assertEqual(len(log), 30)
+
+    def test_export_still_wins(self):
+        d = self.folder({'09NOV2026.GPX': gpx_on('2026-11-09', 90), 'EXPORT.GPX': gpx_on('2026-11-09', 10)})
+        g, why, _, _ = SD.pick_gpx(d, [os.path.join(d, '09NOV26-0901-01.RSD')])
+        self.assertEqual(os.path.basename(g), 'EXPORT.GPX')
+
+    def test_none_on_the_day_is_said(self):
+        d = self.folder({'old.GPX': gpx_on('2026-10-31', 20)})
+        g, why, log, _ = SD.pick_gpx(d, [os.path.join(d, '09NOV26-0901-01.RSD')])
+        self.assertIsNone(g)
+        self.assertIn("recordings' days", why)
+        self.assertEqual(len(log), 0)
+
+
+class EasternTime(unittest.TestCase):
+    def test_november_is_est_and_september_edt_without_a_tz_database(self):
+        from datetime import datetime, timezone
+        was = SD.EASTERN
+        try:
+            SD.EASTERN = SD.USEastern()
+            t = SD.start_of('09NOV26-0901-01.RSD')
+            self.assertEqual(datetime.fromtimestamp(t, timezone.utc).strftime('%H:%M'), '14:01')
+            self.assertEqual(datetime.fromtimestamp(t, SD.EASTERN).tzname(), 'EST')
+            t = SD.start_of('28SEP26-1435-01.RSD')
+            self.assertEqual(datetime.fromtimestamp(t, timezone.utc).strftime('%H:%M'), '18:35')
+            self.assertEqual(datetime.fromtimestamp(t, SD.EASTERN).tzname(), 'EDT')
+        finally:
+            SD.EASTERN = was
+
+
+def water(n_pings=1200, depth=40.0, seed=1):
+    """A column as column() returns it: log10 samples on a 0.1 ft axis, speckled water and a bright bottom."""
+    rng = np.random.default_rng(seed)
+    Z = np.arange(0, depth + 3, 0.1) + 0.05
+    S = rng.gamma(2.0, 20.0, (n_pings, len(Z)))
+    S[:, (Z > depth - 0.3) & (Z < depth + 1.0)] = 4000.0
+    S[:, Z > depth + 1.0] = 600.0
+    D = np.full(n_pings, depth)
+    t = np.arange(n_pings) * 0.2                  # 5 pings a second: two 2-minute stretches
+    return Z, S, D, t
+
+
+def as_column(S):
+    return np.log10(np.clip(S, 1, None)).astype(np.float16)
+
+
+class ScreenMarks(unittest.TestCase):
+    def test_a_bright_arch_is_a_mark_and_a_solid_one(self):
+        Z, S, D, t = water()
+        zz = (Z > 28.5) & (Z < 30.0)
+        S[100:130, zz] = 3000.0                   # a fish at 29 ft, 30 pings
+        marks, valid, used = SD.screen_marks(Z, as_column(S), D, t)
+        self.assertEqual(used, 2)
+        fish = [m for m in marks if 27 < m[1] < 31 and 95 <= m[0] <= 135]
+        self.assertEqual(len(fish), 1, marks[:5])
+        _, z, pk, npg, tall = fish[0]
+        self.assertGreaterEqual(pk, SD.SOLID_PEAK)
+        self.assertGreaterEqual(npg, SD.SOLID_PINGS)
+        self.assertLessEqual(tall, 2.0)
+
+    def test_the_speckle_and_a_dim_smear_are_not_marks_and_a_wall_is_too_tall(self):
+        Z, S, D, t = water()
+        S[200:240, (Z > 15) & (Z < 16)] = 60.0    # under the water's 95th percentile
+        S[400:420, (Z > 10) & (Z < 25)] = 3000.0  # 15 ft tall: a thermocline or clutter, not a fish
+        marks, _, _ = SD.screen_marks(Z, as_column(S), D, t)
+        self.assertFalse([m for m in marks if 195 <= m[0] <= 245 and 14 < m[1] < 17])
+        self.assertFalse([m for m in marks if 395 <= m[0] <= 425 and m[4] > SD.MAX_TALL_FT])
+
+    def test_nothing_within_two_feet_of_the_bottom(self):
+        Z, S, D, t = water()
+        S[300:330, (Z > 38.5) & (Z < 39.5)] = 3000.0
+        marks, _, _ = SD.screen_marks(Z, as_column(S), D, t)
+        self.assertFalse([m for m in marks if m[1] > 38.0])
+
+    def test_where_they_sat_says_depth_and_height_off_the_bottom(self):
+        s = SD.where_they_sat(np.r_[np.full(10, 29.0), np.full(10, 31.0)], np.r_[np.full(15, 6.0), np.full(5, 12.0)])
+        self.assertIn('depth 29/30/31 ft', s)
+        self.assertIn('off the bottom 6/6/8 ft', s)
+        self.assertIn('75% within 6 ft of the bottom', s)
+        self.assertIn('too few', SD.where_they_sat([20.0], [5.0]))
+
+
 if __name__ == '__main__':
     unittest.main()

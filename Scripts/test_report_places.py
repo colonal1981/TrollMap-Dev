@@ -93,6 +93,18 @@ class Places(unittest.TestCase):
         self.assertEqual(got('Captain Joe, based out of Hatchery, reports fish at Blacks Camp.'), ['Blacks Camp'])
         self.assertEqual(got('Stripers were caught at Blacks Camp.'), ['Blacks Camp'])
 
+    def test_a_bait_shop_or_a_launch_is_not_where_the_fish_were(self):
+        # Carolina Sportsman, 11/5/2024, on Wateree: the one report behind the Taylor Creek area of 11/8.
+        got = lambda t: [p['name'] for p in self.m.places(t)]
+        self.assertEqual(got('Check Suttons Landing in Colonel Creek on Lake Test for live bait.'), [])
+        self.assertEqual(got('Anglers can get quality live bait at Suttons Landing in Colonel Creek.'), [])
+        self.assertEqual(got('Herring from Suttons Landing in Colonel Creek will catch fish on planer boards.'), [])
+        self.assertEqual(got('Launch at Blacks Camp and run to Bonneau, where they are schooling.'), ['Bonneau'])
+        # used for the water even once, it stays
+        self.assertEqual(got('Stripers are on live shad at the mouth of Colonel Creek.'), ['Colonel Creek'])
+        self.assertEqual(got('Check Suttons Landing in Colonel Creek for bait; stripers school in Colonel Creek too.'),
+                         ['Colonel Creek'])
+
     def test_a_name_on_the_chart_twice_is_at_its_middle_and_far_apart_says_so(self):
         cc = next(g for g in self.gaz if g['as_written'] == 'Colonel Creek')
         self.assertEqual((cc['labels'], cc.get('far_apart')), (2, None))

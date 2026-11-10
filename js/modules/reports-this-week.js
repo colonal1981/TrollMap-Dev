@@ -57,6 +57,55 @@ const usefulness = (s) => (s.way.length ? 8 : 0) + (s.lu.length ? 4 : 0) + (s.po
 /** A report's words up to `n` characters, ended at a word, with the cut shown. */
 const cut = (t, n) => (t.length <= n ? t : `${t.slice(0, t.lastIndexOf(' ', n) > n * 0.6 ? t.lastIndexOf(' ', n) : n)}...`);
 
+// ── A PLACE NAMED ONLY AS WHERE TO BUY BAIT OR TO LAUNCH IS NOT WHERE THE FISH ARE ─────────────────────────────────
+//
+// Ryan's Wateree bar on 11/8 offered Taylor Creek as an area for his stripers, from one report: Carolina Sportsman,
+// 11/5/2024, "Check Suttons Landing in Taylors Creek on Lake Wateree for live bait." A bait shop's address, not a place
+// for his fish; and AHQ printed the same shop in Taylor Creek in a dozen more posts. So an occurrence of a place is
+// passed over where its sentence is about getting bait and the place is the shop's address or the shop itself, or where
+// it is only where a boat is launched; a place every occurrence of which is passed over is not one of the statement's
+// places. Scripts/report_places.py applies the same rule when the reports are built; this applies it to the files
+// already built.
+const BAIT_WORDS = /\b(?:bait|herring|shad|minnows?|shiners?|crickets|worms|bluebacks?)\b/i;
+// a shop's address: "Suttons Landing in", "Lakeside Marina on", "Bob's Bait & Tackle at"
+const SHOP_BEFORE = /\b[A-Z][\w&.-]*(?:\s+(?:[A-Z][\w&.-]*|&|and))*\s+(?:Landing|Marina|Bait(?:\s+(?:&|and)\s+Tackle)?|Tackle|Store|Shop|Outdoors)s?\s+(?:in|on|at|off)\s+(?:the\s+)?$/;
+// buying it there: "purchase blueback herring at", "get quality live bait at", "available at"
+const BUY_BEFORE = /\b(?:buy(?:ing)?|bought|purchas\w*|pick(?:ed|ing)?\s+up|available|carr(?:y|ies)|sells?|selling|stock(?:s|ed)?|get(?:ting)?\s+(?:\w+\s+){0,3}(?:bait|herring|shad|minnows|shiners))\b[^.!?]{0,60}\b(?:at|from)\s+(?:the\s+)?$/i;
+// the shop as the subject: "<place> has live blueback herring", "<place>, just above the park, is the local source"
+const SHOP_AFTER = /^\s*(?:(?:in|on)\s+[A-Z][\w-]*(?:\s+[A-Z][\w-]*)*\s*)?(?:,[^,.]{0,60},\s*)?(?:has|have|carries|carry|sells|stocks|is\s+(?:the\s+)?(?:\w+\s+)?sources?\s+for)\b|^[^.!?]{0,60}\bfor\s+(?:live\s+)?bait\b/i;
+const LAUNCH_BEFORE = /\b(?:launch(?:ed|es|ing)?|put(?:s|ting)?\s+in)\s+(?:at|from|out\s+of)\s+(?:the\s+)?$/i;
+
+/** A place's name as a pattern that takes the reports' spellings: "Taylor Creek" for "Taylors Creek", "Taylor's". */
+const escapeRe = (w) => w.replace(/[.*+?^$(){}|[\]\\]/g, (c) => '\\' + c);
+function namePattern(name) {
+  const words = String(name || '').replace(/[’'\u0060]/g, '').trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return null;
+  const core = words.map((w) => escapeRe(w.replace(/s$/i, '')) + 's?').join('\\s+');
+  return new RegExp('(?<![A-Za-z])' + core + '(?![A-Za-z])', 'g');
+}
+
+/**
+ * True when every place in `text` that names `name` is a bait shop's address, the shop itself, or a launch. False
+ * where the name is used for the water even once, and where it cannot be found in the words at all ("the dam" for
+ * the lake's own dam): a place is never dropped on a guess.
+ */
+export function namedOnlyForBaitOrLaunch(text, name) {
+  const t = String(text || '').replace(/[’'\u0060]/g, '');
+  const rx = namePattern(name);
+  if (!rx) return false;
+  let seen = 0, passed = 0;
+  for (const m of t.matchAll(rx)) {
+    seen++;
+    const s0 = Math.max(t.lastIndexOf('.', m.index), t.lastIndexOf('!', m.index), t.lastIndexOf('?', m.index)) + 1;
+    const ends = ['.', '!', '?'].map((c) => t.indexOf(c, m.index + m[0].length)).filter((k) => k >= 0);
+    const s1 = ends.length ? Math.min(...ends) : t.length;
+    const before = t.slice(s0, m.index), after = t.slice(m.index + m[0].length, s1), sentence = t.slice(s0, s1);
+    const bait = BAIT_WORDS.test(sentence) && (SHOP_BEFORE.test(before) || BUY_BEFORE.test(before) || SHOP_AFTER.test(after));
+    if (bait || LAUNCH_BEFORE.test(before)) passed++;
+  }
+  return seen > 0 && passed === seen;
+}
+
 /** One statement, trimmed to what the plan reads. */
 export function trim(s) {
   const sent = s.sentences || [];
@@ -66,8 +115,9 @@ export function trim(s) {
     way: [...new Set(sent.flatMap((x) => x.his_way || []))],
     pos: [...new Set(sent.flatMap((x) => x.fish || []))],
     dep: (s.depths || []).map((x) => ({ ft: x.ft, k: x.kind })),
-    pl: (s.places || []).map((p) => ({ n: p.name, lon: p.lon, lat: p.lat, ...(p.far_apart ? { far: true } : {}),
-                                       ...(p.approx ? { approx: true } : {}) })),
+    pl: (s.places || []).filter((p) => !namedOnlyForBaitOrLaunch(s.text, p.as_written || p.name))
+      .map((p) => ({ n: p.name, lon: p.lon, lat: p.lat, ...(p.far_apart ? { far: true } : {}),
+                     ...(p.approx ? { approx: true } : {}) })),
     ar: s.area || [], kw: s.kinds_of_water || [], f: s.water_temp_f_said ?? null,
   };
 }

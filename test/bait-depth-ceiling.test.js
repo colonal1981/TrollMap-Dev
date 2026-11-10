@@ -30,7 +30,11 @@ import { planToTimeline } from '../js/modules/plan-to-timeline.js';
 // a number written here.
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
-const LIPLESS = TACKLE_INVENTORY.find((l) => l.type === 'lipless' && l.weightOz === 0.5);
+// A 1/2 OZ LEAD BAIT WITH NO CEILING. This was the 3" lipless until 2026-11-10, when the lipless was given the
+// depth it levels off at (about 11 ft for 1/2 oz: LURE_KNOWLEDGE.lipless.levelsOff), so 120 ft no longer takes it
+// to 25. The 3" blade vibe has the same 1/2 oz and the same 4.0 ratio, so every number below is unchanged; the name
+// is kept so the tests still read as they were written.
+const LIPLESS = TACKLE_INVENTORY.find((l) => l.type === 'blade_vibe' && l.weightOz === 0.5);
 const lureByName = (n) => TACKLE_INVENTORY.find((l) => l.name === n) || null;
 
 // TWO NUMBERS, BECAUSE SINCE 2026-09-14 THE ANSWER DEPENDS ON BOTH.
@@ -469,7 +473,7 @@ describe('one bait for the whole pass: a rise on deeper water is cleared like sh
     depthMinFt: minFt, depthMaxFt: maxFt, maxRunDepthFt: minFt,
     start: [-80.70, 34.35], end: [-80.68, 34.36],
     coordinates: [[-80.70, 34.35], [-80.68, 34.36]], passes: [], speedMph: 2.0 });
-  const ROD = { id: 'R6', lure: '3" Lipless Crankbait', rig: 'snap', role: 'troll',
+  const ROD = { id: 'R6', lure: '3" Blade Vibe Bait', rig: 'snap', role: 'troll',   // the lipless until 11/10: see LIPLESS
                 leadFt: 80, runsDepthFt: [12, 16] };
   const run = (c) => assemblePlan({
     candidates: [c], launch: [-80.71, 34.348], loadout: { rods: [ROD] },

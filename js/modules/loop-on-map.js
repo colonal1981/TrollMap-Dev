@@ -33,7 +33,7 @@ import { state } from '../core/state.js';
 import { LOOP_COLORS, TRANSIT_COLOR } from './plan-to-timeline.js';
 import { turnsReached } from './plan-troll-loop.js';
 import { findWater, trollForMe, buildFromPicked, loopForMap, riverHere, optionShapeSaid, bandFromSaid, layAreaOption } from './plan-water-ui.js';
-import { optionLines, RUN_MPH, hm } from './plan-areas.js';
+import { optionLines, RUN_MPH, hm, landingSaid } from './plan-areas.js';
 import { optionColor, optionBadge } from './plan-tracks.js';
 
 const MAX_TURNS = 4;           // a day is at most four loops (trollLoop's maxPetals)
@@ -546,7 +546,9 @@ function areasBar(loop, snap) {
     + `${a.near ? 'by the ramp' : `${mi(a.run.lengthM)} by water, ${hm(a.runMin)} at ${RUN_MPH} mph`}`
     + ` · ${a.acres} acres of ${day.waterFt[0]}–${day.waterFt[1]} ft`
     + ` · ${plural(a.laps.length, 'different loop')}, ${loopRange(a.laps)} each`
-    + `${a.tooFar ? ' · <span style="color:#ff8a80">too far for this window</span>' : ''}</div>`).join('');
+    + `${a.tooFar ? ' · <span style="color:#ff8a80">too far for this window</span>' : ''}`
+    // the landing nearest it when that is not his, and a closure known for it, in red (plan-areas.js landingFor())
+    + `${a.landing ? `<div style="margin-left:10px;color:${a.landing.closed ? '#ff8a80' : '#9fb3c3'}">${esc(landingSaid(a.landing))}</div>` : ''}</div>`).join('');
   const opts = day.options.map((op, i) => {
     const on = i === loop.option;
     return `<div data-lom="area-opt" data-i="${i}" style="margin-top:4px;padding:5px 7px;border-radius:7px;cursor:pointer;`

@@ -126,9 +126,18 @@ export const LURE_KNOWLEDGE = {
     ratedDepth: null,
     leadRatio: 4.0,
     speedAffectsLead: true,
+    // IT LEVELS OFF. Line out takes a light lipless down only so far, then it rides there: more line buys nothing.
+    // Ryan, 11/8, of the plan's 3" at 10-15 ft on 60 ft at 2 mph: "I could let all of my line out on my real and that
+    // lipless is never going to hit bottom at 2mph lol unless i run pretty dang shallow", and "i will treat the
+    // lipless as a shallow bait". The one figure found: "Trolling charts show that a 1/2 oz Trap runs about 6 ft on the
+    // cast, and between 7' to 11' on the troll depending on line diameter (deeper with lighter line)" (BassResource
+    // forum, "Rattle Trap questions", read 2026-11-10), in line with walleyecentral's 6-8 ft for a 1/2 oz, a guess
+    // there. So 11 ft for 1/2 oz, the deep end. Other weights by this file's own WEIGHT_EXPONENT,
+    // which is MINE and unmeasured for a lipless (levelsOffFt(), which also moves it with the speed): about 8 ft for 1/4 oz, 13 for 3/4, 16 for his 1 1/4 oz Super Pogy.
+    levelsOff: { ft: 11, refOz: 0.5 },
     speed:     { min:1.6, ideal:2.2, max:3.0 },
     speedIsHardLimit: false,
-    technique: 'Vibration/rattle — depth by lead and speed — excellent cold/stained water',
+    technique: 'Vibration/rattle — depth by lead and speed up to where it levels off — excellent cold/stained water',
     presentationSignature: { noise:'high_vibe', flash:'medium', profile:'baitfish', water_column:'middle' }
   },
 
@@ -634,6 +643,27 @@ function speedFactor(speedMph) {
 const WEIGHT_EXPONENT = 0.4;
 
 /**
+ * THE DEEPEST A BAIT THAT LEVELS OFF GOES, at any lead: `levelsOff.ft` at `levelsOff.refOz` and 2.0 mph, other weights
+ * (the bait and any weight ahead of it, systemWeightOz()) by WEIGHT_EXPONENT. Null for a bait with no such limit.
+ *
+ * AND SLOWER IS DEEPER, here as for every weighted bait. Ryan, 11/10: "does the app know that i can slow down to drop
+ * the sinking baits lower to actually reach the fish?" Where it levels off is where the pull of the water on line and
+ * bait balances its weight, and that pull falls as the boat slows, so the ceiling drops with the speed. The forum figure
+ * gives no speed; it is taken at the 2.0 mph every ratio in this file is pinned at, and moved by speedFactor(), the same
+ * curve (mine) as the rest: 11 ft at 2.0 mph is about 13.8 at 1.6 (the slowest the lipless is rated to keep its
+ * rattle) and 9.2 at 2.4. With no speed given, the 2.0 mph figure.
+ */
+export function levelsOffFt(lure, speedMph) {
+  const k = LURE_KNOWLEDGE[lure?.type];
+  const lv = k && k.levelsOff;
+  if (!lv || !(lv.ft > 0)) return null;
+  const w = systemWeightOz(lure);
+  const ft = w && w > 0 ? lv.ft * Math.pow(w / (lv.refOz || 1), WEIGHT_EXPONENT) : lv.ft;
+  const sf = Number(speedMph) > 0 ? speedFactor(speedMph) : 1;
+  return Math.round((ft / sf) * 10) / 10;
+}
+
+/**
  * THE MASS THAT SINKS A BAIT IS EVERYTHING ON THE LINE, NOT JUST THE BAIT.
  *
  * `weightOz` is what the lure weighs. `inlineWeightOz` is a trolling weight ahead of it on the
@@ -695,6 +725,9 @@ export function leadForDepth(lure, targetDepthFt, speedMph) {
   if (k.depthMode === 'rated' && k.ratedDepth) {
     targetDepthFt = Math.min(targetDepthFt, k.ratedDepth.max);
   }
+  // Nor can one that levels off be leaded past where it does: the lead for its ceiling is the most it takes.
+  const ceil = levelsOffFt(lure, speedMph);
+  if (ceil != null) targetDepthFt = Math.min(targetDepthFt, ceil);
   const ratio = resolveLeadRatio(k.leadRatio, { weightOz: systemWeightOz(lure), targetDepthFt });
   const sf = k.speedAffectsLead ? speedFactor(speedMph) : 1;
   return Math.round(targetDepthFt * ratio * sf);
@@ -769,14 +802,19 @@ export function depthWindow(lure, { speedMph, leadFt } = {}) {
     const mid = (lo + hi) / 2;
     if (guess(mid) < leadFt) lo = mid; else hi = mid;
   }
-  const d = Math.round(lo);
+  const ceil = levelsOffFt(lure, speedMph);
+  const d = Math.round(ceil != null ? Math.min(lo, ceil) : lo);
   // NAME THE RIG IN THE ANSWER. "lead length + speed + weight" was true and unreadable: it is
   // the sentence that let a depth computed for a weighted spoon be printed beside the spoon's
   // own 3/4oz and leave Ryan to ask which one it meant. When there is a weight on the line, the
   // string says so, and every warning built on `controlledBy` says so with it.
   const inline = Number(lure?.inlineWeightOz);
   const rigged = Number.isFinite(inline) && inline > 0;
-  return { min: Math.max(0, d - 2), max: d + 2, mode: 'lead', claimed: false,
+  // A bait at its ceiling is there however much more line goes out: its deep end is the ceiling, not two past it.
+  // (within half a foot: the search stops a hair under a ceiling the lead was worked out for)
+  const atCeil = ceil != null && lo >= ceil - 0.5;
+  return { min: Math.max(0, d - (atCeil ? 4 : 2)), max: atCeil ? d : (ceil != null ? Math.min(d + 2, Math.round(ceil)) : d + 2), mode: 'lead', claimed: false,
+           ...(ceil != null ? { levelsOffFt: ceil, atCeiling: atCeil } : {}),
            inlineWeightOz: rigged ? inline : null,
            controlledBy: rigged
              ? `lead length + speed + the ${ozLabel(inline)} inline weight ahead of it`
@@ -929,6 +967,11 @@ export function canReachDepth(lure, depthFt, speedMph, { maxLeadFt, jigheads } =
     return { ok: true, leadFt: fit.leadFt, jigheadOz: fit.weightOz, limitedBy: null };
   }
 
+  const ceil = levelsOffFt(lure, speedMph);
+  if (ceil != null && depthFt > ceil) {
+    return { ok: false, leadFt: leadForDepth(lure, ceil, speedMph), limitedBy: 'levels off',
+             detail: `${k.label} levels off at about ${ceil} ft at ${speedMph} mph however much line is out — slower goes deeper` };
+  }
   const leadFt = leadForDepth(lure, depthFt, speedMph);
   if (maxLeadFt != null && leadFt > maxLeadFt) {
     return { ok: false, leadFt, limitedBy: 'lead',

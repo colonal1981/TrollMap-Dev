@@ -25,7 +25,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, it, expect } from './expect-shim.mjs';
 import { depthWindow, leadForDepth, canReachDepth,
-         requiresInlineWeight } from '../js/data/lure-knowledge.js';
+         requiresInlineWeight, LURE_KNOWLEDGE } from '../js/data/lure-knowledge.js';
 import { buildPlanRequest } from '../js/modules/plan-prompt.js';
 import { TACKLE_INVENTORY } from '../js/data/tackle-inventory.js';
 
@@ -38,8 +38,10 @@ const DD3 = TACKLE_INVENTORY.find((l) => l.type === 'crankbait_dd3');
 // no depth at all -- Ryan: "a 3/4oz spoon unweighted at 2mph is a surface lure" -- so it is the
 // one bait in the box that cannot stand for the general case. The predicate now says what it
 // means, and the spoon gets its own assertions at the bottom of this file.
+// And not a lipless: from 2026-11-10 it levels off (LURE_KNOWLEDGE.lipless.levelsOff), so more line is not deeper
+// past about 58 ft, which is the opposite of what the general case below asserts.
 const LEADED = TACKLE_INVENTORY.find((l) => (l.trollable || l.castable)
-  && !requiresInlineWeight(l.type)
+  && !requiresInlineWeight(l.type) && !LURE_KNOWLEDGE[l.type].levelsOff
   && depthWindow(l, { leadFt: 100, speedMph: 2 }).mode === 'lead');
 
 describe('a bill and a weight are different claims and now say so', () => {
