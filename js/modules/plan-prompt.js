@@ -59,6 +59,7 @@ import { levelSentence, poolOffsetFt, todayDepthFt } from '../utils/water-condit
 import { lakeRecordFor } from '../data/lake-registry.js';
 import { CHART_LEVELS, chartLevelFor, measuredDays } from '../data/chart-levels.js';
 import { compassOf } from '../utils/compass.js';
+import { NO_GO_SUSTAINED_MPH, NO_GO_GUST_MPH } from '../utils/wind-waves.js';
 import { isNum, num } from '../utils/num.js';
 import { depthWindow, jigheadRangeOz, trollableBaits, describeBait, LURE_KNOWLEDGE,
          gpsWindowFor, leadForDepth, requiresInlineWeight, levelsOffFt } from '../data/lure-knowledge.js';
@@ -2788,7 +2789,7 @@ RULES THAT ARE NOT NEGOTIABLE
    the fields are absent the pipeline's probe had no answer there; that is not a flat.
 
 SAFETY — judge it honestly for a 12.5 ft kayak
-Sustained wind over 15 mph, or gusts over 20, is a no-go. Judge ${o.ramp || 'the ramp'} against the
+Sustained wind over ${NO_GO_SUSTAINED_MPH} mph, or gusts over ${NO_GO_GUST_MPH}, is a no-go. Judge ${o.ramp || 'the ramp'} against the
 wind direction: is it a dangerous windward launch?${windSourceLine(o.conditions)}${o.hazards && o.hazards.length
   ? `\nWHAT IS IN THE WAY on this water:\n`
     + o.hazards.map((h) => `- ${h}`).join('\n')

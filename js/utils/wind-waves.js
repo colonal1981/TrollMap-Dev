@@ -150,6 +150,11 @@ export function wavesByHour(coords, rays, windByHour, depthFt) {
 // themselves come out of the formula above; this is only where a leg starts being worth saying.
 export const TOO_ROUGH_FT = 1;
 
+// THE PLANS' WIND NO-GO, in one place: the prompt's SAFETY line ("Sustained wind over 15 mph, or gusts over 20, is a
+// no-go") and the "Which lake?" card (change request 85) both read these.
+export const NO_GO_SUSTAINED_MPH = 15;
+export const NO_GO_GUST_MPH = 20;
+
 /**
  * HOW FAR TO WATER UNDER HIS 1 FT, from the most open point on a leg, at one wind.
  *

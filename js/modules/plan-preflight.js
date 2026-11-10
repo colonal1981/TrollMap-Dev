@@ -235,6 +235,8 @@ export function checkPlanLegality(lakeName, species, date, o = {}) {
  * @param {object} [o]
  * @param {string} [o.launchTime] 'HH:MM' — clips the start of windByHour
  * @param {string} [o.returnTime] 'HH:MM' — clips the end
+ * @param {number[]} [o.at]       [lon, lat] to ask about instead of the water's centre
+ * @param {boolean} [o.pressure]  false skips the two days of pressure before
  * @returns {Promise<null|{summary:string, windByHour:{hour:number,mph:number,deg:number}[],
  *                         sunrise:string|null, sunset:string|null}>}
  *          null when there is no centre to ask about, or the fetch fails. NOT a partly-filled
@@ -243,7 +245,11 @@ export function checkPlanLegality(lakeName, species, date, o = {}) {
 export async function fetchForecast(lakeName, dateStr, o = {}) {
   try {
     const zoneKey = detectCoastalZone(lakeName);
-    const centre = (zoneKey && (COASTAL_ZONES[zoneKey] || {}).center)
+    // AT A RAMP WHEN ONE IS GIVEN, [lon, lat]: the "Which lake?" card (change request 85) asks the wind at each of his
+    // ramps, and a long lake's centre can be miles from the ramp. Every plan path passes none and gets the centre.
+    const at = Array.isArray(o.at) && o.at.every(Number.isFinite) ? [o.at[1], o.at[0]] : null;
+    const centre = at
+                || (zoneKey && (COASTAL_ZONES[zoneKey] || {}).center)
                 || (lakeDbEntryFor(lakeName) || {}).center;
     if (!centre) return null;
     const [lat, lon] = centre;
@@ -273,7 +279,9 @@ export async function fetchForecast(lakeName, dateStr, o = {}) {
     // "there was a huge weather swing and coming off of a low front... so they just may not have
     // been wanting to chew". Asked separately because the hourly arrays above are read by hour of
     // day, and two more days in them would repeat every hour three times. Never fatal.
-    const pressure = await pressureTrend(lat, lon, dateStr, o.launchTime).catch(() => null);
+    // The card that only compares the wind does not ask for it (o.pressure === false).
+    const pressure = o.pressure === false ? null
+                   : await pressureTrend(lat, lon, dateStr, o.launchTime).catch(() => null);
     // THE WIND IS THE NATIONAL WEATHER SERVICE'S BLEND (utils/nws-wind.js). Ryan, 2026-11-06: "something is wayyyy
     // off... i am not seeing anything close those wind forecasts on any of the apps". The request above names no
     // model, and for the US Open-Meteo answers with the GFS: 12 mph at 06:00 in the middle of Moultrie on 11/8, where

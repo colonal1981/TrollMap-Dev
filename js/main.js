@@ -64,6 +64,8 @@ import './modules/conditions-strip.js';
 import './modules/utility-sync.js';
 import './modules/lake-intel.js';
 import './modules/plan-builder.js';
+// The "Which lake?" card on the planner tab (change request 85): his lakes, best first for the day's wind.
+import './modules/which-lake.js';
 import './modules/edit.js';
 import './modules/contour-data.js';
 import './modules/routes-panel.js';
