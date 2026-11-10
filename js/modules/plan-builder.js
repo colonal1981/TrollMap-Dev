@@ -327,6 +327,11 @@ export function collectPlan(){
             // sentence in `why`. The rigging list reads it to say "tie it on" about a rod that is
             // only ever the fallback; on his 10/4 Moultrie plan that was R4, on seven legs.
             ifNotProducing: e.ifNotProducing || null,
+            // THE LADDER -- fish at -> which two rigged rods, what speed (depthLadder() in plan-assemble.js, item 84).
+            // Drawn on the card when the plan is built and LEFT OUT OF THIS COPY until 2026-11-10, so the plan he saved
+            // for Wateree 11/11 and loaded anywhere else had no "If the sounder shows fish at" block. This copy is what a
+            // saved plan, the phone and the report all read.
+            ladder: e.ladder || null,
             // Whether tap-and-reel-up is the right move on this leg. See bottomNote() in
             // plan-to-timeline.js — it is the thing his own technique cannot tell him.
             bottomNote: e.bottomNote,

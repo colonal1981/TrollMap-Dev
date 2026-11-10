@@ -135,3 +135,15 @@ describe('a day over deep water with fewer than two of his deep baits rigged is 
     for (const l of plan.legs.filter((x) => x.type === 'troll')) expect(l.depthLadder.rows.length > 0).toBe(true);
   });
 });
+
+// AND THE LADDER SURVIVES THE SAVE. Ryan's saved Wateree plan for 11/11 had no ladder on any leg: the copy of the timeline
+// a saved plan keeps (collectPlan() in plan-builder.js) lists its fields one by one, and `ladder` was not among them. A
+// loaded plan, the phone and the report read that copy.
+import { readFileSync as readSrc } from 'node:fs';
+describe('a saved plan keeps each troll leg\'s ladder', () => {
+  it('the saved timeline copies `ladder` beside the other troll fields', () => {
+    const builder = readSrc(new URL('../js/modules/plan-builder.js', import.meta.url), 'utf8');
+    const copy = builder.slice(builder.indexOf("if (e.type === 'troll') {"), builder.indexOf("if (e.type === 'troll') {") + 6000);
+    expect(copy).toContain('ladder: e.ladder || null,');
+  });
+});

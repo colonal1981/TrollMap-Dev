@@ -179,6 +179,16 @@ describe('the forecast is asked at the ramp', () => {
     expect(urls.some((u) => /surface_pressure/.test(u))).toBe(false);
   });
 
+  it('the day\'s high is said in °F, not Open-Meteo\'s °C', async () => {
+    const real = globalThis.fetch;
+    globalThis.fetch = async () => ({ ok: true, json: async () => ({ daily: { temperature_2m_max: [25], windspeed_10m_max: [6],
+      winddirection_10m_dominant: [240], precipitation_sum: [0], sunrise: [], sunset: [] }, hourly: { time: [] } }) });
+    let f;
+    try { f = await fetchForecast('Lake Wateree, SC', '2026-11-11', { at: [-80.728814, 34.379271], pressure: false }); }
+    finally { globalThis.fetch = real; }
+    expect(f.summary).toContain('High 77°F');
+  });
+
   it('the plan prompt still reads the same no-go line', () => {
     const src = readFileSync(new URL('../js/modules/plan-prompt.js', import.meta.url), 'utf8');
     expect(src).toContain('Sustained wind over ${NO_GO_SUSTAINED_MPH} mph, or gusts over ${NO_GO_GUST_MPH}, is a no-go.');

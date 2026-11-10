@@ -294,8 +294,10 @@ export async function fetchForecast(lakeName, dateStr, o = {}) {
     const mph = Math.round((nd ? nd.maxKmh : ((D.windspeed_10m_max || [])[0] || 0)) * 0.621371);
     const precip = (D.precipitation_sum || [])[0] || 0;
     const hi = (D.temperature_2m_max || [])[0];
+    // °F. Open-Meteo answers in °C and this line printed it bare -- "High 25°" on 11/10 for a 77° Wednesday, on a
+    // form where every other temperature is Fahrenheit, and the same words went into the prompt.
     const summary = `Wind ${dir} ${mph} mph · Precip ${precip}mm`
-                  + (hi != null ? ` · High ${Math.round(hi)}°` : '');
+                  + (hi != null ? ` · High ${Math.round(Number(hi) * 9 / 5 + 32)}°F` : '');
     const modelHours = hourlyWind(d && d.hourly, o.launchTime, o.returnTime);
     const blendHours = nbm ? hourlyWind(nbm.hourly, o.launchTime, o.returnTime) : [];
     const blend = blendHours.length > 0;
