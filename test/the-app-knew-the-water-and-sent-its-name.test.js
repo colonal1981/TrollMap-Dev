@@ -61,14 +61,31 @@ const THREE = [
 ];
 
 describe('the three names the batch used, asked the way it asked', () => {
-  for (const [name] of THREE) {
-    it(`"${name}" alone reaches no row -- and now SAYS so`, async () => {
-      const r = await ask(name, 'NC');
-      expect(r.slug).toBe(null);
-      expect(r.predatorSpecies.length).toBe(0);
-      expect(r.unresolved).toBe(name);
-    });
-  }
+  it('"French Broad River, TN" alone reaches no row -- and now SAYS so', async () => {
+    const r = await ask('French Broad River, TN', 'NC');
+    expect(r.slug).toBe(null);
+    expect(r.predatorSpecies.length).toBe(0);
+    expect(r.unresolved).toBe('French Broad River, TN');
+  });
+
+  // 2026-11-09: THE OTHER TWO REACH A ROW BY NAME NOW, and the state suffix is why. resolveRegistryRow's
+  // last pass drops a parenthetical, and it used to leave a space before the comma behind it --
+  // `Pee Dee River (2), NC` read `pee dee river , nc` and never met `pee dee river, nc`. Found on the
+  // Congaree, which the book closes to stripers June 16 - Sept 30 and the regulations route could not
+  // place. The suffix still has to match, so each lands on the row in ITS state: Pee Dee on the row the
+  // batch bound, the Broad on the SC row (Union Co) rather than the NC one the batch bound by access
+  // points. A bound slug still wins over the name -- the block below is unchanged and still passes.
+  it('"PEE DEE RIVER, NC" alone reaches the row the batch bound', async () => {
+    const r = await ask('PEE DEE RIVER, NC', 'NC');
+    expect(r.slug).toBe('pee_dee_river_2');
+    expect(r.resolvedBy).toBe('name');
+  });
+  it('"Broad River, SC" alone reaches the SC row, not the NC one', async () => {
+    const r = await ask('Broad River, SC', 'NC');
+    expect(r.slug).toBe('broad_river_2');
+    expect(FX.lake_index.broad_river_2.state).toBe('SC');
+    expect(r.resolvedBy).toBe('name');
+  });
 });
 
 describe('the same three, with the slug the app had already bound', () => {
