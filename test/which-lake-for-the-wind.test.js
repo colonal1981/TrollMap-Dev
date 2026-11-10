@@ -112,6 +112,15 @@ describe('best first', () => {
     expect(hoursText([11, 12, 13, 15])).toBe('11:00–13:00, 15:00');
   });
 
+  it('a row whose wind is not the footer\'s model says which it is; the lakes are asked one at a time', () => {
+    const r = row('Lake Murray, SC', 0.3, 1);
+    expect(rowLines(r, 1, 'the National Weather Service blend (NBM)').join(' ')).not.toContain('Wind from');
+    expect(rowLines(r, 1, "Open-Meteo's default model (the GFS in the US)").join(' '))
+      .toContain('Wind from the National Weather Service blend (NBM) here.');
+    const src = readFileSync(new URL('../js/modules/which-lake.js', import.meta.url), 'utf8');
+    expect(src).toContain('for (const L of lakes) {\n    got.push(await weighLake(');
+  });
+
   it('the wind and weather come off the plans\' forecast shape', () => {
     const x = dayWeather({ windModel: 'NBM', windByHour: [{ hour: 7, mph: 4, deg: 200, gustMph: 9 },
       { hour: 13, mph: 16, deg: 250, gustMph: 19 }], weatherByHour: [{ hour: 14, thunder: true }, { hour: 15, rain: true }] });

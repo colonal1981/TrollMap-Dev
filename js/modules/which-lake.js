@@ -158,8 +158,11 @@ export function hoursText(hours) {
   return runs.map(([a, b]) => (a === b ? hh(a) : `${hh(a)}–${hh(b)}`)).join(', ');
 }
 
-/** The sentences of one lake's row. */
-export function rowLines(r, limitFt = TOO_ROUGH_FT) {
+/**
+ * The sentences of one lake's row. `model` is the wind model the card's footer names; a row whose wind came from
+ * another (the blend had no answer for that ramp) says so on the row.
+ */
+export function rowLines(r, limitFt = TOO_ROUGH_FT, model = null) {
   const lines = [];
   const w = r.waves, x = r.weather;
   const miles = Math.round(NEAR_RAMP_M / 1609.344);
@@ -178,7 +181,8 @@ export function rowLines(r, limitFt = TOO_ROUGH_FT) {
     lines.push(`Wind ${compass(x.fromDeg)} ${range} mph${x.maxGust != null ? `, gusts to ${x.maxGust}` : ''}.`
              + (x.thunder.length ? ` Thunder ${hoursText(x.thunder)}.` : '')
              + (x.rain.length ? ` Rain ${hoursText(x.rain)}.` : '')
-             + (!x.thunder.length && !x.rain.length ? ' No rain forecast.' : ''));
+             + (!x.thunder.length && !x.rain.length ? ' No rain forecast.' : '')
+             + (x.model && model && x.model !== model ? ` Wind from ${x.model} here.` : ''));
     if (x.noGo.length) {
       lines.push(`Over the plans' no-go (${NO_GO_SUSTAINED_MPH} mph sustained, ${NO_GO_GUST_MPH} gusting) `
                + `${hoursText(x.noGo.map((n) => n.hour))}.`);
@@ -241,13 +245,13 @@ export async function weighLake(L, dateStr, launchTime, returnTime, deps) {
   return { ...best, others: L.pick === 'sheltered' ? others : [], species: legal, closed, other: L.other };
 }
 
-function rowHtml(r, i) {
+function rowHtml(r, i, model) {
   return `
     <button type="button" class="which-lake-row" data-lake="${esc(r.lake)}" data-ramp="${esc(r.ramp)}"
             style="display:block;width:100%;text-align:left;background:transparent;border:0;border-top:1px dashed var(--line);padding:8px 0;cursor:pointer;color:inherit">
       <div style="font-size:12px;color:var(--text)"><b style="color:var(--accent)">${i + 1}</b>&nbsp; <b>${esc(r.lake)}</b> · ${esc(r.ramp)}
         <span style="float:right;font-size:11px;color:var(--accent2)">Plan from here</span></div>
-      ${rowLines(r).map((l) => `<div style="font-size:11px;color:var(--muted);margin-top:2px">${esc(l)}</div>`).join('')}
+      ${rowLines(r, TOO_ROUGH_FT, model).map((l) => `<div style="font-size:11px;color:var(--muted);margin-top:2px">${esc(l)}</div>`).join('')}
     </button>`;
 }
 
@@ -284,17 +288,26 @@ async function runWhichLake() {
   const deps = { ensureRegulations: pf.ensureRegulations, checkPlanLegality: pf.checkPlanLegality,
                  fetchForecast: pf.fetchForecast, packFetcher: sp.packFetcher, CF_WORKER_URL: st.CF_WORKER_URL,
                  resolveR2Key: lk.resolveR2Key, shoreRays: ww.shoreRays, waterTest: rd.waterTest };
-  const got = await Promise.all(lakes.map((L) => weighLake(L, dateStr, launchTime, returnTime, deps)
-    .catch((e) => ({ lake: L.lake, failed: (e && e.message) || 'failed' }))));
+  // ONE LAKE AT A TIME. Asked all at once on 2026-11-09 (his evening), the seven ramps' forecasts came back with two
+  // missing outright and others off the default model instead of the National Weather Service blend -- Murray at 2-3 mph
+  // where the blend, asked alone, had 0-5 gusting 10. Asked one after another, all seven came from the blend.
+  const got = [];
+  for (const L of lakes) {
+    got.push(await weighLake(L, dateStr, launchTime, returnTime, deps)
+      .catch((e) => ({ lake: L.lake, failed: (e && e.message) || 'failed' })));
+  }
   const rows = rankLakes(got.filter((g) => g.ramp));
   const closed = got.filter((g) => !g.ramp && g.closed);
   const failed = got.filter((g) => g.failed);
-  const model = (rows.find((r) => r.weather && r.weather.model) || {}).weather?.model;
+  // The footer names the model most rows' wind came from; a row from another says so itself.
+  const tally = new Map();
+  for (const r of rows) if (r.weather && r.weather.model) tally.set(r.weather.model, (tally.get(r.weather.model) || 0) + 1);
+  const model = [...tally.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || null;
   const miles = Math.round(NEAR_RAMP_M / 1609.344);
   out.innerHTML = `
     <div style="font-size:11px;color:var(--muted);margin-bottom:2px">${esc(dateStr)} · ${esc(launchTime)}–${esc(returnTime)} · ${esc(species.join(', '))}.
       Best first: storms and no-go wind last, then waves under ${TOO_ROUGH_FT} ft all day, then the most water under ${TOO_ROUGH_FT} ft at the roughest hour. Tap a lake to plan from it.</div>
-    ${rows.length ? rows.map(rowHtml).join('') : '<div style="font-size:12px;color:var(--warn)">None of your lakes is open for that fish on that date.</div>'}
+    ${rows.length ? rows.map((r, i) => rowHtml(r, i, model)).join('') : '<div style="font-size:12px;color:var(--warn)">None of your lakes is open for that fish on that date.</div>'}
     ${closed.length ? `<div style="font-size:11px;color:var(--muted);border-top:1px dashed var(--line);padding-top:6px">Not that day: ${closed.map((c) => `${esc(c.lake)} — ${esc(c.closed.map((x) => x.reason).join('; '))}`).join(' · ')}</div>` : ''}
     ${failed.length ? `<div style="font-size:11px;color:var(--warn)">Could not check: ${esc(failed.map((f) => f.lake).join(', '))}.</div>` : ''}
     <div style="font-size:10px;color:var(--muted);margin-top:6px">Wind: ${esc(model || 'the plans’ forecast')}, at each ramp. Waves: the plans' fetch formula on open water within ${miles} mi of the ramp, against your ${TOO_ROUGH_FT} ft.</div>`;
