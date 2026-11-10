@@ -131,7 +131,7 @@ export const LURE_KNOWLEDGE = {
     // lipless is never going to hit bottom at 2mph lol unless i run pretty dang shallow", and "i will treat the
     // lipless as a shallow bait". The one figure found: "Trolling charts show that a 1/2 oz Trap runs about 6 ft on the
     // cast, and between 7' to 11' on the troll depending on line diameter (deeper with lighter line)" (BassResource
-    // forum, "Rattle Trap questions", read 2026-11-10), in line with walleyecentral's 6-8 ft for a 1/2 oz, a guess
+    // forum, "Rattle Trap questions", read 2026-11-09), in line with walleyecentral's 6-8 ft for a 1/2 oz, a guess
     // there. So 11 ft for 1/2 oz, the deep end. Other weights by this file's own WEIGHT_EXPONENT,
     // which is MINE and unmeasured for a lipless (levelsOffFt(), which also moves it with the speed): about 8 ft for 1/4 oz, 13 for 3/4, 16 for his 1 1/4 oz Super Pogy.
     levelsOff: { ft: 11, refOz: 0.5 },
@@ -646,7 +646,7 @@ const WEIGHT_EXPONENT = 0.4;
  * THE DEEPEST A BAIT THAT LEVELS OFF GOES, at any lead: `levelsOff.ft` at `levelsOff.refOz` and 2.0 mph, other weights
  * (the bait and any weight ahead of it, systemWeightOz()) by WEIGHT_EXPONENT. Null for a bait with no such limit.
  *
- * AND SLOWER IS DEEPER, here as for every weighted bait. Ryan, 11/10: "does the app know that i can slow down to drop
+ * AND SLOWER IS DEEPER, here as for every weighted bait. Ryan, 11/9: "does the app know that i can slow down to drop
  * the sinking baits lower to actually reach the fish?" Where it levels off is where the pull of the water on line and
  * bait balances its weight, and that pull falls as the boat slows, so the ceiling drops with the speed. The forum figure
  * gives no speed; it is taken at the 2.0 mph every ratio in this file is pinned at, and moved by speedFactor(), the same

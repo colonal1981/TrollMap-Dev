@@ -5,7 +5,7 @@
 // Ryan, 2026-11-07, on his Moultrie plan for 11/8: "for the casting stop with the jighead and swimbait is that the same
 // rod as legs 14 and 17? the casting stop doesn't say what size jighead or color of swimbait". It was R6, the 5" pearl
 // swimbait on a 3/4 oz head, trolled on L5, L14 and L17 and cast at the stops; the stop printed "R6: Swimbait 5" –
-// Jighead" and nothing else. His "81 can be done", 11/10.
+// Jighead" and nothing else. His "81 can be done", 11/9.
 import { describe, it, expect } from './expect-shim.mjs';
 import { planToTimeline, stopRodLine, castHeadOz } from '../js/modules/plan-to-timeline.js';
 import { rodsAtLaunch } from '../js/modules/rods-at-launch.js';
@@ -61,7 +61,7 @@ describe('a stop names each rod\'s lure, colour and head', () => {
   });
 });
 
-// AND THE RODS AT LAUNCH LIST IS ON THE PLANNER TAB, ABOVE LEG 1. His pick, 11/10: "Top, above Leg 1".
+// AND THE RODS AT LAUNCH LIST IS ON THE PLANNER TAB, ABOVE LEG 1. His pick, 11/9: "Top, above Leg 1".
 import { rodsAtLaunchPanelHtml } from '../js/modules/rods-at-launch.js';
 import { readFileSync } from 'node:fs';
 

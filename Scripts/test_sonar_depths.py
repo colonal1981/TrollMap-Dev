@@ -112,7 +112,7 @@ def gpx_on(day, n, name='ACTIVE LOG'):
 
 
 class WhichGpx(unittest.TestCase):
-    """11/10: his 11/9 folder had 09NOV2026.GPX, no EXPORT in the name, and the script read no track from it."""
+    """11/9: his 11/9 folder had 09NOV2026.GPX, no EXPORT in the name, and the script read no track from it."""
     def folder(self, files):
         d = tempfile.mkdtemp()
         for name, text in files.items():

@@ -2255,7 +2255,7 @@ export function buildPlanRequest(o) {
              + `the speed and the depth you asked for. A lead you pick is a number about a bait `
              + `with no weight on it yet.`;
       }
-      // A BAIT THAT LEVELS OFF IS NOT "as deep as you feed it" (the lipless, 11/8-11/10): more line stops taking it
+      // A BAIT THAT LEVELS OFF IS NOT "as deep as you feed it" (the lipless, 11/8-11/9): more line stops taking it
       // down, and only a slower boat does.
       const ceil = levelsOffFt(lure, 2.0);
       if (ceil != null) {
@@ -2475,7 +2475,7 @@ you named — nobody knows what is on the ones you did not.
 Anything you expect to CHANGE during the day belongs on a snap rod if it can be — that change is
 seconds, where a leader rod is a knot with wet hands.
 
-**FISH AT 25 FT AND DEEPER ARE REACHED BY SLOWING DOWN, NOT BY A CRANKBAIT.** Ryan, 2026-11-10:
+**FISH AT 25 FT AND DEEPER ARE REACHED BY SLOWING DOWN, NOT BY A CRANKBAIT.** Ryan, 2026-11-09:
 "honestly for 25 and down the safest bet is slowing down an a-rig, spoon, paddletail, or bucktail", and
 of his deepest diver, "the dd4 doesn't get as low as it says". Where any water you plan to troll is
 25 ft or deeper, rig at least TWO of those four kinds as troll rods (an A-rig; a spoon on its trolling

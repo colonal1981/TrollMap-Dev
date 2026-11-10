@@ -6,7 +6,7 @@
 // actual chances that it runs that deep?", then "I could let all of my line out on my real and that lipless is never
 // going to hit bottom at 2mph lol unless i run pretty dang shallow", and "i will treat the lipless as a shallow bait".
 // The app worked its depth from the line out (4.0 ft of lead a foot, no source), so 120 ft put the 3" at 25 ft. The
-// one figure found: trolling charts put a 1/2 oz Trap at 7-11 ft on the troll (BassResource forum, read 11/10). So
+// one figure found: trolling charts put a 1/2 oz Trap at 7-11 ft on the troll (BassResource forum, read 11/9). So
 // line takes it down to about 11 ft and no further; other weights by the file's own weight exponent (mine).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -49,7 +49,7 @@ test('heavier goes deeper, lighter shallower; his 1 1/4 oz Super Pogy about 16 f
 });
 
 test('and slower goes deeper: its ceiling moves with the speed by the same curve as every weighted bait', () => {
-  // Ryan, 11/10: "does the app know that i can slow down to drop the sinking baits lower to actually reach the fish?"
+  // Ryan, 11/9: "does the app know that i can slow down to drop the sinking baits lower to actually reach the fish?"
   assert.equal(levelsOffFt(L3, 2.0), 11);
   assert.equal(levelsOffFt(L3, 1.6), 13.8);
   assert.equal(levelsOffFt(L3, 2.4), 9.2);

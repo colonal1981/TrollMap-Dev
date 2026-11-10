@@ -480,7 +480,7 @@ export function stopRodLine(r, leg, legs) {
 }
 
 // THE LADDER AS THE CARDS PRINT IT. `rows` keep the assembler's numbers; `text` is the one sentence a row is, so the
-// planner card, the report and the phone say it the same way. Ryan, 11/10: "we need to write the plan to have options
+// planner card, the report and the phone say it the same way. Ryan, 11/9: "we need to write the plan to have options
 // that fit what i see on the sounder".
 const mphLabel = (v) => (Math.abs(v - 0.75) < 1e-9 ? '0.75' : Number(v).toFixed(1));
 export function ladderRowText(row) {
@@ -687,7 +687,7 @@ export function planToTimeline(plan, o = {}) {
       // rod's own lure is named from the loadout, because "put R2 on" is not an instruction anybody
       // can follow with four rods behind the seat.
       // THE LADDER REPLACES THE ONE-LINE SONAR CHECK where the leg has one: it answers the same question ("the sounder
-      // shows fish deeper than what I am pulling") for every 5 ft, by speed, which is the lever he has (11/10).
+      // shows fish deeper than what I am pulling") for every 5 ft, by speed, which is the lever he has (11/9).
       // Two surface baits keep their sentence: the ladder has no row for a bait worked on top.
       longDesc: [clean(leg.why), fallbackLine(leg, rodsById),
                  leg.depthLadder && !(leg.sonarCheck && leg.sonarCheck.pairSurfaceOnly) ? '' : sonarLine(leg),

@@ -55,7 +55,7 @@ BASE = re.compile(r"(?:\bout of|\bbased (?:at|in|out of)|\bowner of|\boperates?)
 # Short Stay day, 11/6: 86 of the 87 striper reports around the date are about both lakes, and 12 of them say dam.
 THE_DAM = re.compile(r"\bthe\s+(?:main\s+)?dam\b", re.I)
 SENTENCE = re.compile(r'(?<=[.!?])\s+')
-# A PLACE NAMED ONLY AS WHERE TO BUY BAIT OR TO LAUNCH IS NOT WHERE THE FISH ARE (11/10). His Wateree bar on 11/8 offered
+# A PLACE NAMED ONLY AS WHERE TO BUY BAIT OR TO LAUNCH IS NOT WHERE THE FISH ARE (11/9). His Wateree bar on 11/8 offered
 # Taylor Creek for his stripers from one report, Carolina Sportsman 11/5/2024: "Check Suttons Landing in Taylors Creek on
 # Lake Wateree for live bait." So an occurrence is passed over where its sentence is about getting bait and the place is
 # the shop's address or the shop itself, or where it is only where a boat goes in. The app applies the same rule to the

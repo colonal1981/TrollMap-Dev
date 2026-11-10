@@ -92,7 +92,7 @@ describe('sonarCheck — x is the pair, not a number anybody picked', () => {
     const s = trollLeg(build(FOUR, { port: 'R4', starboard: 'R3' })).sonarCheck;
     expect(s.reach).toEqual([]);
     expect(s.deepestInBoatFt).toBe(s.ifDeeperThanFt);
-    // SINCE 2026-11-10 THE CARD SAYS IT AS THE LADDER (depthLadder()): fish at -> which two rods, what speed, by 5 ft,
+    // SINCE 2026-11-09 THE CARD SAYS IT AS THE LADDER (depthLadder()): fish at -> which two rods, what speed, by 5 ft,
     // which answers this sentence's question at every depth. The facts above stay on `sonarCheck`.
     const card = cardFor(build(FOUR, { port: 'R4', starboard: 'R3' }));
     expect(card.longDesc.includes('nothing else in the boat reaches them')).toBe(false);
@@ -124,7 +124,7 @@ describe('what controls the bait is a property of the bait, never of the leg', (
   it('calls a lead-controlled pair lead-controlled when it is the pair in the water', () => {
     const s = trollLeg(build(LEAD, { port: 'L1', starboard: 'L2' })).sonarCheck;
     expect(s.pairLeadWillGoDeeper).toBe(true);
-    // The card's "more lead takes it deeper" gave way to the ladder on 2026-11-10: he cannot measure lead ("line out is a
+    // The card's "more lead takes it deeper" gave way to the ladder on 2026-11-09: he cannot measure lead ("line out is a
     // complete guess"), and slowing down is the lever the ladder uses. The fact stays on `sonarCheck`.
     const card = cardFor(build(LEAD, { port: 'L1', starboard: 'L2' }));
     expect(card.longDesc.includes('more lead takes what is already out there deeper')).toBe(false);
@@ -161,7 +161,7 @@ describe('two baits worked on top have no "below x" to offer', () => {
   it('and is false the moment one of the two is fishing under the surface', () => {
     const s = trollLeg(build(TOP, { port: 'R1', starboard: 'R3' })).sonarCheck;
     expect(s.pairSurfaceOnly).toBe(false);
-    // A pair with a bait under the surface gets the ladder (2026-11-10), not the one-line check.
+    // A pair with a bait under the surface gets the ladder (2026-11-09), not the one-line check.
     expect(trollLeg(build(TOP, { port: 'R1', starboard: 'R3' })).depthLadder.rows.length > 0).toBe(true);
   });
 });

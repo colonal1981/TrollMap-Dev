@@ -38,7 +38,7 @@ const DD3 = TACKLE_INVENTORY.find((l) => l.type === 'crankbait_dd3');
 // no depth at all -- Ryan: "a 3/4oz spoon unweighted at 2mph is a surface lure" -- so it is the
 // one bait in the box that cannot stand for the general case. The predicate now says what it
 // means, and the spoon gets its own assertions at the bottom of this file.
-// And not a lipless: from 2026-11-10 it levels off (LURE_KNOWLEDGE.lipless.levelsOff), so more line is not deeper
+// And not a lipless: from 2026-11-09 it levels off (LURE_KNOWLEDGE.lipless.levelsOff), so more line is not deeper
 // past about 58 ft, which is the opposite of what the general case below asserts.
 const LEADED = TACKLE_INVENTORY.find((l) => (l.trollable || l.castable)
   && !requiresInlineWeight(l.type) && !LURE_KNOWLEDGE[l.type].levelsOff

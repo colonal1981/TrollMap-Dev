@@ -974,7 +974,7 @@ export async function buildPlanPreviewHtml(p){
           return `${esc(r.side||'')}: ${esc(r.lure||'')}${r.jigWeight?` ${esc(r.jigWeight)}`:''}`
                + `${r.depth?` — runs ${esc(String(r.depth))} ft`:''}${esc(gap)}`;
         }).join('<br>');
-        // THE LADDER, under the rods: fish at -> which two rods, what speed (11/10). Its sentences are plan-to-timeline's.
+        // THE LADDER, under the rods: fish at -> which two rods, what speed (11/9). Its sentences are plan-to-timeline's.
         const ladder = e.ladder && Array.isArray(e.ladder.rows) && e.ladder.rows.length
           ? `<br><b>If the sounder shows fish at:</b><br>${e.ladder.rows.map((r) => esc(r.text || '')).join('<br>')}${e.ladder.note ? `<br><i>${esc(e.ladder.note)}</i>` : ''}`
           : '';

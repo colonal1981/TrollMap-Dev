@@ -307,7 +307,7 @@ export function rodsAtLaunchHtml(p, esc) {
 /**
  * THE SAME LIST ON THE PLANNER TAB, above the first leg (item 81). Ryan, 11/7: "the rods at launch tell me everything i
  * need to know... problem is that the rods at launch isn't on the planner tab... maybe that should be on the actual
- * planner screen after the plan runs?"; his "81 can do be done", 11/10, and his pick, "Top, above Leg 1".
+ * planner screen after the plan runs?"; his "81 can do be done", 11/9, and his pick, "Top, above Leg 1".
  *
  * The facts are rodsAtLaunch()'s, the same ones the report prints; only the drawing is the tab's: its dark panel, one
  * block a rod so it reads on the phone without a table scrolling sideways. `p` is collectPlan()-shaped: `plan`, the

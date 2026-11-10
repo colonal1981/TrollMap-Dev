@@ -2,7 +2,7 @@
 //
 // THE PLAN FITS WHAT THE SOUNDER SHOWS: a ladder on every troll leg, fish at -> which two rigged rods, what speed.
 //
-// Ryan, 2026-11-10: "one day on the lake doesn't help us get depths of fish... for a-rigs or spoons it is simple to slow
+// Ryan, 2026-11-09: "one day on the lake doesn't help us get depths of fish... for a-rigs or spoons it is simple to slow
 // down to drop the baits lower... but for plans that call for deep diving crank baits i can't make them just drop... so we
 // need to write the plan to have options that fit what i see on the sounder". Of his DD4 (the Deep Hit Stick 12): "the
 // dd4 doesn't get as low as it says". His rule: "honestly for 25 and down the safest bet is slowing down an a-rig, spoon,

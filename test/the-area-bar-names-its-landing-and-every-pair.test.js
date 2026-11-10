@@ -6,7 +6,7 @@
 // should tell you to launch at those instead maybe? clearwater and the dam make sense together though", and "i think
 // taylors landing is closed temporarily because of a invasive grass". Read in the reports, the Taylor Creek area came
 // from one sentence: "Check Suttons Landing in Taylors Creek on Lake Wateree for live bait." Offered as one change for
-// his three points (11/8); his go, 11/10: "work on them all".
+// his three points (11/8); his go, 11/9: "work on them all".
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { layAreas, runCrankbaits, MAX_PAIR_OPTIONS, landingSaid } from '../js/modules/plan-areas.js';

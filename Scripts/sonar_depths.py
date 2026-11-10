@@ -13,7 +13,7 @@ On 9/26 and 9/28 they were there all day; what the recordings added was the dept
     python Scripts/sonar_depths.py F:\\TrollMapPipeline\\28Sep26_Trip [--plan plan.json]
 
 READS, from the folder: every *.RSD (Garmin sonar recording) and the unit's GPX: one with EXPORT in its name, or else
-the one with the most ACTIVE LOG points on the recordings' days (11/10: his 11/9 GPX was 09NOV2026.GPX). From the GPX,
+the one with the most ACTIVE LOG points on the recordings' days (11/9: his 11/9 GPX was 09NOV2026.GPX). From the GPX,
 the ACTIVE LOG and the plan's legs if they were loaded on the unit. From --plan, the JSON the app exports with "JSON":
 the fish band, each leg's line and what the baits ran at. WRITES sonar_depths_<folder>.txt beside them. Never writes
 to a recording.
@@ -29,12 +29,12 @@ EVERY RULE BELOW WAS MEASURED ON HIS OWN RECORDINGS, and each says where:
   - The clock is aligned to the ACTIVE LOG by position: the file's name gives the minute it began,
     and the offset that puts the pings on the track is searched from a minute before to two after.
     Misread clocks (2-3% of pings) are found by a running median and interpolated (9/26).
-  - A FISH MARK IS WHAT HIS SCREEN WOULD SHOW (11/10, from the 11/9 trip read by hand; screen_marks()). Every 2
+  - A FISH MARK IS WHAT HIS SCREEN WOULD SHOW (11/9, from the 11/9 trip read by hand; screen_marks()). Every 2
     minutes of the down beam are put on the screen's scale, 0 at the 95th percentile of the water and 1 at the 99th of
     the bottom's face, and a mark is joined cells at 0.25 or more, 4 pings or more, no taller than 8 ft, from 3.5 ft to
-    2 ft off the bottom. Until 11/10 it was a cell over one plain-water bar per recording, measured in 4-28 ft of water
+    2 ft off the bottom. Until 11/9 it was a cell over one plain-water bar per recording, measured in 4-28 ft of water
     (9/28), which on 30-60 ft of water was not his screen.
-  - THE BIGGER MARKS are the solid arches: peak 0.5 or more on that scale and 15 pings or more (11/9). Until 11/10 they
+  - THE BIGGER MARKS are the solid arches: peak 0.5 or more on that scale and 15 pings or more (11/9). Until 11/9 they
     were the brightest quarter of the day's marks, which is always a quarter whatever was there.
   - WHERE THEY SAT is said plainly as well: depth and height off the bottom as quartiles, and the share within 6 ft of
     the bottom, for all marks and for the solid arches (11/9: a median 29 ft, 6 ft off the bottom).

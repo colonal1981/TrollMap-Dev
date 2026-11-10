@@ -926,7 +926,7 @@ function sonarContingency(rods, deploy, rodPlan, speedMph, lureByName) {
 /**
  * THE DEPTH LADDER: FISH AT -> WHICH TWO RIGGED RODS, AT WHAT SPEED. One per troll leg.
  *
- * Ryan, 2026-11-10: "one day on the lake doesn't help us get depths of fish... for a-rigs or spoons it is simple to slow
+ * Ryan, 2026-11-09: "one day on the lake doesn't help us get depths of fish... for a-rigs or spoons it is simple to slow
  * down to drop the baits lower... but for plans that call for deep diving crank baits i can't make them just drop... so
  * we need to write the plan to have options that fit what i see on the sounder". Then, of the DD4: "the dd4 doesn't get
  * as low as it says... i let out all the line almost and wasn't getting bites", and his rule: "honestly for 25 and down
@@ -997,7 +997,7 @@ export function depthLadder(rods, deploy, rodPlan, legMph, lureByName, ceilingFt
     const w = c.at.get(v);
     if (!w || w.max > ceilingFt + 1e-9) return false;
     if (lo >= DEEP_FROM_FT && !c.deep) return false;
-    // A crankbait boxed at 25 ft and deeper is not counted at all: "the dd4 doesn't get as low as it says" (11/10).
+    // A crankbait boxed at 25 ft and deeper is not counted at all: "the dd4 doesn't get as low as it says" (11/9).
     if (c.rated && w.min >= DEEP_FROM_FT) return false;
     const x = c.rated ? w.min : (w.min + w.max) / 2;
     return slack ? x >= lo - LADDER_ABOVE_FT - 1e-9 && x <= hi + LADDER_BELOW_FT + 1e-9
@@ -2500,7 +2500,7 @@ export function assemblePlan(o) {
     warnings.push(`${fluoro} fluoro reties — each one is a knot in a moving kayak`);
   }
   // TWO RODS THAT CAN BE SLOWED DOWN TO FISH AT 25 FT AND DEEPER, on any day that trolls water that deep. His rule,
-  // 11/10: "for 25 and down the safest bet is slowing down an a-rig, spoon, paddletail, or bucktail". The prompt asks
+  // 11/9: "for 25 and down the safest bet is slowing down an a-rig, spoon, paddletail, or bucktail". The prompt asks
   // for it; this says so when the plan did not do it, so the depth ladder's deep rows are not one rod or none.
   if (typeof o.lureByName === 'function') {
     const deepWater = (plan.legs || []).some((l) => l && l.type === 'troll'

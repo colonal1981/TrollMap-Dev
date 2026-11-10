@@ -629,7 +629,7 @@ export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeed
     html += `<div style="background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 12px;margin-bottom:14px;font-size:11px;color:var(--muted)">🌙 ${esc(solunar)}</div>`;
   }
 
-  // ── Rods At Launch, above Leg 1 (item 81, his pick 11/10) ──────────────────
+  // ── Rods At Launch, above Leg 1 (item 81, his pick 11/9) ──────────────────
   // `rodsSource` is collectPlan()-shaped ({ plan, timeline, castRods }); a caller with no plan block passes nothing and
   // the tab draws as it did. A failure here must not take the plan off the screen.
   if (rodsSource) {

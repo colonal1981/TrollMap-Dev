@@ -261,7 +261,7 @@ describe('depth model — one source, four modes', () => {
       // bare asks a planing bait for a depth, which since 2026-09-14 correctly answers `null`.
       const l = requiresInlineWeight(bought.type)
         ? { ...bought, inlineWeightOz: RIGGED_TROLLING_WEIGHT_OZ } : bought;
-      // A BAIT THAT LEVELS OFF (the lipless, 11/10) round-trips up to its ceiling at this speed; asked for more, it is there.
+      // A BAIT THAT LEVELS OFF (the lipless, 11/9) round-trips up to its ceiling at this speed; asked for more, it is there.
       const ceil = levelsOffFt(l, 1.8);
       for (const d of [8, 15, 25, 35]) {
         const lead = leadForDepth(l, d, 1.8);

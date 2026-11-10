@@ -68,7 +68,7 @@ test('the same hump on a later leg says which leg and id it was first listed und
 });
 
 test('a lead bait whose deep end is the floor is lifted a foot, and a bill bait on its floor is left alone', () => {
-  // His L1: the 4" lipless on 100 ft at 2 mph ran 20-24 ft over a 24 ft floor -- gap 0, "taps". From 11/10 the lipless
+  // His L1: the 4" lipless on 100 ft at 2 mph ran 20-24 ft over a 24 ft floor -- gap 0, "taps". From 11/9 the lipless
   // levels off (about 13 ft for 3/4 oz), so the same 3/4 oz and 4.0 ratio is carried by the 3/4 oz bucktail, a lead
   // bait with no ceiling; every number is unchanged.
   const LIPLESS = TACKLE_INVENTORY.find((l) => l.name === '3/4oz Bucktail Jig');
