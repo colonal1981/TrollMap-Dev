@@ -42,3 +42,20 @@ test('every journal card can change the species of its fish', () => {
   // only the species: the length, the water and the pin are what they were
   assert.doesNotMatch(edit, /c\.(length|lake|lat|lon)\s*=/);
 });
+
+// AND THE LURE. Ryan, 2026-11-10: his 12:18 PM fish of 11/9 was filed on the 5.6 oz A-rig and came on the 1/2 oz one, and
+// the card could change only the species and the water ("it appears that i can only edit the species and the lake"). His
+// "yeah lets do that" to a ✎ beside the lure.
+test('every journal card shows the lure of its fish and can change it', () => {
+  assert.ok(src.includes('Lure: ${esc(c.lure || \'not recorded\')} <button data-editlure="${i}" class="small" title="Change the lure this fish was caught on"'));
+  assert.ok(src.includes("body.querySelectorAll('[data-editlure]').forEach((btn) => btn.addEventListener('click', () => editCatchLure(body, +btn.dataset.editlure, btn)));"));
+  assert.ok(src.includes('<datalist id="catchLureNames">${journalLureNames().map('), "the review form's list of lures");
+  const edit = fnBody('editCatchLure');
+  assert.match(edit, /list="catchLureNames" value="\$\{esc\(c\.lure \|\| ''\)\}"/, 'opens on the lure it has');
+  assert.match(edit, /c\.lure = lure;/);
+  assert.match(edit, /await saveCatches\(\);\s*renderJournalOnly\(body\);/);
+  assert.match(edit, /if \(!lure \|\| lure === c\.lure\) \{ box\.remove\(\); btn\.disabled = false; return; \}/,
+    'the same lure, or none, changes nothing');
+  // only the lure
+  assert.doesNotMatch(edit, /c\.(species|length|lake|lat|lon|depth)\s*=/);
+});
