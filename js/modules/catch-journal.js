@@ -12,6 +12,7 @@
 
 import { state } from '../core/state.js';
 import { esc } from '../utils/escape.js';
+import { lureChoices } from '../utils/lure-choices.js';
 import { getLoadedRegistry, lakeRecordFor, workerBase } from '../data/lake-registry.js';
 import { describeCatchDepth, ON_CONTOUR_MI } from '../utils/catch-depth.js';
 import { loadAccessIndex, nearestLakeByAccessPoint } from '../data/access-index.js';
@@ -656,8 +657,7 @@ function renderJournalOnly(body = document.getElementById('catchCenterBody')) {
     </div>
     <div id="journalRecheckStatus" class="muted" style="margin:4px 0;font-size:12px"></div>
     <div id="catchLogList"></div>
-    <datalist id="catchWaterNames">${catchWaterNames(catches).map((n) => `<option value="${esc(n)}"></option>`).join('')}</datalist>
-    <datalist id="catchLureNames">${journalLureNames().map((n) => `<option value="${esc(n)}"></option>`).join('')}</datalist>`;
+    <datalist id="catchWaterNames">${catchWaterNames(catches).map((n) => `<option value="${esc(n)}"></option>`).join('')}</datalist>`;
   const list = body.querySelector('#catchLogList');
   if (!catches.length) {
     list.innerHTML = '<p class="muted">No confirmed catches yet. Import CSV rows into the review queue, then approve them.</p>';
@@ -1300,20 +1300,21 @@ function editCatchSpecies(body, i, btn) {
 // THE LURE OF A CONFIRMED CATCH, SHOWN AND CHANGED ON ITS CARD. Ryan, 2026-11-10: his 12:18 PM Wateree fish of 11/9 was
 // filed on the 5.6 oz A-rig and came on the 1/2 oz one ("it was on the 1/2 oz one... my bad let me go see if i can fix
 // that"), and the card could change only the species and the water -- it did not even show the lure. The 11/11 plan had
-// rigged the 5.6 oz rig because of that entry. His "yeah lets do that" to a ✎ like the species one. The list is the review
-// form's (journalLureNames()), typing is allowed as it is there, and only the lure changes.
+// rigged the 5.6 oz rig because of that entry. His "yeah lets do that" to a ✎ like the species one. The names are the
+// review form's (journalLureNames()), and only the lure changes.
+// The choices are lureChoices() (js/utils/lure-choices.js): a <select>, because a type-ahead list opened on the fish's
+// own lure offered only that lure.
 function editCatchLure(body, i, btn) {
   const c = getCatches()[i];
   if (!c || !btn || btn.disabled) return;
   btn.disabled = true;
   const box = document.createElement('div');
   box.style.cssText = 'display:flex;gap:6px;align-items:center;margin-top:4px';
-  box.innerHTML = `<input list="catchLureNames" value="${esc(c.lure || '')}" placeholder="type or pick lure" style="flex:1;min-width:0" aria-label="Lure this fish was caught on">`
+  box.innerHTML = `<select style="flex:1;min-width:0" aria-label="Lure this fish was caught on">${lureChoices(c.lure, journalLureNames())}</select>`
     + '<button class="primary small">Save</button><button class="small">Cancel</button>';
   btn.parentElement.after(box);
-  const [input, save, cancel] = [box.querySelector('input'), ...box.querySelectorAll('button')];
+  const [input, save, cancel] = [box.querySelector('select'), ...box.querySelectorAll('button')];
   input.focus();
-  input.select();
   cancel.addEventListener('click', () => { box.remove(); btn.disabled = false; });
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') save.click(); if (e.key === 'Escape') cancel.click(); });
   save.addEventListener('click', async () => {

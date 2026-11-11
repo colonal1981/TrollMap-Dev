@@ -49,13 +49,29 @@ test('every journal card can change the species of its fish', () => {
 test('every journal card shows the lure of its fish and can change it', () => {
   assert.ok(src.includes('Lure: ${esc(c.lure || \'not recorded\')} <button data-editlure="${i}" class="small" title="Change the lure this fish was caught on"'));
   assert.ok(src.includes("body.querySelectorAll('[data-editlure]').forEach((btn) => btn.addEventListener('click', () => editCatchLure(body, +btn.dataset.editlure, btn)));"));
-  assert.ok(src.includes('<datalist id="catchLureNames">${journalLureNames().map('), "the review form's list of lures");
   const edit = fnBody('editCatchLure');
-  assert.match(edit, /list="catchLureNames" value="\$\{esc\(c\.lure \|\| ''\)\}"/, 'opens on the lure it has');
+  // A SELECT: an <input list> opened on the fish's lure showed only that lure (his "the dropdown doesn't have the lures").
+  assert.match(edit, /<select [^>]*aria-label="Lure this fish was caught on">\$\{lureChoices\(c\.lure, journalLureNames\(\)\)\}<\/select>/);
+  assert.doesNotMatch(edit, /<input list=/);
   assert.match(edit, /c\.lure = lure;/);
   assert.match(edit, /await saveCatches\(\);\s*renderJournalOnly\(body\);/);
   assert.match(edit, /if \(!lure \|\| lure === c\.lure\) \{ box\.remove\(\); btn\.disabled = false; return; \}/,
     'the same lure, or none, changes nothing');
   // only the lure
   assert.doesNotMatch(edit, /c\.(species|length|lake|lat|lon|depth)\s*=/);
+});
+
+test('the lure choices are every lure in the box, with the fish\'s own selected, and a typed one is kept', async () => {
+  const { lureChoices } = await import('../js/utils/lure-choices.js');
+  const { TACKLE_INVENTORY } = await import('../js/data/tackle-inventory.js');
+  const all = TACKLE_INVENTORY.filter((l) => l.trollable || l.castable).map((l) => l.name);   // journalLureNames()
+  assert.ok(src.includes('return TACKLE_INVENTORY.filter((l) => l.trollable || l.castable).map((l) => l.name);'));
+  const html = lureChoices('A-Rig – four 3/4oz heads, 1oz middle (~5.6oz)', all);
+  assert.equal((html.match(/<option /g) || []).length, all.length);
+  assert.match(html, /<option value="A-Rig – four 3\/4oz heads, 1oz middle \(~5\.6oz\)" selected>/);
+  assert.match(html, /<option value="A-Rig – five 1\/2oz heads \(~4\.1oz\)">/);
+  const typed = lureChoices('Rattle Trap from 2019', all);
+  assert.match(typed, /^<option value="Rattle Trap from 2019" selected>/);
+  assert.equal((typed.match(/<option /g) || []).length, all.length + 1);
+  assert.match(lureChoices('', all), /^<option value="" selected>— pick the lure —<\/option>/);
 });
