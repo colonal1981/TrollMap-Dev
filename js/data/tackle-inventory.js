@@ -75,6 +75,14 @@ const AS_BOUGHT = [
   { id:'lipless_4in', name:'4" Lipless Crankbait',
     type:'lipless', trollable:true, castable:true, weightOz:0.75, sizes:['4"'] },
 
+  // HIS BOMBER SUPER POGY, 1 1/4 oz, "hi p mullet" (the only colour he has, so it is in the name), bought in Miami in
+  // October and never added: on his 11/11 Wateree plan the cast rod for breaking fish went to a Spook for want of it.
+  // Ryan, 2026-11-10: "i think the super pogy would work just as well... cast it forever and just rip it under the
+  // surface", then "we never added it after i bought it last month". Its ceiling on the troll is levelsOffFt()'s, by its
+  // weight from the 1/2 oz figure (mine, unmeasured): about 16 ft at 2 mph.
+  { id:'lipless_super_pogy', name:'Bomber Super Pogy 1-1/4oz (hi p mullet)',
+    type:'lipless', trollable:true, castable:true, weightOz:1.25 },
+
   { id:'blade_3in', name:'3" Blade Vibe Bait',
     type:'blade_vibe', trollable:true, castable:true, weightOz:0.5, sizes:['3"'] },
 

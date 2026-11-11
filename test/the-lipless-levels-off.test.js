@@ -75,3 +75,14 @@ test('the plan is told it levels off, and that slower takes it deeper, not that 
   assert.match(p, /Slower is deeper, faster is shallower; past that depth more line buys nothing/);
   assert.doesNotMatch(p, /Lipless Crankbait[^\n]*No ceiling/);
 });
+
+// HIS SUPER POGY IS IN THE BOX. Ryan, 2026-11-10: "we never added it after i bought it last month".
+test('the Bomber Super Pogy 1-1/4oz is in his tackle, to cast or troll, and levels off about 16 ft at 2 mph', () => {
+  const pogy = by('Bomber Super Pogy 1-1/4oz (hi p mullet)');
+  assert.ok(pogy, 'in TACKLE_INVENTORY');
+  assert.equal(pogy.type, 'lipless');
+  assert.equal(pogy.weightOz, 1.25);
+  assert.equal(pogy.castable, true);
+  assert.equal(pogy.trollable, true);
+  assert.equal(Math.round(levelsOffFt(pogy, 2.0)), 16);
+});
