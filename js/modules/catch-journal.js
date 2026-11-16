@@ -29,6 +29,7 @@ import { claudeStatus, claudeLook } from './claude-bridge.js';
 import { SORT_PX, MEASURE_PX, jsonOf, sortPrompt, photoLabel, boardsOf, measurePrompt, aiFromMeasure } from '../utils/claude-fish-id.js';
 import { flattenJournal, stampJournal, PHOTO_FIELDS } from '../utils/journal-merge.js';
 import { catchWaters, catchesGpx } from '../utils/catch-gpx.js';
+import { checkHistory, hasWeather, weatherAtHour, historySentence } from '../utils/catch-history.js';
 import { pinOffItsWater } from '../utils/catch-pins.js';
 const DEFAULT_HELPER = 'http://127.0.0.1:8787';
 const QUEUE_DB_KEY = 'catch_import_queue';
@@ -177,18 +178,9 @@ async function fetchHistoricalWeatherForItem(item) {
   const url = `https://archive-api.open-meteo.com/v1/archive?latitude=${lat}&longitude=${lon}&start_date=${dateOnly}&end_date=${dateOnly}&hourly=temperature_2m,surface_pressure,cloudcover,windspeed_10m,winddirection_10m&temperature_unit=fahrenheit&wind_speed_unit=mph&timezone=America%2FNew_York`;
   const resp = await fetch(url);
   if (!resp.ok) throw new Error(`Open-Meteo ${resp.status}`);
-  const data = await resp.json();
-  const h = data.hourly || {};
-  return {
-    tempF: h.temperature_2m?.[hour] != null ? Math.round(h.temperature_2m[hour] * 10) / 10 : null,
-    pressureHpa: h.surface_pressure?.[hour] != null ? Math.round(h.surface_pressure[hour]) : null,
-    cloudPct: h.cloudcover?.[hour] ?? null,
-    windMph: h.windspeed_10m?.[hour] != null ? Math.round(h.windspeed_10m[hour] * 10) / 10 : null,
-    windDir: h.winddirection_10m?.[hour] ?? null,
-    moonPhase: moonPhaseLabel(iso),
-    source: 'open-meteo-archive',
-    fetchedAt: new Date().toISOString()
-  };
+  // Null when the archive holds no numbers for that hour: an empty answer is not weather, and
+  // the catch stays missing so "Check Missing History" tries it again (catch-history.js).
+  return weatherAtHour(await resp.json(), hour, moonPhaseLabel(iso));
 }
 
 function nearestLakeAndContour(latRaw, lonRaw) {
@@ -875,7 +867,7 @@ function renderQueueDetail(el, q) {
     </div>
     <div style="margin-top:8px"><label>Notes</label><textarea id="rvNotes" rows="4">${esc(q.ai?.notes || '')}</textarea></div>
     <div class="muted" style="margin-top:6px">AI species: ${esc(q.ai?.species || '')}${q.ai?.inferredSpecies && q.ai.inferredSpecies !== q.ai.species ? ` → ${esc(q.ai.inferredSpecies)}` : ''} · Model: ${esc(q.ai?.model || '')} · Flags: ${esc(flags.join(', ') || 'none')}</div>
-    ${q.weather ? `<div class="okbox" style="font-size:12px">🌦 ${q.weather.tempF ?? '?'}°F · Wind ${q.weather.windMph ?? '?'}mph · ${q.weather.cloudPct ?? '?'}% cloud · ${q.weather.pressureHpa ?? '?'} hPa · ${esc(q.weather.moonPhase || '')}</div>` : `<div class="warnbox" style="font-size:12px">Historical weather/moon not loaded yet. Use “Check Missing History”.</div>`}
+    ${hasWeather(q.weather) ? `<div class="okbox" style="font-size:12px">🌦 ${q.weather.tempF ?? '?'}°F · Wind ${q.weather.windMph ?? '?'}mph · ${q.weather.cloudPct ?? '?'}% cloud · ${q.weather.pressureHpa ?? '?'} hPa · ${esc(q.weather.moonPhase || '')}</div>` : `<div class="warnbox" style="font-size:12px">Historical weather/moon not loaded yet. Use “Check Missing History”.</div>`}
     <div class="row" style="margin-top:10px">
       <button id="saveQueueEditsBtn" class="small">💾 Save edits</button>
       <button id="approveCatchBtn" class="primary small">✅ Approve to Journal</button>
@@ -1008,10 +1000,12 @@ async function approveQueueItem(q) {
 }
 
 
-async function enrichMissingHistoricalData(body = document.getElementById('catchCenterBody')) {
-  const status = body?.querySelector('#queueEnrichStatus') || document.getElementById('queueEnrichStatus');
-  const queue = getQueue();
-  if (!queue.length) { if (status) status.textContent = 'No queue items to check.'; return; }
+/**
+ * THE LAKE AND THE WEATHER FOR SOME QUEUE ITEMS, the one check behind both the Nightly Catch Upload
+ * (on the catches it has just added, 2026-11-15) and "Check Missing History" (the whole queue).
+ * See js/utils/catch-history.js.
+ */
+async function checkHistoryOf(items, onStep) {
   // Make sure the worker-backed lake index has resolved at least once before
   // running lake lookups on a batch, so early items in the batch don't get
   // pushed into the LAKE_DB fallback just because the fetch hadn't finished.
@@ -1019,39 +1013,24 @@ async function enrichMissingHistoricalData(body = document.getElementById('catch
     await loadAccessIndex();
   } catch (err) {
     // access-index.js logs its own initial failure once, but that happens at import time and
-    // this is a user-initiated batch. Say so here too: everything below still runs, it just
+    // this is a batch he started. Say so here too: everything below still runs, it just
     // falls back to LAKE_DB and produces worse lake names, which is invisible otherwise.
     console.warn('[catch-journal] lake index unavailable, using the curated fallback list:', err);
   }
-  let depthUpdated = 0, weatherUpdated = 0, failed = 0;
+  return checkHistory(items, { enrich: enrichItemFromGps, fetchWeather: fetchHistoricalWeatherForItem, onStep });
+}
+
+async function enrichMissingHistoricalData(body = document.getElementById('catchCenterBody')) {
+  const status = body?.querySelector('#queueEnrichStatus') || document.getElementById('queueEnrichStatus');
+  const queue = getQueue();
+  if (!queue.length) { if (status) status.textContent = 'No queue items to check.'; return; }
   const targets = queue.filter(q => q.status !== 'rejected' && q.status !== 'rejected_candidate');
-  for (let i = 0; i < targets.length; i++) {
-    const item = targets[i];
-    if (status) status.textContent = `Checking historical data ${i + 1}/${targets.length}: ${item.filename}`;
-    const beforeDepth = item.depth;
-    enrichItemFromGps(item);
-    if (!beforeDepth && item.depth) depthUpdated++;
-    if (!item.weather && item.lat && item.lon && (item.datetime || item.date)) {
-      try {
-        item.weather = await fetchHistoricalWeatherForItem(item);
-        if (item.weather) {
-          weatherUpdated++;
-          if (!item.reviewFlags.includes('weather_from_archive')) item.reviewFlags.push('weather_from_archive');
-        }
-        // avoid hammering Open-Meteo
-        await new Promise(r => setTimeout(r, 250));
-      } catch (e) {
-        failed++;
-        if (!item.reviewFlags.includes('weather_lookup_failed')) item.reviewFlags.push('weather_lookup_failed');
-      }
-    } else if (!item.weather && (item.datetime || item.date)) {
-      if (!item.reviewFlags.includes('weather_missing_gps')) item.reviewFlags.push('weather_missing_gps');
-    }
-    item.updatedAt = new Date().toISOString();
-  }
+  const r = await checkHistoryOf(targets, (i, n, item) => {
+    if (status) status.textContent = `Checking historical data ${i + 1}/${n}: ${item.filename}`;
+  });
   await saveQueue();
   if (status) {
-    status.textContent = `✓ Historical check complete: depth filled ${depthUpdated}, weather/moon filled ${weatherUpdated}${failed ? `, weather failures ${failed}` : ''}.`;
+    status.textContent = `✓ Historical check complete: lake filled ${r.lakeFilled}, depth filled ${r.depthFilled}, weather/moon filled ${r.weatherFilled}${r.failed ? `, weather failures ${r.failed}` : ''}.`;
     status.style.color = 'var(--accent2)';
   }
   renderCatchSubtab();
@@ -1616,6 +1595,7 @@ async function handleNightlyPhotoUpload(files, body) {
 
   let created = 0, aiCalled = 0, aiFailed = 0, byClaude = 0;
   const queue = getQueue();
+  const added = [];
 
   for (let i = 0; i < plans.length; i++) {
     const { board, lure, waypoint: w, flags, notes } = plans[i];
@@ -1732,11 +1712,23 @@ async function handleNightlyPhotoUpload(files, body) {
       updatedAt: new Date().toISOString(),
     };
     queue.unshift(item);
+    added.push(item);
     created++;
   }
 
   setQueue(queue);
   await saveQueue();
+  // THE LAKE AND THE WEATHER COME WITH THE CATCH. Ryan, 2026-11-15: "is there way for the gpx and
+  // photo import to trigger the history check automatically so i don't have to press a button to
+  // get lake and weather". The same check as the button, on this drop's catches only; the button
+  // stays for older catches and CSV rows.
+  let history = null;
+  if (added.length) {
+    history = await checkHistoryOf(added, (i, n) => {
+      if (status) status.textContent = `Checking the lake and the weather for catch ${i + 1} of ${n}...`;
+    });
+    await saveQueue();
+  }
   const toLabel = gpxFiles.length ? await collectMarks(waypoints, grouped.catches.map(c => c.waypoint)) : 0;
   if (status) {
     // Counted off the plans, not the marks: one mark can carry several fish.
@@ -1749,6 +1741,7 @@ async function handleNightlyPhotoUpload(files, body) {
           + (grouped.loaded ? ` ${grouped.loaded} waypoints in the GPX share one timestamp, so they were loaded onto the unit, not marked, and were not used.` : '')
         : '')
       + (gpxUnread.length ? ` Could not read ${gpxUnread.join(', ')}.` : '')
+      + (history ? ` ${historySentence(history, added.length)}` : '')
       + (toLabel ? ` ${toLabel} mark(s) with no photos after them to label below.` : '')
       + ' Review below.';
     nightlyNote = status.textContent;
