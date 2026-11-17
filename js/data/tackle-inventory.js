@@ -116,6 +116,19 @@ const AS_BOUGHT = [
   { id:'swimbait_6in', name:'Swimbait 6" – Jighead',
     type:'swimbait_paddle', trollable:true, castable:true, weightOz:null, lengthIn: 6.0 },
 
+  // HIS 3" AND 4" BODIES. Ryan, 2026-11-16, Bass Pro Shops in Miami: Johnny Morris BioBait Shadow
+  // Swimmers in 3" (live threadfin, live gizzard shad, live menhaden) and 4" (live threadfin, live
+  // gizzard shad), and Bass Assassin 4" Sea Shads (pearl, chartreuse tail). The box had no 3" or
+  // 4" swimbait; the 3.8" and 4.6" above stay as they were. His word: "Sure makes sense to have
+  // them in there". Sizes only, like the others: the head band comes from the length (a 3" body
+  // takes 1/4-1/2 oz, a 4" takes 1/2-1 oz, `jigheadOzByLengthIn`), and the colour is the plan's to
+  // name. On his A-rigs that is the 3" for the 3/8 and 1/2 oz heads and the 4" for the 3/4 oz.
+  { id:'swimbait_3_0in', name:'Swimbait 3" – Jighead',
+    type:'swimbait_paddle', trollable:true, castable:true, weightOz:null, lengthIn: 3.0 },
+
+  { id:'swimbait_4_0in', name:'Swimbait 4" – Jighead',
+    type:'swimbait_paddle', trollable:true, castable:true, weightOz:null, lengthIn: 4.0 },
+
   // ── Underspins ────────────────────────────────────────────────────────────
   { id:'underspin_owner', name:'Underspin Jig (Flashy Swimmer)',
     type:'underspin', trollable:true, castable:true, weightOz:0.375 },
