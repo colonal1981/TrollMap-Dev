@@ -94,14 +94,18 @@ const AS_BOUGHT = [
   // heads. weightOz is the frame plus its five heads; the plastics are not weighed. The ids are
   // kept. The 1.65 / 2.65 / 3.5 oz rigs they used to name came with the first upload and are not
   // his; replaceShippedBuiltins() below brings a saved tackle box over.
+  //
+  // `headsOz` is what each arm carries, so the plan can name a trailer that fits it (trailerFits()). Ryan, 11/22: "it
+  // tells me the weight of the jig head but not which of the million soft plastics i have to put on it", and of the
+  // middle, "i absolutely will run a different size or color on the middle".
   { id:'arig_light',  name:'A-Rig – five 3/8oz heads (~3.5oz)',
-    type:'umbrella_rig', trollable:true, castable:true, weightOz: 1.6 + 5 * 0.375 },
+    type:'umbrella_rig', trollable:true, castable:true, weightOz: 1.6 + 5 * 0.375, headsOz: { outside: 0.375, middle: 0.375 } },
 
   { id:'arig_medium', name:'A-Rig – five 1/2oz heads (~4.1oz)',
-    type:'umbrella_rig', trollable:true, castable:true, weightOz: 1.6 + 5 * 0.5 },
+    type:'umbrella_rig', trollable:true, castable:true, weightOz: 1.6 + 5 * 0.5, headsOz: { outside: 0.5, middle: 0.5 } },
 
   { id:'arig_heavy',  name:'A-Rig – four 3/4oz heads, 1oz middle (~5.6oz)',
-    type:'umbrella_rig', trollable:true, castable:true, weightOz: 1.6 + 4 * 0.75 + 1 },
+    type:'umbrella_rig', trollable:true, castable:true, weightOz: 1.6 + 4 * 0.75 + 1, headsOz: { outside: 0.75, middle: 1.0 } },
 
   // ── Swimbaits (Paddle Tail) ───────────────────────────────────────────────
   { id:'swimbait_3in', name:'Swimbait 3.8" – Jighead',
@@ -657,9 +661,50 @@ export async function getInventory() {
  */
 export const TACKLE_INVENTORY = AS_BOUGHT.map((l) => {
   const trollable = trollsBehindTheBoat(l);
-  const colors = (COLORS_BY_ID[l.id] || []).map(([name, n]) => ({ name, n: Number.isFinite(n) ? n : null }));
+  const colors = (COLORS_BY_ID[l.id] || []).map(([name, n, bag]) => ({ name, n: Number.isFinite(n) ? n : null, ...(bag ? { bag } : {}) }));
   return { ...l, trollable, colors };
 });
+
+// ── A-RIG TRAILERS ──────────────────────────────────────────────────────────────────────────────────────────────────
+// The soft plastics that go on an A-rig's heads: his paddle-tail swimbaits (`swimbait_*`, `thin_tail_*`), not the flukes
+// or worms filed under the same type. One already on its own head (pre-rigged, rigged, on a jighead) cannot go on the
+// rig's heads. Whether a body fits a head is the app's head table by length (jigheadRangeOz() in lure-knowledge.js), whose
+// heavy end is the hook rule he gave on 8/3 ("for 2-3 inch nothing more than 1/2 oz, for 3-4 inch nothing more than 1oz").
+export const TRAILER_COUNT = 4;     // the four outside arms take the same bait; the middle is its own
+const isTrailerId = (id) => /^(swimbait_|thin_tail_)/.test(String(id || ''));
+const onItsOwnHead = (c) => /pre-rigged|\brigged\b|on (a |)jighead|on a 1 oz head|belly treble/i.test(`${c.name} ${c.bag || ''}`);
+
+/** The A-rig's heads, {outside, middle} in oz, or null when the lure is not one of his A-rigs. */
+export function arigHeadsOz(name) {
+  const l = lureByName(name);
+  return l && l.headsOz ? l.headsOz : null;
+}
+
+/**
+ * Whether the swimbait by this name fits a head of `headOz`, and why not: {ok, why}. Pure but for the inventory.
+ */
+export function trailerFits(lureName, headOz) {
+  const l = lureByName(lureName);
+  if (!l || !isTrailerId(l.id)) return { ok: false, why: 'not one of his paddle-tail swimbaits' };
+  const r = jigheadRangeOz(l.lengthIn, l.type);
+  if (!r) return { ok: true, why: null };
+  const h = Number(headOz);
+  // The light end is the app's own head table for that length, the band every paddle tail's head is picked from.
+  if (h < r.startOz - 1e-9) return { ok: false, why: `the head table puts a ${l.lengthIn}" body on ${ozLabel(r.startOz)} to ${ozLabel(r.maxOz)}, not ${ozLabel(h)}` };
+  if (h > r.maxOz + 1e-9) return { ok: false, why: `a ${ozLabel(h)} head's hook tears a ${l.lengthIn}" body (it takes up to ${ozLabel(r.maxOz)})` };
+  return { ok: true, why: null };
+}
+
+/** The swimbaits (inventory names) whose bodies fit a head of `headOz`, with their colours that can go on a rig head. */
+export function trailersFor(headOz) {
+  return TACKLE_INVENTORY.filter((l) => isTrailerId(l.id) && trailerFits(l.name, headOz).ok)
+    .map((l) => ({ name: l.name, lengthIn: l.lengthIn, colors: (l.colors || []).filter((c) => !onItsOwnHead(c)) }))
+    .filter((x) => x.colors.length)
+    .sort((a, b) => (a.lengthIn || 0) - (b.lengthIn || 0));
+}
+
+/** Whether this colour of a swimbait is already on its own head (so it cannot go on a rig's). */
+export function colorOnItsOwnHead(c) { return !!c && onItsOwnHead(c); }
 
 /** The colours he has of the lure by this name (inventory spelling), [] when none are listed. */
 export function colorsOf(name) {
@@ -735,7 +780,8 @@ export const RIGGED_TROLLING_WEIGHT_OZ =
 
 // selectBestLure() and getRecommendedSpeed() stood here, the lure scorer's only callers, and
 // were called by nothing. Both went with scoreLureForContext() on 2026-09-25.
-import { trollsBehindTheBoat } from './lure-knowledge.js';
+import { trollsBehindTheBoat, jigheadRangeOz } from './lure-knowledge.js';
 import { COLORS_BY_ID } from './tackle-colors.js';
+import { ozLabel } from '../utils/oz.js';
 
 console.log(`[tackle-inventory] ${TACKLE_INVENTORY.filter(l=>l.trollable).length} trollable lures loaded`);

@@ -238,14 +238,43 @@ export function rodsAtLaunch(p) {
     };
   });
 
-  return { rods, changes, swaps };
+  return { rods, changes, swaps, pack: packList(rods, loadout) };
+}
+
+/**
+ * THE SOFT PLASTICS TO PACK. Ryan, 11/22: "I obviously do not take out every single lure i have with me most stay at
+ * home in the garage so i need to know what to grab and throw into my small tackle bag i keep for soft plastics... i do
+ * bring a bunch of different ones for whatever fish i am chasing but knowing what to pick would be great". Every bag the
+ * plan names on a rod that goes out (or is the backup): the rod's own colour, the backup colour it would switch to, and
+ * an A-rig's trailers, outside and middle. One line a bag and colour, with every use of it. [{bag, color, lure, uses}].
+ */
+export function packList(rods, loadout) {
+  const by = new Map();
+  const add = (bag, color, lure, use) => {
+    if (!bag || !color) return;
+    const k = `${bag}|${color}`;
+    const e = by.get(k) || { bag: str(bag), color: str(color), lure: str(lure), uses: [] };
+    if (!e.uses.includes(use)) e.uses.push(use);
+    by.set(k, e);
+  };
+  for (const r of rods || []) {
+    if (r.status !== 'fishes' && r.status !== 'backup') continue;
+    const lo = loadout && loadout.get(r.id);
+    if (!lo) continue;
+    add(lo.bag, lo.color, lo.lure, `${r.id}`);
+    if (lo.backup) add(lo.backup.bag, lo.backup.color, lo.lure, `${r.id} backup colour`);
+    const t = lo.trailers;
+    if (t && t.outside) add(t.outside.bag, t.outside.color, t.outside.lure, `${r.id} A-rig, 4 outside`);
+    if (t && t.middle) add(t.middle.bag, t.middle.color, t.middle.lure, `${r.id} A-rig middle`);
+  }
+  return [...by.values()].sort((a, b) => a.bag.localeCompare(b.bag) || a.color.localeCompare(b.color));
 }
 
 /**
  * The report section. `esc` is the report's own escaper, passed in so this module has no DOM.
  */
 export function rodsAtLaunchHtml(p, esc) {
-  const { rods, changes, swaps } = rodsAtLaunch(p);
+  const { rods, changes, swaps, pack } = rodsAtLaunch(p);
   if (!rods.length) return '';
   const byRig = (rig) => rods.filter((r) => r.rig === rig).map((r) => r.id);
   const fluoro = byRig('fluoro');
@@ -299,6 +328,10 @@ export function rodsAtLaunchHtml(p, esc) {
     <h2>🎣 Rods At Launch — What Every Rod Is Rigged With</h2>
     <p class="rp-small">${rigLine}Two are in the water at a time, one port and one starboard. Tie these on before you leave the ramp.</p>
     <table><thead><tr style="background:#eef4fa"><th>Rod</th><th>Tied to</th><th>Lure</th><th>Weight</th><th>Runs</th><th>Where it fishes</th></tr></thead><tbody>${rodRows}</tbody></table>
+    ${pack.length ? `<h3>Soft Plastics To Pack</h3>
+    <p class="rp-small">The bags this plan rigs, the backup colours it would switch to, and the A-rig trailers. Grab these from the garage.</p>
+    <table><thead><tr style="background:#eef4fa"><th>Bag</th><th>Colour</th><th>For</th></tr></thead><tbody>${
+      pack.map((x) => `<tr><td><b>${esc(x.bag)}</b></td><td>${esc(x.color)}</td><td class="rp-small">${esc(x.uses.join(', '))}</td></tr>`).join('')}</tbody></table>` : ''}
     <h3>Lure Changes</h3>
     ${changeBlock}
     ${swapBlock}`;
@@ -314,7 +347,7 @@ export function rodsAtLaunchHtml(p, esc) {
  * exported `timeline`, `castRods`.
  */
 export function rodsAtLaunchPanelHtml(p, esc) {
-  const { rods, changes } = rodsAtLaunch(p);
+  const { rods, changes, pack } = rodsAtLaunch(p);
   const lit = rods.filter((r) => r.status === 'fishes' || r.status === 'backup');
   if (!lit.length) return '';
   const tied = (r) => (r.rig === 'fluoro' ? 'fluoro leader' : r.rig === 'snap' ? 'swivel snap' : (r.terminal || ''));
@@ -337,6 +370,8 @@ export function rodsAtLaunchPanelHtml(p, esc) {
       <div style="font-size:11px;font-weight:700;color:var(--accent2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px">🎣 Rods At Launch — tie these on before you leave the ramp</div>
       ${lit.map(rodBlock).join('')}
       ${rest.length ? `<div style="font-size:11px;color:var(--muted);padding-top:6px;border-top:1px dashed var(--line)">Not used today: ${esc(rest.map((r) => r.id).join(', '))}</div>` : ''}
+      ${pack.length ? `<div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-top:8px">Soft plastics to pack</div>
+      ${pack.map((x) => `<div style="font-size:11px;color:var(--text);padding:2px 0"><b>${esc(x.bag)}</b> · ${esc(x.color)} <span style="color:var(--muted)">— ${esc(x.uses.join(', '))}</span></div>`).join('')}` : ''}
       <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-top:8px">Lure changes</div>
       ${changeLines}
     </div>`;

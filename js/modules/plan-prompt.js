@@ -63,7 +63,8 @@ import { NO_GO_SUSTAINED_MPH, NO_GO_GUST_MPH } from '../utils/wind-waves.js';
 import { isNum, num } from '../utils/num.js';
 import { depthWindow, jigheadRangeOz, trollableBaits, describeBait, LURE_KNOWLEDGE,
          gpsWindowFor, leadForDepth, requiresInlineWeight, levelsOffFt } from '../data/lure-knowledge.js';
-import { RIGGED_TROLLING_WEIGHT_OZ, JIGHEADS_OWNED_OZ, TROLLING_WEIGHTS_OWNED_OZ, TACKLE_INVENTORY, colorsOf, colorInBox } from '../data/tackle-inventory.js';
+import { RIGGED_TROLLING_WEIGHT_OZ, JIGHEADS_OWNED_OZ, TROLLING_WEIGHTS_OWNED_OZ, TACKLE_INVENTORY, colorsOf, colorInBox,
+         arigHeadsOz, trailerFits, trailersFor, colorOnItsOwnHead, TRAILER_COUNT } from '../data/tackle-inventory.js';
 import { ozLabel } from '../utils/oz.js';
 import { promptSafeTackleName } from '../utils/tackle-name.js';
 import { FISHING_STYLE } from '../data/fishing-style-profile.js';
@@ -2349,10 +2350,25 @@ export function buildPlanRequest(o) {
   // WHICH COLOURS ARE IN THE BOX. Ryan, 2026-11-21: the plan "picks a color from the lure's list", and the list is his,
   // counted off his photos (tackle-colors.js). "Colour is a free string; assume any colour combination is aboard" was
   // what this said before, and it let a plan put a colour on a rod that he could not tie on.
+  // A SOFT PLASTIC'S COLOUR CARRIES ITS BAG and how many he has (Ryan, 11/22: "it would be really nice if it called that
+  // out... i need to know what to grab and throw into my small tackle bag").
+  const colourSaid = (c) => (c.bag ? `${c.name} [${promptSafeTackleName(c.bag)}${c.n ? `, ${c.n}` : ''}]` : c.name);
   const colourLines = (o.tackle || [])
     .map((n) => ({ n, c: colorsOf(n) }))
     .filter((x) => x.c.length)
-    .map((x) => `- ${promptSafeTackleName(x.n)}: ${x.c.map((c) => c.name).join('; ')}`);
+    .map((x) => `- ${promptSafeTackleName(x.n)}: ${x.c.map(colourSaid).join('; ')}`);
+  const hasBags = (o.tackle || []).some((n) => colorsOf(n).some((c) => c.bag));
+  // AN A-RIG'S TRAILERS: for each A-rig in the list, the swimbaits whose bodies fit its heads (trailerFits()). Ryan,
+  // 11/22: "it tells me the weight of the jig head but not which of the million soft plastics i have to put on it", and
+  // "i absolutely will run a different size or color on the middle".
+  const arigLines = (o.tackle || []).filter((n) => arigHeadsOz(n)).map((n) => {
+    const h = arigHeadsOz(n);
+    const fits = (oz) => trailersFor(oz).map((t) => promptSafeTackleName(t.name)).join(', ') || 'none in his box';
+    return h.outside === h.middle
+      ? `- ${promptSafeTackleName(n)}: all five heads ${ozLabel(h.outside)} — ${fits(h.outside)}`
+      : `- ${promptSafeTackleName(n)}: the four outside heads ${ozLabel(h.outside)} — ${fits(h.outside)}; `
+        + `the middle head ${ozLabel(h.middle)} — ${fits(h.middle)}`;
+  });
 
   const gate = (() => {
     if (!Array.isArray(o.inventory) || !o.inventory.length) return null;
@@ -2494,8 +2510,19 @@ ${gate ? gate.names : ((o.tackle || []).map(promptSafeTackleName).join(', ') || 
 ${gate ? gate.block : ''}${colourLines.length ? `
 THE COLOURS HE HAS OF EACH. A rod's \`color\` is one of that bait's colours below, written as it is
 here: those are the ones in his box, counted off his photos, and he has no others. A bait that is not
-listed here has no colour on file, so leave its \`color\` empty.
+listed here has no colour on file, so leave its \`color\` empty.${hasBags ? `
+A soft plastic's colour says in brackets the bag it is in and how many he has: most of his bags stay
+in the garage, and he packs the ones the plan names. On a soft-plastic rod also return \`backupColor\`:
+a second of that bait's colours, from a different bag where he has one, that you would switch to if the
+water or the bite changes.` : ''}
 ${colourLines.join('\n')}
+` : ''}${arigLines.length ? `
+AN A-RIG NAMES ITS TRAILERS: the plastics on its heads are the bait. On an A-rig rod return \`trailers\`:
+{"outside": {"lure": ..., "color": ...}, "middle": {"lure": ..., "color": ...}}. \`lure\` is one of the
+swimbaits listed for that head below (by body length: a heavy head's hook tears a small body), and \`color\`
+is one of that swimbait's colours above that is not already on its own head (pre-rigged). The four outside arms carry the same bait, so the outside colour is one he has at least
+${TRAILER_COUNT} of. The middle may be a different size or colour; he often runs one.
+${arigLines.join('\n')}
 ` : ''}
 ${depthNotes.length ? `
 HOW EACH OF THESE GETS TO A DEPTH. There are only three ways to move a bait: the lead, the speed,
@@ -2824,6 +2851,8 @@ RETURN EXACTLY THIS SHAPE
       { "id": "R1", "lure": "exact name from the list", "color": "one of that bait's colours, as listed",
         "role": ${o.isRiver ? '"troll"' : '"troll" or "cast"'}, "leadFt": 95, "runsDepthFt": [22, 28],
         "why": "one sentence" }
+      // On a soft-plastic rod add "backupColor": "another of its colours"; on an A-rig rod add
+      // "trailers": { "outside": { "lure": "a swimbait from its list", "color": "..." }, "middle": { ... } }
       // Only the rods this plan uses — two is a complete answer. Put tie-only lures on
       // ${FLUORO_RODS.join('/')} and snap-friendly ones on ${SNAP_RODS.join('/')} where you can.${o.isRiver ? `
       // EVERY ROD IS "troll" ON THIS DAY. There are no stops on a river (rule 4), so a rod set to
@@ -3413,9 +3442,51 @@ export function planArgsFrom(res, candidates, ctx = {}) {
       problems.push(`${id}: he has no ${lure} in "${wroteColor}" — he has ${owned.map((c) => c.name).join(', ')}; `
                   + 'colour left blank');
     }
+    // THE BAG, AND ONE TO SWITCH TO (11/22): a soft plastic's colour says which bag it is; `backupColor` is a second of
+    // that bait's colours he has, for the plan's packing list.
+    const bag = inBox && inBox.bag ? inBox.bag : null;
+    let backup = null;
+    const wroteBackup = str(r.backupColor);
+    if (wroteBackup && owned.some((c) => c.bag)) {
+      const b = colorInBox(lure, wroteBackup);
+      if (!b) problems.push(`${id}: the backup "${wroteBackup}" is not a ${lure} colour he has — no backup named`);
+      else if (!inBox || b.name !== inBox.name) backup = { color: b.name, bag: b.bag || null, n: b.n };
+    }
+    // AN A-RIG'S TRAILERS, checked against its heads and his bags (trailerFits()).
+    let trailers = null;
+    const heads = arigHeadsOz(lure);
+    if (heads) {
+      const t = r.trailers && typeof r.trailers === 'object' ? r.trailers : null;
+      const side = (which, given, headOz, need) => {
+        if (!given) { problems.push(`${id}: the A-rig's ${which} trailer is not named`); return null; }
+        const askedT = str(given.lure);
+        const hitT = askedT && tackleNames ? resolveTackleName(askedT, tackleNames) : null;
+        const nameT = (hitT && hitT.name) || (askedT && !tackleNames ? askedT : null);
+        if (!nameT) { problems.push(`${id}: the A-rig's ${which} trailer "${askedT}" is not in the tackle box`); return null; }
+        const fit = trailerFits(nameT, headOz);
+        if (!fit.ok) { problems.push(`${id}: ${nameT} is not a trailer for the ${ozLabel(headOz)} ${which} head${need > 1 ? 's' : ''} — ${fit.why}`); return null; }
+        const c = colorInBox(nameT, str(given.color));
+        if (!c) {
+          problems.push(`${id}: he has no ${nameT} in "${str(given.color)}" for the ${which} — trailer named without a colour`);
+          return { lure: nameT, color: '', bag: null, n: null, headOz };
+        }
+        if (colorOnItsOwnHead(c)) {
+          problems.push(`${id}: ${nameT} ${c.name} is already on its own head and cannot go on the rig — ${which} trailer left off`);
+          return null;
+        }
+        if (need > 1 && c.n != null && c.n < need) {
+          problems.push(`${id}: he has ${c.n} ${nameT} in ${c.name}; the ${need} outside arms need ${need}`);
+        }
+        return { lure: nameT, color: c.name, bag: c.bag || null, n: c.n, headOz };
+      };
+      trailers = { outside: side('outside', t && t.outside, heads.outside, TRAILER_COUNT),
+                   middle: side('middle', t && t.middle, heads.middle, 1) };
+      if (!trailers.outside && !trailers.middle) trailers = null;
+    }
     return {
       id, role: r.role === 'cast' ? 'cast' : 'troll',
       lure, color: inBox ? inBox.name : '', why: str(r.why),
+      ...(bag ? { bag } : {}), ...(backup ? { backup } : {}), ...(trailers ? { trailers } : {}),
       leadFt: num(r.leadFt),
       runsDepthFt: Array.isArray(r.runsDepthFt) && r.runsDepthFt.length === 2
         ? r.runsDepthFt.map(Number) : null,

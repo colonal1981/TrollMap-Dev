@@ -92,7 +92,7 @@ export function arigBreakdownRows(spread) {
     return `<tr>
       <td><b>${esc(r.rod || '—')}</b></td>
       <td>${esc(legs.join(', ') || '—')}</td>
-      <td>${esc(rig)}${r.trailerSize ? ` · ${esc(r.trailerSize)} trailers` : ''}</td>
+      <td>${esc(rig)}${r.trailerSize ? ` · Trailers: ${esc(r.trailerSize)}` : ''}</td>
       <td>${esc(r.color || '—')}</td>
       <td><b>${esc(r.depth || '—')} ft</b> @ <b>${esc(r.lead || '—')} ft lead</b></td>
     </tr>`;

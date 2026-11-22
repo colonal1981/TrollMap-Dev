@@ -345,13 +345,13 @@ function rodView(rod, side, over, leg) {
     side,
     rod: rod.id || '',
     lure: clean(rod.lure),
-    color: clean(rod.color),
+    color: colorWithBag(rod),
     lead: leadFt ?? '',
     // `18–18` is one depth written twice. A rated bait pinned to a single foot -- which is most
     // of the crankbaits -- was printing its band as a range against itself.
     depth: Array.isArray(runs) ? (runs[0] === runs[1] ? String(runs[0]) : runs.join('–')) : '',
     reel: '',
-    trailerSize: '', arigWeight: '', jigWeight: head, inlineWeight: inline,
+    trailerSize: trailersSaid(rod.trailers), arigWeight: '', jigWeight: head, inlineWeight: inline,
     notes: clean(rod.why),
     // Where it sits against the bottom, which is the part he can act on. Null when the leg has no
     // depth profile or the bait has no running depth — absent, never guessed at.
@@ -469,6 +469,28 @@ function headAt(id, leg, legs) {
   }
   return null;
 }
+/**
+ * A ROD'S COLOUR AS THE CARDS PRINT IT: a soft plastic's with the bag it is in. Ryan, 11/22: "for the ones that were in
+ * a package with a brand, color and size it would be really nice if it called that out... i need to know what to grab".
+ */
+export function colorWithBag(rod) {
+  const c = clean(rod && rod.color);
+  return rod && rod.bag && c ? `${c} (${clean(rod.bag)})` : c;
+}
+
+/**
+ * AN A-RIG'S TRAILERS IN ONE LINE: the four outside and the middle, or "5 ×" when they are one bait. Ryan, 11/22: "it
+ * tells me the weight of the jig head but not which of the million soft plastics i have to put on it".
+ */
+export function trailersSaid(t) {
+  if (!t) return '';
+  const one = (x) => (x ? `${clean(x.lure).replace(/\s*[–-]\s*Jighead$/, '')}, ${clean(x.color) || 'colour not named'}`
+    + `${x.bag ? ` (${clean(x.bag)})` : ''}` : '');
+  const o = one(t.outside), m = one(t.middle);
+  if (o && m && o === m) return `5 × ${o}`;
+  return [o ? `4 outside: ${o}` : '', m ? `middle: ${m}` : ''].filter(Boolean).join('; ');
+}
+
 export function stopRodLine(r, leg, legs) {
   if (!r || !r.lure) return '';
   const over = leg && Array.isArray(legs) ? headAt(r.id, leg, legs) : null;
@@ -476,7 +498,7 @@ export function stopRodLine(r, leg, legs) {
   const weight = over && over.jigheadOz != null ? `on the ${ozLabel(over.jigheadOz)} head`
     : over && over.inlineWeightOz != null ? `behind the ${ozLabel(over.inlineWeightOz)} inline weight`
     : castOz != null ? `on the ${ozLabel(castOz)} head` : '';
-  return [`${r.id}: ${clean(r.lure)}`, clean(r.color), weight].filter(Boolean).join(' · ');
+  return [`${r.id}: ${clean(r.lure)}`, colorWithBag(r), weight, r.trailers ? `trailers ${trailersSaid(r.trailers)}` : ''].filter(Boolean).join(' · ');
 }
 
 // THE LADDER AS THE CARDS PRINT IT. `rows` keep the assembler's numbers; `text` is the one sentence a row is, so the

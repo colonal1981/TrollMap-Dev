@@ -57,11 +57,25 @@ const escHtml = (v) => String(v == null ? '' : v)
  */
 const shipped = (lure) => (lure && lure.id ? TACKLE_INVENTORY.find((b) => b.id === lure.id) : null) || null;
 
-/** The colours he has of this lure, as "name ×n" for the line under it; '' when none are on file. */
-export function colorLine(lure) {
+/**
+ * The colours he has of this lure, for the lines under it: one line a bag for a soft plastic ("BioBait Shadow Swimmer
+ * 3": Live Threadfin ×8 · Live Gizzard Shad ×8"), so the bag to grab is the first thing read; one line for the rest.
+ * [] when none are on file. Ryan, 11/22: "for the ones that were in a package with a brand, color and size it would be
+ * really nice if it called that out".
+ */
+export function colorLines(lure) {
   const list = (lure && Array.isArray(lure.colors) && lure.colors.length ? lure.colors : (shipped(lure) || {}).colors) || [];
-  return list.map((c) => (c.n > 1 ? `${c.name} ×${c.n}` : c.name)).join(' · ');
+  const said = (c) => (c.n > 1 ? `${c.name} ×${c.n}` : c.name);
+  if (!list.some((c) => c.bag)) return list.length ? [list.map(said).join(' · ')] : [];
+  const bags = new Map();
+  for (const c of list) {
+    const k = c.bag || 'other';
+    if (!bags.has(k)) bags.set(k, []);
+    bags.get(k).push(said(c));
+  }
+  return [...bags].map(([bag, cs]) => `${bag}: ${cs.join(' · ')}`);
 }
+export function colorLine(lure) { return colorLines(lure).join(' | '); }
 
 /**
  * What the Depth column says. It read `physicalDepth`, which no type has, so every row said "Variable". A rated bait
@@ -105,8 +119,8 @@ async function renderTable(body) {
         <tbody>
           ${inv.map((lure, i) => `
             <tr style="border-top:1px solid var(--line);${!lure.trollable ? 'opacity:0.5' : ''}">
-              <td style="padding:4px 8px;color:var(--text)">${escHtml(lure.name)}${colorLine(lure)
-                ? `<div style="font-size:10px;color:var(--muted);margin-top:1px">${escHtml(colorLine(lure))}</div>` : ''}</td>
+              <td style="padding:4px 8px;color:var(--text)">${escHtml(lure.name)}${colorLines(lure)
+                .map((l) => `<div style="font-size:10px;color:var(--muted);margin-top:1px">${escHtml(l)}</div>`).join('')}</td>
               <td style="padding:4px 8px;color:var(--muted);font-size:10px">${TYPE_LABELS[lure.type] || lure.type}</td>
               <td style="padding:4px 8px;text-align:center;color:var(--accent2);font-size:10px">${depthLabel(lure)}</td>
               <td style="padding:4px 8px;text-align:center">${lure.trollable ? '✅' : '—'}</td>
