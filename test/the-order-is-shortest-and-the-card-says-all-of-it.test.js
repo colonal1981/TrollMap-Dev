@@ -15,7 +15,8 @@ import { dayCost, dayOrder, searchOrder } from '../js/modules/plan-water.js';
 import { planArgsFrom } from '../js/modules/plan-prompt.js';
 import { planToTimeline } from '../js/modules/plan-to-timeline.js';
 import { stopName, stopUnit, planWaypoints } from '../js/modules/plan-tracks.js';
-import { TACKLE_INVENTORY } from '../js/data/tackle-inventory.js';
+// The box with the four DD band baits, test-only since Ryan retired the placeholders (band-cranks.mjs).
+import { BOX as TACKLE_INVENTORY } from './band-cranks.mjs';
 import { connectionFor } from '../js/data/lure-knowledge.js';
 
 const RAMP = [-80.7107, 34.3486];

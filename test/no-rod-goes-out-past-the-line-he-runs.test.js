@@ -22,7 +22,8 @@ import { trollableBaits, leadForDepth } from '../js/data/lure-knowledge.js';
 import { holdLeadsToTheLine } from '../js/modules/plan-assemble.js';
 import { planFromWater } from '../js/modules/plan-from-water.js';
 import { planToTimeline } from '../js/modules/plan-to-timeline.js';
-import { TACKLE_INVENTORY } from '../js/data/tackle-inventory.js';
+// The box with the four DD band baits, test-only since Ryan retired the placeholders (band-cranks.mjs).
+import { BOX as TACKLE_INVENTORY } from './band-cranks.mjs';
 import { FISHING_STYLE } from '../js/data/fishing-style-profile.js';
 import { connectionFor } from '../js/data/lure-knowledge.js';
 

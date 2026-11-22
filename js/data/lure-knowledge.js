@@ -71,7 +71,7 @@ export const LURE_KNOWLEDGE = {
   },
 
   crankbait_dd1: {
-    label: 'DD1 Deep Diver (14-18ft)',
+    label: 'Deep Diver (14-18ft)',
     depthMode: 'rated',
     ratedDepth: { min:14, max:18 },
     leadRatio: { byDepthFt: [[12, 3.0], [20, 3.8], [null, 5.2]] },
@@ -83,7 +83,7 @@ export const LURE_KNOWLEDGE = {
   },
 
   crankbait_dd2: {
-    label: 'DD2 Deep Diver (16-20ft)',
+    label: 'Deep Diver (16-20ft)',
     depthMode: 'rated',
     ratedDepth: { min:16, max:20 },
     leadRatio: { byDepthFt: [[12, 3.0], [20, 3.8], [null, 5.2]] },
@@ -95,7 +95,7 @@ export const LURE_KNOWLEDGE = {
   },
 
   crankbait_dd3: {
-    label: 'DD3 Deep Diver (20-25ft)',
+    label: 'Deep Diver (20-25ft)',
     depthMode: 'rated',
     ratedDepth: { min:20, max:25 },
     leadRatio: { byDepthFt: [[12, 3.0], [20, 3.8], [null, 5.2]] },
@@ -107,7 +107,7 @@ export const LURE_KNOWLEDGE = {
   },
 
   crankbait_dd4: {
-    label: 'DD4 Deep Diver (25ft+)',
+    label: 'Deep Diver (25ft+)',
     depthMode: 'rated',
     ratedDepth: { min:25, max:35 },
     leadRatio: { byDepthFt: [[12, 3.0], [20, 3.8], [null, 5.2]] },

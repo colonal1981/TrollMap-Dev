@@ -21,7 +21,8 @@ import { assemblePlan } from '../js/modules/plan-assemble.js';
 import { planToTimeline } from '../js/modules/plan-to-timeline.js';
 import { buildPlanRequest } from '../js/modules/plan-prompt.js';
 import { buildSmartPlanV2 } from '../js/modules/smart-plan-v2.js';
-import { TACKLE_INVENTORY } from '../js/data/tackle-inventory.js';
+// The box with the four DD band baits, test-only since Ryan retired the placeholders (band-cranks.mjs).
+import { BOX as TACKLE_INVENTORY } from './band-cranks.mjs';
 import { depthWindow } from '../js/data/lure-knowledge.js';
 import { poolOffsetFt, todayDepthFt } from '../js/utils/water-conditions.js';
 

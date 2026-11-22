@@ -49,21 +49,22 @@ test('no two lures share a name, and the names a plan resolves are his', () => {
 
 test('the lures that are gone are gone, from the list and from a box saved before', () => {
   for (const id of RETIRED_IDS) assert.equal(byId(id), undefined, id);
-  assert.deepEqual([...RETIRED_IDS].sort(), ['jig_haruki_21', 'jig_haruki_29', 'marabou_3quarter', 'spoon_casting_dr_fish']);
+  assert.deepEqual([...RETIRED_IDS].sort(), ['cb_dd2', 'cb_dd3', 'cb_dd4', 'jig_haruki_21', 'jig_haruki_29',
+                                              'marabou_3quarter', 'spoon_casting_dr_fish']);
   const saved = [{ id: 'spoon_casting_dr_fish', name: 'x' }, { id: 'cb_dd1', name: 'DD1' }, { id: 'custom_1', name: 'his own' },
-                 { id: 'marabou_3quarter', name: 'y' }];
+                 { id: 'marabou_3quarter', name: 'y' }, { id: 'cb_dd3', name: 'DD3 Crankbait (20-25ft)' }];
   const r = dropRetired(saved);
-  assert.equal(r.dropped, 2);
+  assert.equal(r.dropped, 3);
   assert.deepEqual(r.inventory.map((l) => l.id), ['cb_dd1', 'custom_1']);
 });
 
 test('a named crank runs to the depth on its own box, and its type band is for the rest', () => {
-  const hs12 = byId('cb_hitstick_12'), bandit = byId('cb_bandit_wd'), dd4 = byId('cb_dd4');
+  const hs12 = byId('cb_hitstick_12'), bandit = byId('cb_bandit_wd'), noLabel = byId('cb_dd1');
   assert.equal(hs12.type, 'crankbait_dd4');
   assert.equal(bandit.type, 'crankbait_dd4');
   assert.deepEqual(ratedDepthOf(hs12), { min: 26, max: 33 });
   assert.deepEqual(ratedDepthOf(bandit), { min: 23, max: 27 });
-  assert.deepEqual(ratedDepthOf(dd4), LURE_KNOWLEDGE.crankbait_dd4.ratedDepth);
+  assert.deepEqual(ratedDepthOf(noLabel), LURE_KNOWLEDGE.crankbait_dd1.ratedDepth);
   // the depth window says the box's numbers, and the lead stops at the box's bottom
   const w = depthWindow(bandit, { speedMph: 2, leadFt: 100 });
   assert.equal(w.min, 23);

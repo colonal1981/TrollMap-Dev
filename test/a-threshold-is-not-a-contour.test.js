@@ -42,7 +42,8 @@ import { planFromWater } from '../js/modules/plan-from-water.js';
 import { waterBand } from '../js/modules/plan-pieces.js';
 import { planToTimeline } from '../js/modules/plan-to-timeline.js';
 import { describeDepthBand } from '../js/modules/plan-inputs.js';
-import { TACKLE_INVENTORY } from '../js/data/tackle-inventory.js';
+// The box with the four DD band baits, test-only since Ryan retired the placeholders (band-cranks.mjs).
+import { BOX as TACKLE_INVENTORY } from './band-cranks.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const src = (f) => readFileSync(join(here, '..', f), 'utf8');

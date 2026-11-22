@@ -9,7 +9,8 @@ globalThis.document = globalThis.document || {
 const { assemblePlan } = await import('../js/modules/plan-assemble.js');
 const { metresBetween } = await import('../js/modules/plan-candidates.js');
 const { planToTimeline } = await import('../js/modules/plan-to-timeline.js');
-const { TACKLE_INVENTORY } = await import('../js/data/tackle-inventory.js');
+// The box with the four DD band baits, test-only since Ryan retired the placeholders (band-cranks.mjs).
+const { BOX: TACKLE_INVENTORY } = await import('./band-cranks.mjs');
 const { depthWindow } = await import('../js/data/lure-knowledge.js');
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────

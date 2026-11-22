@@ -13,6 +13,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { runDivers, runCrankbaits, pairTiers, inFish, belowFish, layAreas } from '../js/modules/plan-areas.js';
 import { TACKLE_INVENTORY } from '../js/data/tackle-inventory.js';
+import { BAND_CRANKS } from './band-cranks.mjs';
 
 const CRANKS = runCrankbaits(TACKLE_INVENTORY);
 const station = (n, f) => Array.from({ length: n }, (_, i) => f(i));
@@ -31,8 +32,10 @@ test('a run over 20-24 ft floors with the fish at 10-20 ft goes out with two bai
 });
 
 test('where no two baits fit the fish, one in it beats none, and fewer below the fish beats deeper', () => {
-  // The type's own band, from the bait named for it: a named crank of the same type has its own box (Hit Stick 9, 18-24).
-  const pr = (a, b) => ({ rods: [a, b].map((t) => CRANKS.find((c) => c.type === t && /^DD\d Crankbait/.test(c.name))) });
+  // The type's own band, from the band bait kept for the tests (band-cranks.mjs): a named crank of the same type has its
+  // own box (Hit Stick 9, 18-24), and his DD placeholders were retired on 11/22.
+  const BANDS = runCrankbaits(BAND_CRANKS);
+  const pr = (a, b) => ({ rods: [a, b].map((t) => BANDS.find((c) => c.type === t)) });
   const dd43 = pr('crankbait_dd4', 'crankbait_dd3'), dd32 = pr('crankbait_dd3', 'crankbait_dd2');
   const t = pairTiers([dd43, dd32], [20, 23]);
   assert.equal(t.tier, 'one');                                   // the DD2's 16-20 ends where the fish start

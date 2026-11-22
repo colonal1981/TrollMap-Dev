@@ -242,6 +242,7 @@ export const COLORS_BY_ID = {
   tsj_30g: [['blue holographic w/ black dots', 1], ['white/pearl, red head', 1], ['silver scale, red head', 1],
     ['silver scale, red eye', 1], ['chartreuse scale', 1]],
   spoon_small_cast: [['silver/blue (Kastmaster)', 1], ['silver, red bead, orange tube', 1], ['brass', 1],
-    ['gold, red bead', 1], ['gold (Kastmaster)', 1], ['yellow/black', 1], ['silver/blue w/ feather', 1],
-    ['silver, red head, feather', 1]],
+    ['gold, red bead', 1], ['gold (Kastmaster)', 1], ['yellow/black', 1]],
+  // The two "small spoons" with a feather were these jigs (Ryan, 11/22, with the maker's picture).
+  jig_metal_116: [['silver/blue', 1], ['red head/silver', 1]],
 };

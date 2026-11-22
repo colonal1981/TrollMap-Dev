@@ -21,7 +21,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildPlanRequest, resolveTackleName, promptSafeTackleName }
   from '../js/modules/plan-prompt.js';
-import { TACKLE_INVENTORY } from '../js/data/tackle-inventory.js';
+// The box with the four DD band baits, test-only since Ryan retired the placeholders (band-cranks.mjs).
+import { BOX as TACKLE_INVENTORY } from './band-cranks.mjs';
 import { readFileSync } from 'node:fs';
 
 const NAMES = TACKLE_INVENTORY.map((l) => l.name);

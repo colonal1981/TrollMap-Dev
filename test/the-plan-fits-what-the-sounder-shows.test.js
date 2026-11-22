@@ -11,7 +11,8 @@ import { describe, it, expect } from './expect-shim.mjs';
 import { depthLadder, DEEP_TYPES } from '../js/modules/plan-assemble.js';
 import { planToTimeline, ladderRowText } from '../js/modules/plan-to-timeline.js';
 import { buildPlanRequest } from '../js/modules/plan-prompt.js';
-import { TACKLE_INVENTORY } from '../js/data/tackle-inventory.js';
+// The box with the four DD band baits, test-only since Ryan retired the placeholders (band-cranks.mjs).
+import { BOX as TACKLE_INVENTORY } from './band-cranks.mjs';
 
 const byName = (n) => TACKLE_INVENTORY.find((l) => l.name === n) || null;
 const RODS = [

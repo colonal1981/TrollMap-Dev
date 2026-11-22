@@ -54,17 +54,14 @@ const AS_BOUGHT = [
   { id:'cb_mr', name:'MR Crankbait (6-12ft)',
     type:'crankbait_mr', trollable:true, castable:true, weightOz:0.5 },
 
-  { id:'cb_dd1', name:'DD1 Crankbait (14-18ft)',
+  // THE DD NAMES WERE PLACEHOLDERS. Ryan, 2026-11-22: "Either have it as an alias or remove the dd markings. Those were
+  // created because I don't know the brand of every crankbait. More of a place holder / guess". The DD2, DD3 and DD4
+  // entries had no bait behind them and are retired (RETIRED_IDS); this one holds his five unlabelled ~3" long-lip
+  // cranks (the hard-bait list's photos 13 and 15), named for what they are like the other no-label entries. Its depth
+  // is still its type's 14-18 ft band, a guess, because no maker's chart can be read for a bait with no label.
+  // 'DD1 Crankbait (14-18ft)' is kept as an alias (LURE_ALIASES) so a catch or plan written under it still finds it.
+  { id:'cb_dd1', name:'Deep Crankbait ~3", long lip (no label)',
     type:'crankbait_dd1', trollable:true, castable:true, weightOz:0.75 },
-
-  { id:'cb_dd2', name:'DD2 Crankbait (16-20ft)',
-    type:'crankbait_dd2', trollable:true, castable:true, weightOz:0.75 },
-
-  { id:'cb_dd3', name:'DD3 Crankbait (20-25ft)',
-    type:'crankbait_dd3', trollable:true, castable:true, weightOz:1.0 },
-
-  { id:'cb_dd4', name:'DD4 Crankbait (25ft+)',
-    type:'crankbait_dd4', trollable:true, castable:true, weightOz:1.25 },
 
   // ── Lipless & Blade Vibes ─────────────────────────────────────────────────
   { id:'lipless_2in', name:'2" Lipless Crankbait',
@@ -429,6 +426,13 @@ const AS_BOUGHT = [
     type:'spoon_casting', trollable:true, castable:true, weightOz:1.06 },
   { id:'spoon_small_cast', name:'Small Casting Spoon (Kastmaster type)',
     type:'spoon_casting', trollable:false, castable:true, weightOz:0.375 },
+  // Ryan, 2026-11-22, with the maker's picture of them: "some of the "small spoons" on the saltwater lures pic were
+  // these" -- a metal jig 2.56" long and 1.16 oz with a feathered treble on the tail, sold five to a box. The two small
+  // spoons on that board with a feather (silver/blue, red head/silver) are these; the other six stay small spoons. Its
+  // own entry, not the 30 g jig's: a third shorter for the same weight. No ruling of its own on the troll, so it trolls
+  // as the type does, like the 30 g jig.
+  { id:'jig_metal_116', name:'Metal Jig 2.56" 1.16oz (feathered treble)',
+    type:'spoon_casting', trollable:true, castable:true, weightOz:1.16, lengthIn:2.56 },
 
   // ── Topwater ───────────────────────────────────────────────────────────────────────────────
   { id:'tw_plopper_small', name:'Whopper Plopper, small (~2.5")',
@@ -483,11 +487,23 @@ const AS_BOUGHT = [
  * spread UI all carry names rather than ids, so this is the one place that
  * conversion happens. Exact match first, then containment for annotated names.
  */
+/**
+ * OLD NAMES THAT STILL MEAN A BAIT IN THE BOX, by id. A catch logged or a plan saved under the old name resolves to the
+ * entry it was renamed to; nothing new is written under one.
+ */
+export const LURE_ALIASES = Object.freeze({
+  'dd1 crankbait (14-18ft)': 'cb_dd1',
+  'dd1 crankbait': 'cb_dd1',
+});
+
 export function lureByName(name) {
   if (!name) return null;
   const n = String(name).toLowerCase().trim();
+  const alias = LURE_ALIASES[n] || Object.keys(LURE_ALIASES).filter((a) => n.includes(a))
+    .sort((a, b) => b.length - a.length).map((a) => LURE_ALIASES[a])[0];
   return TACKLE_INVENTORY.find(l => l.name.toLowerCase() === n)
       || TACKLE_INVENTORY.find(l => n.includes(l.name.toLowerCase()))
+      || (alias && TACKLE_INVENTORY.find(l => l.id === alias))
       || null;
 }
 
@@ -604,6 +620,8 @@ const SHIPPED_BEFORE = {
   arig_light:  { name: 'A-Rig Light (~1.65oz) – 3.8" Swimbait', weightOz: 1.65 },
   arig_medium: { name: 'A-Rig Medium (~2.65oz) – 4.6" Swimbait', weightOz: 2.65 },
   arig_heavy:  { name: 'A-Rig Heavy (~3.5oz) – 5" Swimbait', weightOz: 3.5 },
+  // the placeholder name, 2026-11-22 (see the entry)
+  cb_dd1:      { name: 'DD1 Crankbait (14-18ft)', weightOz: 0.75 },
 };
 
 export function replaceShippedBuiltins(saved) {
@@ -624,7 +642,11 @@ export function replaceShippedBuiltins(saved) {
  * the bottom of a lake and i dont think i ever had the haruki jigs". Only the shipped entry goes: a lure he typed in
  * under another id is his.
  */
-export const RETIRED_IDS = ['spoon_casting_dr_fish', 'marabou_3quarter', 'jig_haruki_21', 'jig_haruki_29'];
+//
+// And the same night, of the DD1-DD4 crankbaits: "Those were created because I don't know the brand of every crankbait.
+// More of a place holder / guess". DD2, DD3 and DD4 had no bait behind them.
+export const RETIRED_IDS = ['spoon_casting_dr_fish', 'marabou_3quarter', 'jig_haruki_21', 'jig_haruki_29',
+  'cb_dd2', 'cb_dd3', 'cb_dd4'];
 
 export function dropRetired(saved) {
   const inventory = (saved || []).filter((l) => !RETIRED_IDS.includes(l && l.id));
@@ -643,7 +665,7 @@ export async function getInventory() {
     const r = replaceShippedBuiltins(await mergeNewBuiltins(gone.inventory));
     if (r.changed) {
       await saveInventory(r.inventory);
-      console.log(`[tackle-inventory] brought ${r.changed} A-rig(s) in the saved box over to his rigs`);
+      console.log(`[tackle-inventory] brought ${r.changed} built-in(s) in the saved box over to their new names`);
     }
     _inventory = r.inventory;
     return _inventory;

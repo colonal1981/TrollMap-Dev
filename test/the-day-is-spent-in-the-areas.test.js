@@ -27,7 +27,8 @@ test('his deep divers top out under 3.5 mph, and a run picks two of them', () =>
   for (const [t, k] of Object.entries(LURE_KNOWLEDGE)) if (/^crankbait_/.test(t)) assert.equal(k.speed.max, CRANK_MAX_MPH, t);
   assert.ok(CRANK_MAX_MPH < 3.5 && CRANK_MAX_MPH >= RUN_MPH);
   assert.equal(RUN_MPH, 3);
-  assert.ok(CRANKS.some((c) => c.type === 'crankbait_dd3') && CRANKS.some((c) => c.type === 'crankbait_dd2'));
+  // his box by name (11/22): more than two divers rated to 18 ft or deeper, so a run has a pair to choose from
+  assert.ok(CRANKS.filter((c) => c.min >= 18).length > 2, CRANKS.map((c) => `${c.name} ${c.min}-${c.max}`).join('; '));
 });
 
 // A run out of a cove: 600 m under 20 ft, then 34 ft or more the rest of the way, as from Short Stay to Bonneau.
@@ -37,8 +38,9 @@ const CUM = station(150, (i) => i * 40);
 
 test('the two divers clear the run and sit near the fish; the lines go in where the water holds for them', () => {
   const r = runDivers(RUN, CUM, CRANKS, { fishFt: [20, 23] });
-  assert.deepEqual(r.rods.map((x) => x.type).sort(), ['crankbait_dd2', 'crankbait_dd3']);
-  assert.ok(r.floorFt >= 34 && r.needFt === 30, `floor ${r.floorFt}, need ${r.needFt}`);
+  // the two of his that cover 20-23 ft whole: the Deep Hit Stick 9 (18-24) and the Flicker Minnow 11D (18-23)
+  assert.deepEqual(r.rods.map((x) => x.name).sort(), ['Berkley Deep Hit Stick 9', 'Berkley Flicker Minnow 11D']);
+  assert.ok(r.floorFt >= 34 && r.needFt === 29, `floor ${r.floorFt}, need ${r.needFt}`);
   assert.ok(r.linesInM >= 560 && r.linesInM <= 640, `lines in at ${r.linesInM} m`);
   // fish shallower: the pair that covers them
   const s = runDivers(RUN, CUM, CRANKS, { fishFt: [14, 17] });
@@ -73,7 +75,7 @@ test('each place is an area, measured by water from the ramp; the near one has n
   assert.ok(far && near);
   assert.ok(near.near, 'the near point is lines in by the ramp');
   assert.ok(!far.near && far.run.trolledM > 2000, `far run ${far.run.trolledM} m`);
-  assert.deepEqual(far.run.rods.map((r) => r.type).sort(), ['crankbait_dd2', 'crankbait_dd3']);
+  assert.deepEqual(far.run.rods.map((r) => r.name).sort(), ['Berkley Deep Hit Stick 9', 'Berkley Flicker Minnow 11D']);
   assert.ok(far.acres > 0 && near.acres > 0);
   for (const a of DAY.areas) {
     assert.ok(a.laps.length >= 1);
@@ -102,7 +104,7 @@ test('an area is 1.5 miles round the place, and its day is different loops befor
   assert.equal(step.distinct, seen.size);
   assert.ok(step.distinct >= Math.min(3, far.laps.length));
   // and the moves between loops are said: at 3 mph with the area's two divers
-  assert.match(optionLines(DAY, op).join('\n'), /on them, \d.* moving between them at 3 mph with DD3 Crankbait \(20-25ft\) and Berkley Deep Hit Stick 9/);
+  assert.match(optionLines(DAY, op).join('\n'), /on them, \d.* moving between them at 3 mph with Berkley Deep Hit Stick 9 and Berkley Flicker Minnow 11D/);
 });
 
 test('the options: each area all day and both, every minute of the window accounted for, no filler loop', () => {
@@ -122,7 +124,7 @@ test('the options: each area all day and both, every minute of the window accoun
   assert.match(both.label, /^Near Point, then Far Flats$/, 'the nearer first');
   const lines = optionLines(DAY, both);
   assert.match(lines[0], /^06:00 lines up out of the cove/);
-  assert.ok(lines.some((l) => / run to Far Flats at 3 mph, .* trolling DD/.test(l)), lines.join('\n'));
+  assert.ok(lines.some((l) => / run to Far Flats at 3 mph, .* trolling Berkley Deep Hit Stick 9/.test(l)), lines.join('\n'));
   assert.match(lines[lines.length - 1], /at the ramp$/);
 });
 
@@ -180,7 +182,7 @@ test('a move between loops goes with the divers only over water they clear; over
   const moving = step.moveList.reduce((a, m) => a + m.minutes, 0);
   assert.ok(Math.abs(onLoops + moving - step.min) <= 2, `${onLoops} + ${moving} vs ${step.min}`);
   const said = optionLines(BAR_DAY, op).join('\n');
-  assert.match(said, /moving between them at 3 mph with DD3 Crankbait \(20-25ft\) and Berkley Deep Hit Stick 9/);
+  assert.match(said, /moving between them at 3 mph with Berkley Deep Hit Stick 9 and Berkley Flicker Minnow 11D/);
   assert.match(said, /moving with the lines up where the water between is too shallow for them/);
   // the loop after a lines-up move says so, and the join to it is run with the lines up -- nothing on the water
   const loop = optionLoop(BAR_DAY, 0);
@@ -243,10 +245,10 @@ test('the price of a day counts a run at its own 3 mph', () => {
 });
 
 test('the plan holds a run at its speed and puts its two divers out, whatever the model sent', () => {
-  const run = { mph: 3, rods: ['DD3 Crankbait (20-25ft)', 'DD2 Crankbait (16-20ft)'], floorFt: 34 };
+  const run = { mph: 3, rods: ['Berkley Flicker Minnow 11D', 'Berkley Deep Hit Stick 9'], floorFt: 34 };
   const cands = [{ runId: 'w#run-out', run }, { runId: 'w#area1-lap1-out' }];
   const res = {
-    loadout: { rods: [{ id: 'R1', lure: 'DD3 Crankbait (20-25ft)' }, { id: 'R2', lure: 'DD2 Crankbait (16-20ft)' },
+    loadout: { rods: [{ id: 'R1', lure: 'Berkley Flicker Minnow 11D' }, { id: 'R2', lure: 'Berkley Deep Hit Stick 9' },
                       { id: 'R5', lure: 'A-Rig – five 1/2oz heads (~4.1oz)' }, { id: 'R3', lure: 'SPRO Prime Bucktail Jig 1oz (SBTJ-1)' }] },
     legs: [{ runId: 'w#run-out', speedMph: 2.2, deploy: { port: 'R5', starboard: 'R3' } },
            { runId: 'w#area1-lap1-out', speedMph: 2.0, deploy: { port: 'R5', starboard: 'R3' } }],
@@ -256,13 +258,13 @@ test('the plan holds a run at its speed and puts its two divers out, whatever th
   assert.equal(runLeg.speedMph, 3);
   const dep = a.deploy['w#run-out'];
   const lures = [dep.port, dep.starboard].map((id) => a.loadout.rods.find((r) => r.id === id).lure).sort();
-  assert.deepEqual(lures, ['DD2 Crankbait (16-20ft)', 'DD3 Crankbait (20-25ft)']);
+  assert.deepEqual(lures, ['Berkley Deep Hit Stick 9', 'Berkley Flicker Minnow 11D']);
   assert.equal(a.candidates.find((c) => c.runId === 'w#area1-lap1-out').speedMph, 2.0);
 });
 
 test('the model is told what a run and a lap are, and never to change the speed to fit the day', () => {
   assert.equal(areaDayBlock([{ runId: 'x' }]), '');
-  const b = areaDayBlock([{ runId: 'w#run-out', theRun: { mph: 3, baits: ['DD3 Crankbait (20-25ft)', 'DD2 Crankbait (16-20ft)'] } }]);
+  const b = areaDayBlock([{ runId: 'w#run-out', theRun: { mph: 3, baits: ['Berkley Flicker Minnow 11D', 'Berkley Deep Hit Stick 9'] } }]);
   assert.match(b, /A LEG CARRYING `theRun` IS A RUN: the run out, across or home, or a move from one loop to the next/);
   assert.match(b, /`areaN-moveK`/);
   assert.match(b, /has no leg: it is run with the lines up from its start, and the plan says so/);
@@ -316,8 +318,8 @@ test('an area day builds: the run at 3 mph with its divers, the laps at the mode
   const pieces = loopPieces(loop, { depthAt, spots: [], slug: 'test_lake', rampName: 'Ramp' });
   pieces.forEach((p, k) => { const leg = loop.legs[k]; p.runId = `test_lake#${leg.name}`; if (leg.run) p.run = leg.run; });
   const steps = loopSteps(loop, pieces);
-  // His Deep Hit Stick 9 (18-24 ft on its box) is the second diver since his box by name went in, 2026-11-22.
-  const RUN_BAITS = ['DD3 Crankbait (20-25ft)', 'Berkley Deep Hit Stick 9'];
+  // His Deep Hit Stick 9 (18-24 ft on its box) and Flicker Minnow 11D (18-23) since the DD placeholders went, 2026-11-22.
+  const RUN_BAITS = ['Berkley Deep Hit Stick 9', 'Berkley Flicker Minnow 11D'];
   const ARIG = 'A-Rig – five 1/2oz heads (~4.1oz)', BUCK = 'SPRO Prime Bucktail Jig 1oz (SBTJ-1)';
   let prompt = '';
   const askModel = async ({ user }) => {
@@ -339,7 +341,7 @@ test('an area day builds: the run at 3 mph with its divers, the laps at the mode
   });
   assert.ok(r.plan, (r.problems || []).join('; '));
   assert.match(prompt, /THE DAY IS SPENT IN AN AREA THE FISHING REPORTS NAME/);
-  assert.match(prompt, /"theRun":\{"mph":3,"baits":\["DD3 Crankbait \(20-25ft\)","Berkley Deep Hit Stick 9"\]/);
+  assert.match(prompt, /"theRun":\{"mph":3,"baits":\["Berkley Deep Hit Stick 9","Berkley Flicker Minnow 11D"\]/);
   const legs = (r.plan.route || r.plan.legs || []).filter((l) => l && l.runId);
   const runOut = legs.find((l) => /#run-out$/.test(l.runId));
   const lap = legs.find((l) => /lap1-out$/.test(l.runId));

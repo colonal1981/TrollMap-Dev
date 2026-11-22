@@ -40,10 +40,8 @@ export const LURE_PRESETS = [
   'Squarebill Crankbait',
   'SR Crankbait (3-5ft)',
   'MR Crankbait (6-12ft)',
-  'DD1 Crankbait (14-18ft)',
-  'DD2 Crankbait (16-20ft)',
-  'DD3 Crankbait (20-25ft)',
-  'DD4 Crankbait (25ft+)',
+  // The DD1-DD4 names were placeholders (Ryan, 2026-11-22); the one with baits behind it is renamed.
+  'Deep Crankbait ~3", long lip (no label)',
   '— Swimbaits & Underspins —',
   'Swimbait 3.8" – Jighead',
   'Swimbait 4.6" – Jighead',

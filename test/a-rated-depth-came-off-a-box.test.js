@@ -27,7 +27,8 @@ import { describe, it, expect } from './expect-shim.mjs';
 import { depthWindow, leadForDepth, canReachDepth,
          requiresInlineWeight, LURE_KNOWLEDGE } from '../js/data/lure-knowledge.js';
 import { buildPlanRequest } from '../js/modules/plan-prompt.js';
-import { TACKLE_INVENTORY } from '../js/data/tackle-inventory.js';
+// The box with the four DD band baits, test-only since Ryan retired the placeholders (band-cranks.mjs).
+import { BOX as TACKLE_INVENTORY } from './band-cranks.mjs';
 
 // The prompt spells an inch mark as `in` (promptSafeTackleName), so a name it lists may be either spelling.
 const byName = (n) => TACKLE_INVENTORY.find((l) => l.name === n || l.name.replace(/"/g, 'in') === n) || null;

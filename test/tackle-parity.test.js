@@ -100,7 +100,10 @@ describe('tackle parity — every type resolves in all three tables', () => {
     // EXCEPT ONE ON PURPOSE. The vertical jig's only lures were the two P-Line Haruki jigs, and Ryan, 2026-11-22: "i dont
     // think i ever had the haruki jigs". The type stays for the day one is bought, and species-intel names it as a
     // fallback presentation.
-    const KEPT_WITHOUT_A_LURE = ['vertical_jig'];
+    // And the 20-25 ft crank band: its only lure was the 'DD3 Crankbait (20-25ft)' placeholder, retired 11/22 ("Those
+    // were created because I don't know the brand of every crankbait"). The band stays: the box's add row offers it
+    // for an unlabelled crank he puts in at that depth.
+    const KEPT_WITHOUT_A_LURE = ['vertical_jig', 'crankbait_dd3'];
     const orphans = Object.keys(LURE_KNOWLEDGE).filter(t => !types.includes(t) && !KEPT_WITHOUT_A_LURE.includes(t));
     expect(orphans).toEqual([]);
   });

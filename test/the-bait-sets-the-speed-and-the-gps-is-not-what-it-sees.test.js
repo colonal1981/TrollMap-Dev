@@ -15,7 +15,8 @@ const { metresBetween } = await import('../js/modules/plan-candidates.js');
 const { laneTelemetry } = await import('../js/modules/plan-builder.js');
 const { riverSpeedNote } = await import('../js/modules/plan-prompt.js');
 const { gpsWindowFor, sharedSpeedWindow, LURE_KNOWLEDGE } = await import('../js/data/lure-knowledge.js');
-const { TACKLE_INVENTORY } = await import('../js/data/tackle-inventory.js');
+// The box with the four DD band baits, test-only since Ryan retired the placeholders (band-cranks.mjs).
+const { BOX: TACKLE_INVENTORY } = await import('./band-cranks.mjs');
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 // THE GPS IS NOT THE SPEED THE BAIT SEES

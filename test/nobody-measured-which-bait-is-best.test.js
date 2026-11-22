@@ -32,11 +32,14 @@ import { TACKLE_INVENTORY, RIGGED_TROLLING_WEIGHT_OZ,
          JIGHEADS_OWNED_OZ } from '../js/data/tackle-inventory.js';
 import { buildPlanRequest } from '../js/modules/plan-prompt.js';
 import { oxygenFloorFt } from '../js/modules/plan-inputs.js';
+import { BOX as BANDED } from './band-cranks.mjs';
 
-const BOX = TACKLE_INVENTORY.filter((l) => l.trollable || l.castable);
+// The gate and the prompt are tried on his box with the four DD band baits (band-cranks.mjs), test-only since Ryan
+// retired the placeholders: what they test is the band against the floor. The box checks further down read his own.
+const BOX = BANDED.filter((l) => l.trollable || l.castable);
 const WATEREE = { oxygenFloorFt: 19.7, speedMph: 2.0, maxLeadFt: 120,
                   inlineWeightOz: RIGGED_TROLLING_WEIGHT_OZ };
-const gate = (extra) => trollableBaits(TACKLE_INVENTORY, { ...WATEREE, ...extra });
+const gate = (extra) => trollableBaits(BANDED, { ...WATEREE, ...extra });
 const refusalFor = (name, extra) => (gate(extra).refused.find((r) => r.name === name) || {}).why;
 const coverOf = (name, extra) => (gate(extra).legal.find((l) => l.name === name) || {}).covers;
 
@@ -146,7 +149,7 @@ const prompt = (extra = {}) => buildPlanRequest({
   launchTime: '06:00', returnTime: '15:00', species: ['Striped Bass'], conditions: {},
   candidates: [], tackle: BOX.map((l) => l.name),
   trollable: BOX.filter((l) => l.trollable).map((l) => l.name),
-  lureByName: (n) => TACKLE_INVENTORY.find((l) => l.name === n) || null,
+  lureByName: (n) => BANDED.find((l) => l.name === n) || null,
   inventory: BOX, ...extra,
 }).user;
 
