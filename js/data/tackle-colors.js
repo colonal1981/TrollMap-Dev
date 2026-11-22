@@ -107,7 +107,11 @@ export const COLORS_BY_ID = {
     ['blue/chartreuse bars (rigged)', 2, 'Bass Pro Crappie Maxx Paddle-Tail Minnow'],
     ['blue/green back, silver, red gill', 7, 'loose'], ['green back, pink gill (on jigheads)', 3, 'loose'],
     ['grey/silver shad', 1, 'loose'], ['green pumpkin/gold flake, orange tail', 5, 'loose'], ['brown/perch spots', 1, 'loose'],
-    ['dark, chartreuse tail', 1, 'loose'], ['brown', 2, 'loose (ribbed)']],
+    ['dark, chartreuse tail', 1, 'loose'], ['brown', 2, 'loose (ribbed)'],
+    // WHITE BAITS FROM HIS SMALL CONTAINERS (photo PXL_20261122_163822100). Ryan, 11/22: "I have added a pic of what white
+    // smaller paddle tails and flukes i actually have on hand", and of the bottom group, "all one color... some stained or
+    // bad picture taking on my part". Lengths by his tape; the twelfth is the one the photo cuts off at the bottom.
+    ['pearl/bone', 12, 'loose (ribbed, small containers)']],
   swimbait_4_0in: [['Live Sardine', 12, 'BioBait Shadow Swimmer 4" (2 packs)'], ['Live Gizzard Shad', 6, 'BioBait Shadow Swimmer 4"'],
     ['Live Threadfin Shad', 6, 'BioBait Shadow Swimmer 4"'], ['Chartreuse/Pearl', 6, 'BioBait Shadow Swimmer 4"'],
     ['Plum/Chart Tail', 10, 'Saltwater Assassin Sea Shad 4"'], ['Butt Naked', 10, 'Saltwater Assassin Sea Shad 4"'],
@@ -119,7 +123,11 @@ export const COLORS_BY_ID = {
     ['Sight Flash', 5, 'Berkley PowerBait PowerStinger 4.25"'], ['chartreuse/yellow', 1, 'loose'],
     ['brown/green pumpkin flake', 5, 'loose (segmented)'], ['tan/gold flake', 2, 'loose (ribbed)'], ['brown/gold scale', 1, 'loose'],
     ['pearl/black flake (on a jighead)', 1, 'loose'], ['smoke/purple', null, 'in the swimbait box'], ['pearl', null, 'in the swimbait box'],
-    ['perch bars', null, 'in the swimbait box']],
+    ['perch bars', null, 'in the swimbait box'],
+    // From the same photo: the top row, and the middle row's five. Of the top rows, "they show really gold here but they
+    // aren't in real life lol".
+    ['clear/gold flake', 3, 'loose (ribbed, small containers)'], ['white, silver glitter', 2, 'loose (small containers)'],
+    ['white', 1, 'loose (small containers)'], ['pearl/clear, silver flake', 2, 'loose (small containers)']],
   swimbait_4in: [['Green Pumpkin D', 5, 'Missile Baits Bomb Shad 4.5"'], ['pearl', 1, 'Truscend swimbait card 4.3-4.5"'],
     ['gold', 3, 'Truscend swimbait card 4.3-4.5"'], ['olive/gold', 1, 'Truscend swimbait card 4.3-4.5"'],
     ['green back', 1, 'Truscend swimbait card 4.3-4.5"'], ['silver shad', 1, 'Truscend swimbait card 4.3-4.5"'],
@@ -134,8 +142,12 @@ export const COLORS_BY_ID = {
     ['green pumpkin, orange belly', null, 'in the swimbait box']],
   swimbait_7in: [['mackerel, red tail', 2, 'loose (saltwater board)']],
   thin_tail_4in: [['tan/gold', 1, 'loose (ribbed)']],
-  cast_fluke_4in: [['black/dark green', 5, 'loose (split tail)']],
-  cast_fluke_5in: [['Baitfish', null, 'Zoom Salty Super Fluke'], ['The Deal', 4, 'Z-Man RaZor ShadZ']],
+  cast_fluke_4in: [['black/dark green', 5, 'loose (split tail)'],
+    ['clear/gold flake', 5, 'loose (split tail, small containers)']],          // the second row of the 11/22 photo
+  cast_fluke_5in: [['Baitfish', null, 'Zoom Salty Super Fluke'], ['The Deal', 4, 'Z-Man RaZor ShadZ'],
+    // the fourth row of the 11/22 photo
+    ['pearl', 2, 'loose (small containers)'], ['bone', 1, 'loose (small containers)'],
+    ['smoke, black back', 1, 'loose (small containers)']],
 
   // ── Cast-only soft plastics ─────────────────────────────────────────────────────────────────
   cast_stickbait: [['Smallmouth Magic', 10, 'Yamamoto Senko type (YAM-9FAT)'], ['Junebug', 5, 'Z-Man Turbo FattyZ'],
