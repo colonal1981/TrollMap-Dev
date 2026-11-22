@@ -200,7 +200,7 @@ export function rodsAtLaunch(p) {
     const color = row ? str(row.color) : str(lo && lo.color);
     let weight = row ? [
       row.arigWeight ? `Frame: ${str(row.arigWeight)}` : '',
-      row.inlineWeight ? `Weight: ${str(row.inlineWeight)} inline` : '',
+      row.inlineWeight ? (row.spreader ? `Spreader: ${str(row.inlineWeight)} weight` : `Weight: ${str(row.inlineWeight)} inline`) : '',
       row.jigWeight ? `Head: ${str(row.jigWeight)}` : '',
       row.trailerSize ? `Trailer: ${str(row.trailerSize)}` : '',
     ].filter(Boolean).join(' · ') : (str(castRow && castRow.jigheadWeight) ? `Head: ${str(castRow.jigheadWeight)}` : '');
@@ -208,8 +208,12 @@ export function rodsAtLaunch(p) {
     // the html i am looking at says that the spoon is supposed to be tied to a weight and if so what weight".
     if (lo && lo.rigSaid && lure === str(lo.lure)) {
       const said = str(lo.rigSaid);
-      weight = row && row.inlineWeight ? `${weight} · ${said.replace(/^behind the [^,]*inline weight on the swivel snap, /, 'on the swivel snap, ')}`
-        : `${said.charAt(0).toUpperCase()}${said.slice(1)}`;
+      const Said = `${said.charAt(0).toUpperCase()}${said.slice(1)}`;
+      // A spreader's sentence says its weight already, so it leads, and a paddle tail's head follows it (11/22).
+      if (/^on a spreader/.test(said)) weight = [Said, row && row.jigWeight ? `Head: ${str(row.jigWeight)}` : ''].filter(Boolean).join(' · ');
+      else weight = row && row.inlineWeight
+        ? `${weight} · ${said.replace(/^behind the [^,]*inline weight on the swivel snap, /, 'on the swivel snap, ')}`
+        : Said;
     }
     const rig = str(lo && lo.rig) || ROD_RIG[id] || '';
     const mine = uses.get(id) || [];

@@ -352,6 +352,8 @@ function rodView(rod, side, over, leg) {
     depth: Array.isArray(runs) ? (runs[0] === runs[1] ? String(runs[0]) : runs.join('–')) : '',
     reel: '',
     trailerSize: trailersSaid(rod.trailers), arigWeight: '', jigWeight: head, inlineWeight: inline,
+    // A BAIT ON A SPREADER (11/22): the weight is on the spreader's short arm, not inline ahead of the bait.
+    ...((over && over.spreader) || rod.spreader ? { spreader: true } : {}),
     notes: clean(rod.why),
     // Where it sits against the bottom, which is the part he can act on. Null when the leg has no
     // depth profile or the bait has no running depth — absent, never guessed at.
@@ -496,7 +498,8 @@ export function stopRodLine(r, leg, legs) {
   const over = leg && Array.isArray(legs) ? headAt(r.id, leg, legs) : null;
   const castOz = !over && r.role === 'cast' ? castHeadOz(r.lure) : null;
   const weight = over && over.jigheadOz != null ? `on the ${ozLabel(over.jigheadOz)} head`
-    : over && over.inlineWeightOz != null ? `behind the ${ozLabel(over.inlineWeightOz)} inline weight`
+    : over && over.inlineWeightOz != null ? (over.spreader || r.spreader ? `on the spreader with the ${ozLabel(over.inlineWeightOz)} weight`
+      : `behind the ${ozLabel(over.inlineWeightOz)} inline weight`)
     : castOz != null ? `on the ${ozLabel(castOz)} head` : '';
   return [`${r.id}: ${clean(r.lure)}`, colorWithBag(r), weight, r.trailers ? `trailers ${trailersSaid(r.trailers)}` : ''].filter(Boolean).join(' · ');
 }

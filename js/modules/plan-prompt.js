@@ -64,7 +64,8 @@ import { isNum, num } from '../utils/num.js';
 import { depthWindow, jigheadRangeOz, trollableBaits, describeBait, LURE_KNOWLEDGE,
          gpsWindowFor, leadForDepth, requiresInlineWeight, levelsOffFt } from '../data/lure-knowledge.js';
 import { RIGGED_TROLLING_WEIGHT_OZ, JIGHEADS_OWNED_OZ, TROLLING_WEIGHTS_OWNED_OZ, TACKLE_INVENTORY, colorsOf, colorInBox,
-         arigHeadsOz, trailerFits, trailersFor, colorFitsHead, ownHeadOz, TRAILER_COUNT } from '../data/tackle-inventory.js';
+         arigHeadsOz, trailerFits, trailersFor, colorFitsHead, ownHeadOz, TRAILER_COUNT,
+         SPREADERS_OWNED, SPREADER_NAME, spreaderCarries } from '../data/tackle-inventory.js';
 import { ozLabel } from '../utils/oz.js';
 import { promptSafeTackleName } from '../utils/tackle-name.js';
 import { FISHING_STYLE } from '../data/fishing-style-profile.js';
@@ -2504,7 +2505,7 @@ of his deepest diver, "the dd4 doesn't get as low as it says". Where any water y
 weight; a paddle-tail swimbait on a jighead; a bucktail), so that whatever the sounder shows below
 25 ft, two rigged rods can be slowed down to it. Each leg's card carries a ladder the app works out
 from the rods you rig: for each 5 ft of fish depth, which two rods and what speed.
-
+${spreaderBlock()}
 Use ONLY these exact lure names:
 ${gate ? gate.names : ((o.tackle || []).map(promptSafeTackleName).join(', ') || '(inventory unavailable)')}
 ${gate ? gate.block : ''}${colourLines.length ? `
@@ -2853,7 +2854,8 @@ RETURN EXACTLY THIS SHAPE
         "role": ${o.isRiver ? '"troll"' : '"troll" or "cast"'}, "leadFt": 95, "runsDepthFt": [22, 28],
         "why": "one sentence" }
       // On a soft-plastic rod add "backupColor": "another of its colours"; on an A-rig rod add
-      // "trailers": { "outside": { "lure": "a swimbait from its list", "color": "..." }, "middle": { ... } }
+      // "trailers": { "outside": { "lure": "a swimbait from its list", "color": "..." }, "middle": { ... } }${SPREADERS_OWNED > 0 ? `
+      // On a spoon, bucktail or paddle-tail troll rod you may add "spreader": true (HIS SPREADERS, above).` : ''}
       // Only the rods this plan uses — two is a complete answer. Put tie-only lures on
       // ${FLUORO_RODS.join('/')} and snap-friendly ones on ${SNAP_RODS.join('/')} where you can.${o.isRiver ? `
       // EVERY ROD IS "troll" ON THIS DAY. There are no stops on a river (rule 4), so a rod set to
@@ -3303,6 +3305,50 @@ export function spoonRig(rod) {
   return { weightOz, said };
 }
 
+/**
+ * HIS SPREADERS, AS THE MODEL IS TOLD OF THEM. Ryan, 2026-11-22, with the maker's page for the G. Pucci T-Bead Spreader:
+ * "with whatever weight tied on using lightweight line... then the lure is tied to the longer arm using 25lb fluro 5-6 ft
+ * long with whatever lure we want behind it"; behind it, "spoons, bucktails, paddle tails... haven't tried cranks yet".
+ * Empty when he has none, so the prompt is what it was.
+ */
+export function spreaderBlock() {
+  if (!(SPREADERS_OWNED > 0)) return '';
+  const w = (TROLLING_WEIGHTS_OWNED_OZ || []).map((x) => ozLabel(x)).join(', ') || '1, 2 and 3 oz';
+  return `
+**HIS SPREADERS.** He has ${SPREADERS_OWNED} (${promptSafeTackleName(SPREADER_NAME)}). His main line goes to the top swivel; a weight
+(${w}, the app picks it) hangs off the short arm on light line, so a snag costs the weight and not the rig; the bait
+trails 5-6 ft of 25 lb fluoro off the long arm. A spoon, a bucktail or a paddle-tail swimbait can go behind one, not a
+crankbait or an A-rig ("haven't tried cranks yet"). It takes that bait deeper on the same line and speed, so it is one
+more way to reach fish at 25 ft and deeper besides slowing down. To run one, add \`"spreader": true\` to that troll
+rod, say in \`runsDepthFt\` where you want the bait, and leave the weight and the lead to the app. At most
+${SPREADERS_OWNED} rods.
+`;
+}
+
+/**
+ * HOW A BAIT ON A SPREADER IS RIGGED, named so he can rig it: the weight on the short arm and the leader to the bait.
+ * The weight is the lightest of his that puts the bait at the depth the plan wants inside his 120 ft of line at 2 mph,
+ * and the 2 oz, the middle of his three, when the plan named no depth. Its depth is worked out as for a bait behind his
+ * inline weight (the weight and the bait sink together): my starting point, not a measurement. {weightOz, said}.
+ */
+export function spreaderRig(rod) {
+  const lure = TACKLE_INVENTORY.find((l) => l.name === rod.lure) || null;
+  const owned = [...(TROLLING_WEIGHTS_OWNED_OZ || [])].sort((a, b) => a - b);
+  const runs = Array.isArray(rod.runsDepthFt) && rod.runsDepthFt.length === 2 && rod.runsDepthFt.every((v) => isNum(v))
+    ? (Number(rod.runsDepthFt[0]) + Number(rod.runsDepthFt[1])) / 2 : null;
+  const maxLead = FISHING_STYLE.rigging?.maxLeadFt ?? 120;
+  let weightOz = owned.includes(2) ? 2 : (owned[Math.floor(owned.length / 2)] ?? null);
+  if (lure && runs != null && owned.length) {
+    const w = owned.find((x) => { const lead = leadForDepth({ ...lure, inlineWeightOz: x }, runs, TROLL_MPH); return lead > 0 && lead <= maxLead; });
+    weightOz = w != null ? w : owned[owned.length - 1];
+  }
+  const what = !lure ? 'the bait' : lure.type === 'bucktail' ? 'the bucktail'
+    : (lure.type === 'flutter_spoon' || lure.type === 'spoon_casting') ? 'the spoon' : 'the swimbait';
+  const said = `on a spreader: the ${weightOz != null ? ozLabel(weightOz) : ''} weight on the short arm on light line, `
+    + `5-6 ft of 25 lb fluoro from the long arm to ${what}`;
+  return { weightOz, said: said.replace('the  weight', 'a weight') };
+}
+
 export function seatRods(rods, connOf, firstOf = null, weightOf = null) {
   const problems = [];
   // Only rods the plan actually rigs get seated. The rest keep whatever is already on them and
@@ -3416,6 +3462,7 @@ export function planArgsFrom(res, candidates, ctx = {}) {
   }
   // A plan that rigs two rods is a complete plan. Rods it does not name keep whatever is on them
   // and are added back by seatRods() as staged — their absence is not a problem to report.
+  let spreadersUsed = 0;
   const claimed = ROD_IDS.filter((id) => given.has(id)).map((id) => {
     const r = given.get(id);
     const asked = str(r.lure);
@@ -3486,10 +3533,23 @@ export function planArgsFrom(res, candidates, ctx = {}) {
                    middle: side('middle', t && t.middle, heads.middle, 1) };
       if (!trailers.outside && !trailers.middle) trailers = null;
     }
+    // A SPREADER (11/22): only on a troll rod, only behind a spoon, a bucktail or a paddle tail, and no more of them than
+    // he has. One asked for anywhere else is said and left off; the bait still fishes, on its own.
+    let spreader = false;
+    if (r.spreader === true) {
+      const bait = TACKLE_INVENTORY.find((l) => l.name === lure) || null;
+      if (r.role === 'cast') problems.push(`${id}: a spreader is for trolling, and ${id} is a cast rod — no spreader`);
+      else if (!bait || !spreaderCarries(bait)) {
+        problems.push(`${id}: a ${lure || 'bait'} does not go behind a spreader (a spoon, a bucktail or a paddle tail does) — no spreader`);
+      } else if (spreadersUsed >= SPREADERS_OWNED) {
+        problems.push(`${id}: he has ${SPREADERS_OWNED} spreader${SPREADERS_OWNED === 1 ? '' : 's'}, and ${SPREADERS_OWNED === 1 ? 'it is' : 'both are'} on other rods — no spreader`);
+      } else { spreader = true; spreadersUsed += 1; }
+    }
     return {
       id, role: r.role === 'cast' ? 'cast' : 'troll',
       lure, color: inBox ? inBox.name : '', why: str(r.why),
       ...(bag ? { bag } : {}), ...(backup ? { backup } : {}), ...(trailers ? { trailers } : {}),
+      ...(spreader ? { spreader: true } : {}),
       leadFt: num(r.leadFt),
       runsDepthFt: Array.isArray(r.runsDepthFt) && r.runsDepthFt.length === 2
         ? r.runsDepthFt.map(Number) : null,
@@ -3501,7 +3561,11 @@ export function planArgsFrom(res, candidates, ctx = {}) {
   // at says that the spoon is supposed to be tied to a weight and if so what weight... if it is required to be on a
   // weight something needs to tell me what size weight and spoon... the app tackle box has my trolling weights listed".
   seat.rods = seat.rods.map((r) => {
-    if (r.staged || !needsInlineWeightByName(r.lure)) return r;
+    if (r.staged) return r;
+    // A bait on a spreader is rigged on the spreader, a flutter spoon included: the spreader's weight is the one it fishes
+    // behind (spreaderRig()).
+    if (r.spreader) { const rig = spreaderRig(r); return { ...r, inlineWeightOz: rig.weightOz, rigSaid: rig.said }; }
+    if (!needsInlineWeightByName(r.lure)) return r;
     const rig = spoonRig(r);
     return { ...r, inlineWeightOz: rig.weightOz, rigSaid: rig.said };
   });

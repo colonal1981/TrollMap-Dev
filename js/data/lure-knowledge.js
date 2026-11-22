@@ -1136,6 +1136,7 @@ export const TERMINAL_CONNECTION = {
   // five baits that all need a knot. It is written down here, where the rule lives, so it gets
   // decided rather than assumed.
   trolling_weight: 'snap',
+  spreader: 'snap',            // his main line goes to its top swivel; hardware, like the weight
   flutter_spoon: 'snap',
   spoon_casting: 'snap',
   blade_vibe: 'snap',
@@ -1253,7 +1254,7 @@ export function trollableBaits(inventory, o = {}) {
     // Hardware that carries a bait is not a bait. Ryan on why jigheads take a snap: "those go with
     // swimbaits so swivel snap". Skipped, not refused -- a refusal is for a bait that could have
     // been considered.
-    if (bought.type === 'jighead' || bought.type === 'trolling_weight') continue;
+    if (bought.type === 'jighead' || bought.type === 'trolling_weight' || bought.type === 'spreader') continue;
     const say = (why) => refused.push({ name: bought.name, type: bought.type, why });
 
     // THE REASON IS THE RULE, NOT A GUESS ABOUT BUOYANCY. This said "it planes at trolling speed
@@ -1590,7 +1591,7 @@ export function actionSourceFor(lureId) {
  */
 export function trollsBehindTheBoat(lure) {
   if (!lure) return false;
-  if (lure.type === 'jighead' || lure.type === 'trolling_weight') return !!lure.trollable;
+  if (lure.type === 'jighead' || lure.type === 'trolling_weight' || lure.type === 'spreader') return !!lure.trollable;
   const ruled = actionSourceFor(lure.id);
   if (ruled) return ruled === 'the pull';
   // No ruling for this id: fall back to what the type says about itself. A type whose depth mode is
@@ -1606,7 +1607,7 @@ export function trollsBehindTheBoat(lure) {
 export function unruledActionTypes(inventory) {
   const out = [];
   for (const l of (inventory || [])) {
-    if (!l || !l.id || l.type === 'jighead' || l.type === 'trolling_weight') continue;
+    if (!l || !l.id || l.type === 'jighead' || l.type === 'trolling_weight' || l.type === 'spreader') continue;
     if (actionSourceFor(l.id)) continue;
     if (LURE_KNOWLEDGE[l.type]?.depthMode === 'none') out.push(l.id);
   }

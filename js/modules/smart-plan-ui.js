@@ -174,7 +174,7 @@ function rodSlotHtml(rod, cardIdx, slotIdx) {
   // 3/4oz, with the 2oz that makes that true nowhere on the page.
   const rigParts = [
     rod.arigWeight   ? `Frame: ${rod.arigWeight}`    : '',
-    rod.inlineWeight ? `Weight: ${rod.inlineWeight} inline` : '',
+    rod.inlineWeight ? (rod.spreader ? `Spreader: ${rod.inlineWeight} weight` : `Weight: ${rod.inlineWeight} inline`) : '',
     rod.jigWeight    ? `Head: ${rod.jigWeight}`      : '',
     rod.trailerSize  ? `Trailer: ${rod.trailerSize}` : '',
   ].filter(Boolean).join(' · ');

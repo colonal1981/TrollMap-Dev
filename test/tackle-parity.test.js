@@ -34,7 +34,7 @@ const types = [...new Set(baits.map(l => l.type))];
 describe('hardware is in the box but is not a bait', () => {
   it('every entry is either fishable or hardware, never neither by accident', () => {
     const hardware = TACKLE_INVENTORY.filter(l => !isBait(l));
-    expect(hardware.map(l => l.type).sort()).toEqual(['trolling_weight', 'trolling_weight',
+    expect(hardware.map(l => l.type).sort()).toEqual(['spreader', 'trolling_weight', 'trolling_weight',
                                                       'trolling_weight']);
   });
 });

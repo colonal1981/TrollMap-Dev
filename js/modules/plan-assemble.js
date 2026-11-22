@@ -154,6 +154,13 @@ function fitJighead(lure, rod, speedMph, ceilingFt, id, runId, warnings) {
  * job. When the heavier weight IS what the depth needs, it is asked for out loud, once.
  */
 function fitInlineWeight(lure, rod, speedMph, ceilingFt, id, runId, warnings) {
+  // A BAIT ON A SPREADER fishes behind the spreader's weight, which the plan named when it read the rods (spreaderRig()
+  // in plan-prompt.js): the weight and the bait sink together, as behind his inline weight (Ryan, 11/22).
+  if (rod && rod.spreader) {
+    if (Number(rod.inlineWeightOz) > 0) return Number(rod.inlineWeightOz);
+    const owned = [...TROLLING_WEIGHTS_OWNED_OZ].sort((a, b) => a - b);
+    return owned.includes(2) ? 2 : (owned[0] ?? null);
+  }
   if (!requiresInlineWeight(lure?.type)) return null;
   if (Number(lure.inlineWeightOz) > 0) return Number(lure.inlineWeightOz);
 
@@ -356,7 +363,7 @@ function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warn
     const fit = fitJighead(rigged, rod, speedMph, ceilingFt, id, runId, warnings);
     const lure = fit ? { ...rigged, weightOz: fit.weightOz } : rigged;
     let leadFt = fit ? fit.leadFt : rod.leadFt;
-    if (inlineOz) forThisLeg[id] = { ...(forThisLeg[id] || {}), inlineWeightOz: inlineOz };
+    if (inlineOz) forThisLeg[id] = { ...(forThisLeg[id] || {}), inlineWeightOz: inlineOz, ...(rod.spreader ? { spreader: true } : {}) };
 
     // ── A BAIT BEHIND A TROLLING WEIGHT IS LEADED TO THE DEPTH ASKED FOR, NOT THE LEAD ASKED FOR ──
     //
@@ -392,8 +399,9 @@ function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warn
         if (!(saidFits && saidFits.has(key))) {
           if (saidFits) saidFits.add(key);
           decisions.push(`${id} on ${runId}${saidFits ? ' and every leg after it at this speed' : ''}: `
-                      + `a ${rod.lure} behind the ${ozLabel(inlineOz)} inline `
-                      + `weight goes on ${want} ft of lead for the ${asked[0]}-${asked[1]} ft the `
+                      + `a ${rod.lure} ${rod.spreader ? `on the spreader with the ${ozLabel(inlineOz)} weight`
+                                                     : `behind the ${ozLabel(inlineOz)} inline weight`} `
+                      + `goes on ${want} ft of lead for the ${asked[0]}-${asked[1]} ft the `
                       + `plan asked for, and runs ${at.min}-${at.max} ft on it`
                       + (was ? `. The ${was} ft of lead the plan named runs that rig to `
                                + `${depthWindow(rigged, { speedMph, leadFt: was }).max} ft` : '')
@@ -973,6 +981,7 @@ export function depthLadder(rods, deploy, rodPlan, legMph, lureByName, ceilingFt
         : (k.jigheadOzByLengthIn && lure.weightOz == null ? castHeadOz(lure.name) : null);
       if (head != null) rigged = { ...rigged, weightOz: head };
       const inline = planned && planned.inlineWeightOz != null ? planned.inlineWeightOz
+        : rod.spreader && Number(rod.inlineWeightOz) > 0 ? Number(rod.inlineWeightOz)     // the spreader's weight
         : (requiresInlineWeight(lure.type) && !(Number(lure.inlineWeightOz) > 0) ? RIGGED_TROLLING_WEIGHT_OZ : null);
       if (inline != null) rigged = { ...rigged, inlineWeightOz: inline };
     }

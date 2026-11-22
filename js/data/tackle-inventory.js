@@ -198,6 +198,14 @@ const AS_BOUGHT = [
   { id:'troll_weight_3oz', name:'3oz Inline Trolling Weight',
     type:'trolling_weight', trollable:false, castable:false, weightOz:3.0, rigged:false },
 
+  // HIS SPREADERS, hardware like the weights. Ryan, 2026-11-22, with the maker's page: G. Pucci T-Bead Spreader, 3" x 5",
+  // chartreuse, two of them, and how he runs them: "with whatever weight tied on using lightweight line... then the lure is
+  // tied to the longer arm using 25lb fluro 5-6 ft long with whatever lure we want behind it". The weights: "i have bank,
+  // bell, pyramid sinkers along with the trolling weights... assume 1,2,3 oz"; behind it, "spoons, bucktails, paddle
+  // tails... haven't tried cranks yet" (spreaderCarries()). How many he has is the colour count, as for every bait.
+  { id:'spreader_tbead', name:'G. Pucci T-Bead Spreader 3"x5"',
+    type:'spreader', trollable:false, castable:false, weightOz:null },
+
   // ── Vertical / Knife Jigs ────────────────────────────────────
   // None. The two P-Line Haruki jigs that stood here were never his (2026-11-22, above). The type stays in
   // lure-knowledge.js for the day one is bought.
@@ -817,6 +825,20 @@ export const TROLLING_WEIGHTS_OWNED_OZ = TACKLE_INVENTORY
   .filter((l) => l.type === 'trolling_weight' && l.weightOz > 0)
   .map((l) => l.weightOz)
   .sort((a, b) => a - b);
+
+/**
+ * HIS SPREADERS: how many, and what goes behind one. The weight on a spreader comes from TROLLING_WEIGHTS_OWNED_OZ (his
+ * 1, 2 and 3 oz: "assume 1,2,3 oz but i probably have others"); the plan picks it, as it does a spoon's.
+ */
+export const SPREADERS_OWNED = TACKLE_INVENTORY.filter((l) => l.type === 'spreader')
+  .reduce((n, l) => n + (Array.isArray(l.colors) && l.colors.length
+    ? l.colors.reduce((a, c) => a + (Number(c.n) > 0 ? Number(c.n) : 1), 0) : 1), 0);
+export const SPREADER_NAME = (TACKLE_INVENTORY.find((l) => l.type === 'spreader') || { name: 'spreader' }).name;
+/** Whether this bait goes behind a spreader: a spoon, a bucktail or a paddle tail he trolls ("haven't tried cranks yet"). */
+export function spreaderCarries(lure) {
+  if (!lure || !lure.trollable) return false;
+  return ['flutter_spoon', 'spoon_casting', 'bucktail'].includes(lure.type) || isTrailerId(lure.id);
+}
 
 /** The spoon tied behind the rigged weight now, or null. Null since 2026-11-22: he rigs whichever the plan names. */
 export const RIGGED_SPOON = TACKLE_INVENTORY.find((l) => l.type === 'flutter_spoon' && l.riggedOn) || null;

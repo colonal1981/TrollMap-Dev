@@ -351,6 +351,7 @@ export function collectPlan(){
               // The inline weight ahead of a spoon is what sets its depth. plan-to-timeline.js puts
               // it on the row and this capture dropped it, so the rigging list could not say it.
               inlineWeight: r.inlineWeight,
+              ...(r.spreader ? { spreader: true } : {}),
               // How this bait sits against the bottom he will feel. Carried rather than
               // recomputed: the report and the on-screen card must not be able to disagree.
               clearance: r.clearance,
