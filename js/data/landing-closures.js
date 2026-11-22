@@ -30,6 +30,8 @@ export const LANDING_CLOSURES = Object.freeze([
   Object.freeze({
     water: 'wateree_lake', name: 'Lakeside Marina', at: [-80.6993, 34.3641],
     why: 'out of business and for sale', source: 'Ryan', read: '2026-11-22',
+    // and the listing he pasted the same night: "formerly operating as a Lakeside Marina Bait & Tackle Shop", MLS 636646
+    url: 'https://www.carolinaone.com/p/2163-John-G-Richards-Road-Camden-SC-29020/dmgid_187573307',
   }),
 ]);
 

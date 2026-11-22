@@ -53,7 +53,7 @@ import { rampWater, poolsFor, sameWaterLandings, cutOffPool, poolOnlyState, cutO
 import { closerLanding, closerLandingNote } from './closer-landing.js';
 import { askLaunchStatus, launchStatusNote } from './launch-status.js';
 import { askGuideReports, savedGuide } from './guide-reports.js';
-import { askThisWeek, turnsFromReports, rampsByReports, areasFromReports } from './reports-this-week.js';
+import { askThisWeek, turnsFromReports, rampsByReports, areasFromReports, endsFromReports, withEnds } from './reports-this-week.js';
 import { layAreas, optionLoop, optionLines, runCrankbaits, RUN_MPH, AREA_R_M, hm, landingSaid,
          areasFromCatches, withYourFish, areaCountSaid, startOption } from './plan-areas.js';
 import { shoreRays, roughLegs } from '../utils/wind-waves.js';
@@ -1768,6 +1768,12 @@ async function reportTurns() {
   const runReachM = Math.max(0, (budgetMin - 60) / 2) * (RUN_MPH * 1609.344 / 60);
   T.runReachM = runReachM;
   T.reportAreas = areasFromReports(tw, T.species, { ramp: T.ramp, reachM: runReachM });
+  // AND THE ENDS OF THE LAKE THEY NAME, where he has named the ends (water-ends.js; Ryan, 11/22: "i bet there are
+  // reports that say at the lower end or by the dam"): each is an area with the places, most-named first.
+  try {
+    const ends = endsFromReports(tw, T.species, T.r2Key, { ramp: T.ramp, reachM: runReachM });
+    if (ends.length) T.reportAreas = { ...T.reportAreas, turns: withEnds(T.reportAreas.turns, ends) };
+  } catch (e) { console.warn('[pick-water] the ends the reports name:', e && e.message); }
   if (!r.turns.length) {
     T.reportSaid = r.mentioned
       ? `the reports talk about ${T.species || 'this fish'} around this date, but none of them names a place for it that a day from ${T.rampName || 'this ramp'} can reach`
@@ -1777,7 +1783,7 @@ async function reportTurns() {
   T.rampAdvice = null;
   try {
     const landings = sameWaterLandings(await poolsFor(T.r2Key), T.ramp, await landingsFor(T.r2Key));
-    T.rampAdvice = rampsByReports(tw, T.species, landings, { reachM, budgetM, current: T.ramp });
+    T.rampAdvice = rampsByReports(tw, T.species, landings, { reachM, budgetM, current: T.ramp, slug: T.r2Key });
   } catch (e) { console.warn('[pick-water] ramps by the reports:', e && e.message); }
   return r;
 }

@@ -25,6 +25,7 @@
  */
 
 import { workerAuthOnly } from '../utils/worker-auth.js';
+import { endsOf, endAt, endFrom } from '../data/water-ends.js';
 
 export const WINDOW_DAYS = 21;
 export const SINCE_YEAR = 2008;
@@ -340,13 +341,78 @@ export function areasFromReports(tw, species, { ramp = null, reachM = Infinity, 
 }
 
 /**
+ * THE ENDS OF THE LAKE THE REPORTS NAME (water-ends.js; Ryan, 2026-11-22: "figuring out what we call the lower end and
+ * which ramps fall into it... i bet there are reports that say at the lower end or by the dam"). On Wateree for the weeks
+ * round 11/23 they named two places once each and said "lower end" in five different reports. Each end a report puts his
+ * fish in (the reader's `area`: 'lower lake', 'mid lake', 'upper lake') is counted: a report once however many weeks it
+ * was printed again word for word, and a report that also names a place is counted for the place, not the end. His fish,
+ * or any fish where the reports say nothing of his (as turnsFromReports()). [{key, name, n, years}], most first. Pure.
+ */
+export function endCounts(tw, species, slug) {
+  const ends = endsOf(slug);
+  const st = (tw && tw.statements) || [];
+  if (!ends.length || !st.length) return [];
+  const want = reportFish(species);
+  const mentioned = want.size > 0 && st.some((s) => (s.sp || []).some((f) => want.has(f)));
+  const ofFish = (s) => !mentioned || (s.sp || []).some((f) => want.has(f));
+  const named = (s) => (s.pl || []).some((p) => Number.isFinite(p.lat) && Number.isFinite(p.lon));
+  return ends.map((e) => {
+    const seen = new Set(), years = new Set();
+    for (const s of st) {
+      if (!ofFish(s) || !(s.ar || []).includes(e.key) || named(s)) continue;
+      const k = String(s.t || '').trim().toLowerCase();
+      if (seen.has(k)) continue;
+      seen.add(k);
+      years.add(String(s.d).slice(0, 4));
+    }
+    const ys = [...years].sort();
+    return { key: e.key, name: e.name, n: seen.size, years: ys.length ? (ys.length > 1 ? `${ys[0]}-${ys[ys.length - 1]}` : ys[0]) : '',
+             anyFish: !mentioned && want.size > 0 };
+  }).filter((x) => x.n > 0).sort((a, b) => b.n - a.n);
+}
+
+/**
+ * The ends as areas for the day from this ramp: by the ramp when it is in that end, otherwise at the end's landing
+ * nearest it; only those within `reachM` of the ramp as the crow flies. Shaped as turnsFromReports() turns. Pure.
+ */
+export function endsFromReports(tw, species, slug, { ramp = null, reachM = Infinity } = {}) {
+  if (!Array.isArray(ramp)) return [];
+  return endCounts(tw, species, slug).map((c) => {
+    const end = endsOf(slug).find((e) => e.key === c.key);
+    const where = endFrom(slug, end, ramp);
+    if (!where || crowM(ramp, where.at) > reachM) return null;
+    return { at: where.at, name: c.name, n: c.n, total: c.n, years: c.years, end: c.key, byRamp: where.byRamp,
+             why: `${c.name}: ${c.n} report${c.n === 1 ? '' : 's'} within ${tw.days} days of this date say the `
+               + `${c.name.toLowerCase()}${c.years ? ` (${c.years})` : ''}${c.anyFish ? ', for any fish' : ''}`
+               + `${where.byRamp ? '; your ramp is in it' : `; fished from ${where.landing}'s side of it`}` };
+  }).filter(Boolean);
+}
+
+/**
+ * The places and the ends as one list of areas, most-named first: an end whose spot is within `apartM` of a named place
+ * adds its reports to that place (Colonel Creek from Colonel Creek's own ramp is one area, not two). At most `max`. Pure.
+ */
+export function withEnds(places, ends, { apartM = 1500, max = 5 } = {}) {
+  const out = (places || []).map((p) => ({ ...p }));
+  for (const e of ends || []) {
+    const on = out.find((p) => Array.isArray(p.at) && crowM(p.at, e.at) <= apartM);
+    if (on) { on.n = (on.n || 0) + e.n; on.inEnd = e.name; on.why = `${on.why || on.name}; and ${e.why}`; }
+    else out.push({ ...e });
+  }
+  return out.sort((a, b) => (b.n || 0) - (a.n || 0)).slice(0, max);
+}
+
+/**
  * WHICH RAMP, BY THE REPORTS (item 78, "the ramp is chosen with it"; Ryan, 11/6: "how does this help me figure out which
  * ramp i should actually launch from"). Every landing on the water his ramp launches onto, scored by the reports that
  * name places for his fish this time of year within a day's reach of it (turnsFromReports from each). Best first. The
  * ramp he picked is marked; `better` is the best one when it has clearly more than his (at least two reports more, and
  * a half again as many), else null. A heads-up with its reason, never a block. Pure.
  */
-export function rampsByReports(tw, species, landings, { reachM = Infinity, budgetM = null, current = null, nearM = 150 } = {}) {
+export function rampsByReports(tw, species, landings, { reachM = Infinity, budgetM = null, current = null, nearM = 150, slug = null } = {}) {
+  // AND THE END EACH LANDING IS IN (water-ends.js): a report that says "the lower end" counts for every landing in it.
+  const endN = new Map(endCounts(tw, species, slug).map((c) => [c.key, c]));
+  const endScore = (at) => { const e = slug ? endAt(slug, at) : null; const c = e && endN.get(e.key); return c ? { n: c.n, name: c.name } : null; };
   const seen = [];
   const rows = (landings || []).filter((l) => l && Number.isFinite(Number(l.lon)) && Number.isFinite(Number(l.lat)))
     // one row a landing: a list can carry the same ramp more than once
@@ -354,15 +420,18 @@ export function rampsByReports(tw, species, landings, { reachM = Infinity, budge
     .map((l) => {
       const at = [Number(l.lon), Number(l.lat)];
       const r = turnsFromReports(tw, species, { ramp: at, reachM, budgetM });
-      return { name: l.name || l.label || 'a landing', at, score: r.turns.reduce((a, t) => a + t.n, 0),
-               spots: r.turns.map((t) => ({ name: t.name, n: t.n })), anyFish: r.anyFish,
+      const e = endScore(at);
+      return { name: l.name || l.label || 'a landing', at, score: r.turns.reduce((a, t) => a + t.n, 0) + (e ? e.n : 0),
+               spots: [...r.turns.map((t) => ({ name: t.name, n: t.n })), ...(e ? [{ name: e.name, n: e.n }] : [])], anyFish: r.anyFish,
                isCurrent: !!(current && crowM(current, at) <= nearM) };
     })
     .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
   let mine = rows.find((r) => r.isCurrent) || null;
   if (!mine && current) {
     const r = turnsFromReports(tw, species, { ramp: current, reachM, budgetM });
-    mine = { name: 'your ramp', at: current, score: r.turns.reduce((a, t) => a + t.n, 0), spots: r.turns.map((t) => ({ name: t.name, n: t.n })), isCurrent: true };
+    const e = endScore(current);
+    mine = { name: 'your ramp', at: current, score: r.turns.reduce((a, t) => a + t.n, 0) + (e ? e.n : 0),
+             spots: [...r.turns.map((t) => ({ name: t.name, n: t.n })), ...(e ? [{ name: e.name, n: e.n }] : [])], isCurrent: true };
   }
   const top = rows.find((r) => !r.isCurrent);
   const better = top && mine && top.score >= mine.score + 2 && top.score >= mine.score * 1.5 ? top : null;
