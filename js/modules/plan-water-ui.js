@@ -1078,6 +1078,9 @@ export async function findWater() {
   const levelState = cut ? poolOnlyState(lakeState) : lakeState;
   const offsetFt = poolOffsetFt(levelState);
   T.offsetFt = offsetFt || 0;
+  // THE OPERATOR'S ACCESS NOTICES, kept for every landing check below (landing-closures.js; Ryan, 11/22: "The app should
+  // be pulling these from duke?"). Empty where the operator publishes none or the read failed.
+  T.accessAlerts = lakeState && Array.isArray(lakeState.accessAlerts) ? lakeState.accessAlerts : [];
 
   say('Measuring the water…');
   // Let the status line paint before the work starts, and keep answering while it runs -- see
@@ -1445,7 +1448,7 @@ export async function trollForMe(opts = {}) {
     try {
       landings = sameWaterLandings(await poolsFor(T.r2Key), T.ramp, await landingsFor(T.r2Key))
         .filter((l) => Number.isFinite(Number(l.lon)) && Number.isFinite(Number(l.lat)))
-        .map((l) => ({ name: l.name, at: [Number(l.lon), Number(l.lat)], closed: closureFor(T.r2Key, l) }));
+        .map((l) => ({ name: l.name, at: [Number(l.lon), Number(l.lat)], closed: closedNow(l) }));
     } catch (e) { console.warn('[pick-water] landings for the areas:', e && e.message); }
     // AND WHERE HIS OWN FISH CAME FROM IN THESE WEEKS, as one more area, listed after the reports' (plan-areas.js,
     // areasFromCatches(); Ryan, 11/22: "how bout if there are catches in an area by me within 3 weeks?", and of the
@@ -1716,6 +1719,11 @@ export function layAreaOption(i) {
 const miles = (m) => `${((Number(m) || 0) / 1609.344).toFixed(1)} mi`;
 
 
+/** Whether a landing is shut on the plan's day: the operator's notices first, then what no feed carries. */
+function closedNow(l) {
+  return closureFor(T.r2Key, l, { alerts: T.accessAlerts || [], date: T.dateStr || null });
+}
+
 /** The area day in words: the areas, then the option chosen, step by step. For the status line and the prompt. */
 export function areaDaySaid(day, i, { rampName = '', species = '' } = {}) {
   const op = day.options[i];
@@ -1782,7 +1790,8 @@ async function reportTurns() {
   // AND WHICH RAMP: the landings on the same water, by the same reports (rampsByReports). Never throws the day away.
   T.rampAdvice = null;
   try {
-    const landings = sameWaterLandings(await poolsFor(T.r2Key), T.ramp, await landingsFor(T.r2Key));
+    // A shut landing is never the one to launch from instead.
+    const landings = sameWaterLandings(await poolsFor(T.r2Key), T.ramp, await landingsFor(T.r2Key)).filter((l) => !closedNow(l));
     T.rampAdvice = rampsByReports(tw, T.species, landings, { reachM, budgetM, current: T.ramp, slug: T.r2Key });
   } catch (e) { console.warn('[pick-water] ramps by the reports:', e && e.message); }
   return r;
@@ -2172,7 +2181,7 @@ export async function buildFromPicked() {
   const closer = await closerLanding({
     plan: r.plan, launch: T.ramp,
     // Only the landings on the pool his ramp launches onto -- see sameWaterLandings().
-    landings: sameWaterLandings(await poolsFor(T.r2Key), T.ramp, await landingsFor(T.r2Key)),
+    landings: sameWaterLandings(await poolsFor(T.r2Key), T.ramp, await landingsFor(T.r2Key)).filter((l) => !closedNow(l)),
     route: waterRouter(CF_WORKER_URL, T.r2Key, { minDepthFt: TRANSIT_MIN_DEPTH_FT }),
   }).catch((e) => { console.warn('[pick-water] closer landing check failed:', e && e.message); return null; });
   const closerNote = closerLandingNote(closer, T.rampName);

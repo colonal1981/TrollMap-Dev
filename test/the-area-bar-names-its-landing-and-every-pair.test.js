@@ -9,9 +9,10 @@
 // his three points (11/8); his go, 11/9: "work on them all".
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { layAreas, runCrankbaits, MAX_PAIR_OPTIONS, landingSaid } from '../js/modules/plan-areas.js';
 import { TACKLE_INVENTORY } from '../js/data/tackle-inventory.js';
-import { closureFor, LANDING_CLOSURES } from '../js/data/landing-closures.js';
+import { closureFor, dukeClosureFor, landingKey, LANDING_CLOSURES } from '../js/data/landing-closures.js';
 import { namedOnlyForBaitOrLaunch, trim } from '../js/modules/reports-this-week.js';
 
 const CRANKS = runCrankbaits(TACKLE_INVENTORY);
@@ -49,15 +50,58 @@ test('a closed landing is said with who closed it and when that was read, and th
   assert.match(landingSaid(l), /closed: closed for a treatment in the cove \(the agency page, read 2026-11-08\); nearest open Mid Landing/);
 });
 
-test('Taylors Creek Access Area on Wateree is known closed, with its source and the day it was read', () => {
-  const c = closureFor('wateree_lake', { lat: 34.43773, lon: -80.875784 });
-  assert.ok(c && /giant salvinia/.test(c.why) && c.read === '2026-11-08' && /des\.sc\.gov/.test(c.url));
-  assert.equal(closureFor('wateree_lake', { lat: 34.368854, lon: -80.797237 }), null);   // Colonel Creek is open
-  assert.equal(closureFor('lake_marion', { lat: 34.43773, lon: -80.875784 }), null);     // another water
+// FROM DUKE, NOT A LIST (Ryan, 11/22: "The app should be pulling these from duke?", and "area box check should be as
+// automated as possible... you know i despise hand written lists"). His screenshot of Duke's Lake Views alerts, as the
+// Worker hands them over (`accessAlerts`).
+const DUKE = [
+  { place: 'Taylors Creek Access Area', water: 'Lake Wateree', kind: 'POI', last_updated: '2026-09-18T12:00:00',
+    text: 'Taylors Creek Access Area: Sep 18, 2026 - The Taylors Creek Access Area is temporarily closing to help prevent the '
+        + 'spread of giant salvinia, an invasive aquatic plant. The closure is expected to remain in place for up to 12 months.' },
+  { place: 'Buck Hill Access Area', water: 'Lake Wateree', kind: 'POI', last_updated: '2026-02-11',
+    text: 'Buck Hill Access Area: Feb 11, 2026 - Buck Hill Access Area will close on March 2, 2026 for approximately one year '
+        + 'due to construction work at the Wateree hydro facility. Please use alternate sites, such as Colonels Creek or White '
+        + 'Oak Creek for boat access during this time.' },
+];
+
+test('a landing Duke says is shut is closed on the area bar, from Duke\'s own notice', () => {
+  const taylor = closureFor('wateree_lake', { name: 'Taylor Creek', lat: 34.43773, lon: -80.875784 }, { alerts: DUKE, date: '2026-11-23' });
+  assert.equal(taylor.source, 'Duke Energy');
+  assert.equal(taylor.read, '2026-09-18');
+  assert.match(taylor.why, /^The Taylors Creek Access Area is temporarily closing to help prevent the spread of giant salvinia/);
+  const buck = closureFor('wateree_lake', { name: 'Buckhill Landing', lat: 34.335864, lon: -80.707209 }, { alerts: DUKE, date: '2026-11-23' });
+  assert.match(buck.why, /will close on March 2, 2026 for approximately one year/);
+  // not shut before the day it closes, and not shut where Duke says nothing
+  assert.equal(closureFor('wateree_lake', { name: 'Buckhill Landing', lat: 34.335864, lon: -80.707209 }, { alerts: DUKE, date: '2026-02-20' }), null);
+  assert.equal(closureFor('wateree_lake', { name: 'Colonel Creek', lat: 34.368854, lon: -80.797237 }, { alerts: DUKE, date: '2026-11-23' }), null);
+  // a reopening said in the notice is open
+  assert.equal(dukeClosureFor([{ place: 'Taylors Creek Access Area', text: 'The Taylors Creek Access Area has reopened after the closure.' }],
+                              { name: 'Taylor Creek' }), null);
+  // other notices in the same feed, 11/22: a closure that starts later, and a ramp that stays open through construction
+  assert.equal(dukeClosureFor([{ place: 'Conley Creek Access Area (Veteran\'s Park)', text: 'Conley Creek Access Area will be '
+    + 'closed beginning November 30, 2026, for parking lot repaving and related improvements.' }], { name: 'Conley Creek' }, '2026-11-23'), null);
+  assert.ok(dukeClosureFor([{ place: 'Conley Creek Access Area (Veteran\'s Park)', text: 'Conley Creek Access Area will be '
+    + 'closed beginning November 30, 2026, for parking lot repaving and related improvements.' }], { name: 'Conley Creek' }, '2026-12-05'));
+  assert.equal(dukeClosureFor([{ place: 'Riverbend Access Area', text: 'Construction continues at the Riverbend Access Area. The boat '
+    + 'ramp will remain open, though brief closures may occur during parking lot upgrades.' }], { name: 'Riverbend Access Area' }, '2026-11-23'), null);
+  // the two spellings are one landing
+  assert.equal(landingKey('Taylors Creek Access Area'), landingKey('Taylor Creek'));
+  assert.equal(landingKey('Buck Hill Access Area'), landingKey('Buckhill Landing'));
+  assert.notEqual(landingKey('June Creek'), landingKey('Colonel Creek'));
+  // without Duke's notices, nothing is invented: the list holds only what no feed carries
+  assert.equal(closureFor('wateree_lake', { name: 'Taylor Creek', lat: 34.43773, lon: -80.875784 }), null);
+  assert.deepEqual(LANDING_CLOSURES.map((x) => x.name), ['Lakeside Marina']);
   assert.ok(LANDING_CLOSURES.every((x) => x.source && x.read && (x.url || x.source === 'Ryan')));
-  // his word, 11/22: Buckhill is closed and Lakeside out of business; Lugoff is the river below the dam, not a closure
-  assert.equal(closureFor('wateree_lake', { lat: 34.335864, lon: -80.707209 }).why, 'not open to launch');
-  assert.equal(closureFor('wateree_lake', { lat: 34.3641, lon: -80.6993 }).why, 'out of business and for sale');
+  assert.equal(closureFor('wateree_lake', { name: 'Lakeside Marina', lat: 34.3641, lon: -80.6993 }).why, 'out of business and for sale');
+  assert.equal(closureFor('lake_marion', { name: 'Lakeside Marina', lat: 34.3641, lon: -80.6993 }), null);   // another water
+});
+
+test('every landing check in the planner reads Duke\'s notices, and a shut landing is never the one to launch from instead', () => {
+  const ui = readFileSync(new URL('../js/modules/plan-water-ui.js', import.meta.url), 'utf8');
+  assert.match(ui, /T\.accessAlerts = lakeState && Array\.isArray\(lakeState\.accessAlerts\) \? lakeState\.accessAlerts : \[\];/);
+  assert.match(ui, /closureFor\(T\.r2Key, l, \{ alerts: T\.accessAlerts \|\| \[\], date: T\.dateStr \|\| null \}\)/);
+  assert.equal((ui.match(/\.filter\(\(l\) => !closedNow\(l\)\)/g) || []).length, 2);
+  const v2 = readFileSync(new URL('../js/modules/smart-plan-v2-wiring.js', import.meta.url), 'utf8');
+  assert.match(v2, /\.filter\(\(l\) => !closureFor\(r2Key, l, \{ alerts: \(lakeState && lakeState\.accessAlerts\) \|\| \[\], date: inp\.dateStr \}\)\)/);
 });
 
 test('"both" tries every pair that fits, nearest together first, the nearer the ramp first', () => {

@@ -31,6 +31,7 @@ import { checkPlanLegality, ensureRegulations, fetchForecast, fetchWaterState,
          fetchMovingWater, movingWaterNote } from './plan-preflight.js';
 import { primeFishAdvisories } from '../data/fish-advisories.js';
 import { landingsFor } from '../data/launch-reach.js';
+import { closureFor } from '../data/landing-closures.js';
 import { oneFishEach } from '../utils/catch-pins.js';
 import { poolsFor, sameWaterLandings, cutOffPool, poolOnlyState, cutOffNote } from '../data/lake-pools.js';
 import { closerLanding, closerLandingNote } from './closer-landing.js';
@@ -522,7 +523,9 @@ export async function runSmartPlanV2(opts = {}) {
     const closer = await closerLanding({
       plan: r.plan, launch: ramp,
       // Only the landings on the pool his ramp launches onto -- see sameWaterLandings().
-      landings: sameWaterLandings(await poolsFor(r2Key), ramp, await landingsFor(r2Key)),
+      // and never one that is shut that day: the operator's notices, then what no feed carries (landing-closures.js)
+      landings: sameWaterLandings(await poolsFor(r2Key), ramp, await landingsFor(r2Key))
+        .filter((l) => !closureFor(r2Key, l, { alerts: (lakeState && lakeState.accessAlerts) || [], date: inp.dateStr })),
       route: waterRouter(CF_WORKER_URL, r2Key, { minDepthFt: TRANSIT_MIN_DEPTH_FT }),
     }).catch((e) => { console.warn('[plan-v2] closer landing check failed:', e && e.message); return null; });
     const closerNote = closerLandingNote(closer, inp.rampName);
