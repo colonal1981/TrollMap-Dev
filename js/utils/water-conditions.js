@@ -882,6 +882,15 @@ export function readConditions(j) {
   return out;
 }
 
+/**
+ * HOW LONG THE CONDITIONS READ WAITS. Ryan, 2026-11-22: "the conditions tab keeps saying conditions unavailable signal
+ * is aborted without reason". It was 12 s, and the Worker's first answer after a deploy or an idle spell is slower than
+ * that: timed from his PC the same day, 16.9 s and 15.3 s for the first request to a cold Worker, then 2.5 s. Every push
+ * to main redeploys the Worker (.github/workflows/deploy-worker.yml), so after each one the next read was cut off. 30 s
+ * lets a cold Worker answer, and a real hang still ends.
+ */
+export const CONDITIONS_TIMEOUT_MS = 30000;
+
 /** One request. `fetchImpl` is injectable so this is testable without a network. */
 export async function fetchWaterConditions(worker, rec, opts = {}) {
   const url = conditionsUrl(worker, rec, opts);
@@ -889,7 +898,8 @@ export async function fetchWaterConditions(worker, rec, opts = {}) {
   const impl = opts.fetch || (typeof fetch === 'function' ? fetch : null);
   if (!impl) return { ...readConditions(null), error: 'no fetch available' };
   const ctl = typeof AbortController === 'function' ? new AbortController() : null;
-  const timer = ctl ? setTimeout(() => ctl.abort(), opts.timeoutMs || 12000) : null;
+  const waitMs = opts.timeoutMs || CONDITIONS_TIMEOUT_MS;
+  const timer = ctl ? setTimeout(() => ctl.abort(), waitMs) : null;
   try {
     const r = await impl(url, ctl ? { signal: ctl.signal } : undefined);
     const j = await r.json();
@@ -897,6 +907,11 @@ export async function fetchWaterConditions(worker, rec, opts = {}) {
     if (!r.ok && !read.error) read.error = `HTTP ${r.status}`;
     return read;
   } catch (e) {
+    // The browser's own words for our timer are "signal is aborted without reason", which says nothing he can use.
+    if ((ctl && ctl.signal.aborted) || (e && e.name === 'AbortError')) {
+      const said = waitMs >= 1000 ? `${Math.round(waitMs / 1000)} s` : `${waitMs} ms`;
+      return { ...readConditions(null), error: `no answer from the conditions service in ${said}` };
+    }
     return { ...readConditions(null), error: String((e && e.message) || e) };
   } finally {
     if (timer) clearTimeout(timer);

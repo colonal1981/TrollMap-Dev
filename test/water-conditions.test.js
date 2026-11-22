@@ -6,7 +6,7 @@
 // fields. The assertions here are mostly about the seams where those disagreed.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cToF, conditionsUrl, pickWaterTemp, readConditions, fetchWaterConditions, levelSentence }
+import { cToF, conditionsUrl, pickWaterTemp, readConditions, fetchWaterConditions, levelSentence, CONDITIONS_TIMEOUT_MS }
   from '../js/utils/water-conditions.js';
 
 const REC = { slug: 'wateree_lake', name: 'Wateree Lake', displayName: 'Wateree Lake (Kershaw Co, SC)',
@@ -880,4 +880,21 @@ test('NWPS reports flow in kcfs and it must not print as ft3/s', () => {
     gauge: { name: 'At the park', flow: 4000, flow_units: 'ft3/s', flow_reported_units: 'kcfs' } } });
   assert.equal(c.flowCfs, 4000);
   assert.match(conditionsStrip(c).text, /4,000 ft³\/s/);
+});
+
+// Ryan, 2026-11-22: "the conditions tab keeps saying conditions unavailable signal is aborted without reason". The
+// Worker's first answer after a deploy took 15-17 s against a 12 s cap.
+test('a cold Worker gets 30 s, and a read that runs out says so in words', async () => {
+  assert.equal(CONDITIONS_TIMEOUT_MS, 30000);
+  const hang = (url, init) => new Promise((resolve, reject) => {
+    init.signal.addEventListener('abort', () => reject(new DOMException('signal is aborted without reason', 'AbortError')));
+  });
+  const c = await fetchWaterConditions('https://w.example', REC, { fetch: hang, timeoutMs: 20 });
+  assert.equal(c.error, 'no answer from the conditions service in 20 ms');
+  assert.doesNotMatch(c.error, /aborted without reason/);
+  // an answer inside the wait is read as before
+  const ok = await fetchWaterConditions('https://w.example', REC, {
+    fetch: () => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ slug: REC.slug, water: null }) }),
+  });
+  assert.ok(!ok.error, String(ok.error));
 });
