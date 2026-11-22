@@ -100,6 +100,95 @@ export function runCrankbaits(inventory) {
     .sort((a, b) => b.max - a.max || b.min - a.min || a.name.localeCompare(b.name));
 }
 
+// ── HIS OWN FISH AS AN AREA, BESIDE THE REPORTS' ─────────────────────────────────────────────────────────────────────
+//
+// Ryan, 2026-11-22, planning Monday on Wateree from Clearwater, where the reports for these weeks name only Colonel Creek
+// and the dam: "how bout if there are catches in an area by me within 3 weeks? can we make that work? so that i dont
+// have to click areas... my catch history should build a day maybe idk?". Asked how it squares with his 11/6 rule
+// ("even with catches i dont like it... because i am telling the app where to tell me to fish instead of the app
+// telling me"), he chose to keep the reports first: his fish make an area that is LISTED, and the day starts on the
+// reports' area ("that last one seems to be the best"). So:
+//   - his fish of the day's species on this water, caught within CATCH_WINDOW_DAYS of the plan's date in any year (the
+//     reports' own window), within a day's reach of the ramp;
+//   - fish within an area's radius of each other are one area, centred on the fish with the most others round it;
+//   - an area of his that sits on a place the reports name is not a second area: its fish are counted on the reports'.
+// Fish make AREAS, never turns at each fish (10/5, "this isn't it").
+export const CATCH_WINDOW_DAYS = 21;
+
+const dayOfYear = (iso) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
+  if (!m) return null;
+  const t = Date.UTC(2001, Number(m[2]) - 1, Number(m[3]));   // one non-leap year for every date
+  return Math.round((t - Date.UTC(2001, 0, 1)) / 86400000);
+};
+/** Days between two dates' days of the year, round the turn of the year. */
+export function daysApartInYear(a, b) {
+  const x = dayOfYear(a), y = dayOfYear(b);
+  if (x == null || y == null) return Infinity;
+  const d = Math.abs(x - y);
+  return Math.min(d, 365 - d);
+}
+
+/**
+ * His fish as areas: [{at, name, n, trips, dates, mine: true, why}], most fish first. `catches` are journal records
+ * already of the day's species and on this water (catchesOnThisWater()); `landings` [{name, at}] name an area by the one
+ * nearest it. Pure.
+ */
+export function areasFromCatches(catches, { date, ramp = null, reachM = Infinity, radiusM = AREA_R_M,
+                                            windowDays = CATCH_WINDOW_DAYS, landings = [], max = 3 } = {}) {
+  const fish = (catches || []).map((c) => ({ c, at: [Number(c && c.lon), Number(c && c.lat)] }))
+    .filter(({ c, at }) => at.every(Number.isFinite) && daysApartInYear(c.date, date) <= windowDays)
+    .filter(({ at }) => !Array.isArray(ramp) || metresBetween(ramp, at) <= reachM);
+  const out = [];
+  let left = fish.slice();
+  while (left.length && out.length < max) {
+    const round = (f) => left.filter((g) => metresBetween(f.at, g.at) <= radiusM);
+    const seed = left.map((f) => ({ f, k: round(f).length })).sort((a, b) => b.k - a.k)[0].f;
+    const these = round(seed);
+    const dates = [...new Set(these.map(({ c }) => String(c.date || '').slice(0, 10)).filter(Boolean))].sort();
+    const near = (landings || []).filter((l) => l && Array.isArray(l.at))
+      .map((l) => ({ l, m: metresBetween(l.at, seed.at) })).filter((x) => x.m <= radiusM).sort((a, b) => a.m - b.m)[0];
+    out.push({
+      at: seed.at, n: these.length, trips: dates.length, dates, mine: true,
+      name: near ? `Your fish by ${near.l.name}` : 'Your fish',
+      why: `${these.length} of your fish within 3 weeks of this date (${dates.join(', ')})`,
+    });
+    left = left.filter((f) => !these.includes(f));
+  }
+  return out;
+}
+
+/**
+ * The places an area day is laid from: the reports' first, in their order, then his own. An area of his within an
+ * area's radius of a report place adds its fish to that place (`fish`, `trips`) instead of standing on its own. Pure.
+ */
+export function withYourFish(reportPlaces, yourAreas, radiusM = AREA_R_M) {
+  const places = (reportPlaces || []).map((p) => ({ ...p }));
+  const own = [];
+  for (const a of yourAreas || []) {
+    const on = places.find((p) => Array.isArray(p.at) && metresBetween(p.at, a.at) <= radiusM);
+    if (on) { on.fish = (on.fish || 0) + a.n; on.trips = (on.trips || 0) + a.trips; }
+    else own.push(a);
+  }
+  return [...places, ...own];
+}
+
+/** The option the day starts on: the first with an area the reports name (his choice, 11/22), else the first. */
+export function startOption(day) {
+  if (!day || !Array.isArray(day.options) || !day.options.length) return 0;
+  const mine = new Set((day.areas || []).filter((a) => a.mine).map((a) => a.key));
+  const i = day.options.findIndex((op) => (op.areas || []).some((k) => !mine.has(k)));
+  return i < 0 ? 0 : i;
+}
+
+/** What an area is counted in: its reports, and any of his fish in it. */
+export function areaCountSaid(a, { anyFish = false } = {}) {
+  const fishSaid = (k) => `${k} of your fish`;
+  if (a && a.mine) return `${fishSaid(a.n)}${a.trips ? ` on ${a.trips} trip${a.trips === 1 ? '' : 's'}` : ''}`;
+  const n = (a && a.n) || 0;
+  return `${n} report${n === 1 ? '' : 's'}${anyFish ? ' (any fish)' : ''}${a && a.fish ? `, ${fishSaid(a.fish)}` : ''}`;
+}
+
 /** How many feet of the fish's depth one bait's rated depth reaches into. */
 const reach = (r, fishFt) => Math.max(0, Math.min(r.max, fishFt[1]) - Math.max(r.min, fishFt[0]));
 /** The feet of the fish's depth a pair's two baits reach into, added up: both in the fish counts twice. */
@@ -657,7 +746,9 @@ export function layAreas(o) {
   const areas = [];
   const left = [];
   places.forEach((p, idx) => {
-    const area = { key: `a${idx + 1}`, name: p.name || `area ${idx + 1}`, at: p.at, n: p.n || 0, why: p.why || '', years: p.years };
+    const area = { key: `a${idx + 1}`, name: p.name || `area ${idx + 1}`, at: p.at, n: p.n || 0, why: p.why || '', years: p.years,
+                   ...(p.mine ? { mine: true, trips: p.trips || 0, dates: p.dates || [] } : {}),
+                   ...(!p.mine && p.fish ? { fish: p.fish, trips: p.trips || 0 } : {}) };
     // Where the run comes in: the water on the reports' line inside the area nearest the ramp, by the run.
     let E = -1, be = Infinity, cells = 0, inBand = 0;
     const ci = G.cellOf(p.at);

@@ -54,7 +54,8 @@ import { closerLanding, closerLandingNote } from './closer-landing.js';
 import { askLaunchStatus, launchStatusNote } from './launch-status.js';
 import { askGuideReports, savedGuide } from './guide-reports.js';
 import { askThisWeek, turnsFromReports, rampsByReports, areasFromReports } from './reports-this-week.js';
-import { layAreas, optionLoop, optionLines, runCrankbaits, RUN_MPH, AREA_R_M, hm, landingSaid } from './plan-areas.js';
+import { layAreas, optionLoop, optionLines, runCrankbaits, RUN_MPH, AREA_R_M, hm, landingSaid,
+         areasFromCatches, withYourFish, areaCountSaid, startOption } from './plan-areas.js';
 import { shoreRays, roughLegs } from '../utils/wind-waves.js';
 import { inshoreSeasonFor } from '../data/inshore-season.js';
 import { seabedHabitatFor } from '../data/seabed-habitat.js';
@@ -1446,10 +1447,19 @@ export async function trollForMe(opts = {}) {
         .filter((l) => Number.isFinite(Number(l.lon)) && Number.isFinite(Number(l.lat)))
         .map((l) => ({ name: l.name, at: [Number(l.lon), Number(l.lat)], closed: closureFor(T.r2Key, l) }));
     } catch (e) { console.warn('[pick-water] landings for the areas:', e && e.message); }
+    // AND WHERE HIS OWN FISH CAME FROM IN THESE WEEKS, as one more area, listed after the reports' (plan-areas.js,
+    // areasFromCatches(); Ryan, 11/22: "how bout if there are catches in an area by me within 3 weeks?", and of the
+    // reports staying first, "that last one seems to be the best"). The day still starts on a reports' area.
+    let places = T.reportAreas.turns;
+    try {
+      const yours = areasFromCatches(catchesOnThisWater(), { date: T.dateStr, ramp: T.ramp, reachM: T.runReachM ?? Infinity,
+                                                             radiusM: AREA_R_M, landings });
+      places = withYourFish(T.reportAreas.turns, yours, AREA_R_M);
+    } catch (e) { console.warn('[pick-water] his fish as an area:', e && e.message); }
     try {
       day = layAreas({
         ramp: T.ramp, daFeatures: T.daFeatures, koFeatures: T.koFeatures, shoreFeatures: T.shoreFeatures,
-        offsetFt: T.offsetFt || 0, places: T.reportAreas.turns, waterFt, fishFt: T.reportAreas.fishFt,
+        offsetFt: T.offsetFt || 0, places, waterFt, fishFt: T.reportAreas.fishFt,
         windowMin: T.windowMin, stopMin: stopsWanted() * DEFAULT_STOP_MIN, cranks: runCrankbaits(TACKLE_INVENTORY),
         marks: T.spots, launchTime: T.launchTime, landings,
       });
@@ -1458,7 +1468,7 @@ export async function trollForMe(opts = {}) {
       T.areaDay = day;
       T.areaDay.reports = { anyFish: !!T.reportAreas.anyFish, waterN: T.reportAreas.waterN, fishN: T.reportAreas.fishN };
       const key = `${T.r2Key}|${T.rampName}|${T.dateStr}`;
-      const keep = T.areaPickKey === key && Number.isInteger(T.areaPick) && T.areaPick < day.options.length ? T.areaPick : 0;
+      const keep = T.areaPickKey === key && Number.isInteger(T.areaPick) && T.areaPick < day.options.length ? T.areaPick : startOption(day);
       T.areaPickKey = key;
       return layAreaOption(keep);
     }
@@ -1711,12 +1721,14 @@ export function areaDaySaid(day, i, { rampName = '', species = '' } = {}) {
   const op = day.options[i];
   const sp = species || 'fish';
   const rep = day.reports || {};
-  const areas = day.areas.map((a) => `${a.name} (${a.n} report${a.n === 1 ? '' : 's'}; ${a.near ? 'by the ramp' : `${miles(a.run.lengthM)} by water, about ${hm(a.runMin)} at ${RUN_MPH} mph`}`
+  const areas = day.areas.map((a) => `${a.name} (${areaCountSaid(a)}; ${a.near ? 'by the ramp' : `${miles(a.run.lengthM)} by water, about ${hm(a.runMin)} at ${RUN_MPH} mph`}`
     + `${a.tooFar ? ', too far to leave a lap in this window' : ''}${a.landing ? `; ${landingSaid(a.landing)}` : ''})`).join('; ');
   const ls = day.lines.map((l) => `${l}`);
   const lines = ls.length > 1 ? `the ${ls.slice(0, -1).join(', ')} and ${ls[ls.length - 1]} ft lines` : `the ${ls[0]} ft line`;
-  return `Laid by the fishing reports for this time of year: ${day.areas.length} area${day.areas.length === 1 ? '' : 's'} they name`
-    + `${rep.anyFish ? ' (none names a place for your fish around this date, so for any fish)' : ` for ${sp}`} within 3 weeks of this date, `
+  const theirs = day.areas.filter((a) => !a.mine), yours = day.areas.filter((a) => a.mine);
+  return `Laid by the fishing reports for this time of year: ${theirs.length} area${theirs.length === 1 ? '' : 's'} they name`
+    + `${rep.anyFish ? ' (none names a place for your fish around this date, so for any fish)' : ` for ${sp}`} within 3 weeks of this date`
+    + `${yours.length ? `, and ${yours.length === 1 ? 'one' : yours.length} where your own ${sp} came from in the same weeks` : ''}, `
     + `each the water within ${Math.abs(day.radiusM - 2414) < 20 ? '1.5 miles' : miles(day.radiusM)} of the place: ${areas}. `
     + `The day is ${op.label}: ${optionLines(day, op).join('; ')}. `
     + `The loops ride ${lines}, inside the ${day.waterFt[0]}–${day.waterFt[1]} ft of water the reports put your ${sp} over`
@@ -1725,7 +1737,8 @@ export function areaDaySaid(day, i, { rampName = '', species = '' } = {}) {
     + (day.fishFt ? `The reports put the fish ${day.fishFt[0] === day.fishFt[1] ? `about ${day.fishFt[0]}` : `${day.fishFt[0]}–${day.fishFt[1]}`} ft down. ` : '')
     + `A run is trolled at ${RUN_MPH} mph with two deep divers that clear its water, lines up out of the cove; so is a move `
     + 'from one loop to the next, over water they clear, and one that cannot avoid shallower water is lines up from its start. '
-    + 'Your catches did not choose any of this.'
+    + (yours.length ? 'Your catches chose only the area named for them; the day starts on the reports\' area unless you pick yours.'
+                    : 'Your catches did not choose any of this.')
     + (day.left.length ? ` Left out: ${day.left.map((a) => `${a.name}, ${a.left}`).join('; ')}.` : '')
     + (day.coveCrossesShore ? ` The way out of ${rampName || 'the ramp'} runs past charted docks and shore lines, so it is drawn on the depth chart alone — steer it by eye.` : '');
 }
@@ -1753,6 +1766,7 @@ async function reportTurns() {
   const r = turnsFromReports(tw, T.species, { ramp: T.ramp, reachM, budgetM });
   // THE AREAS: every place for his fish a run at RUN_MPH reaches and comes back from with an hour left to fish it.
   const runReachM = Math.max(0, (budgetMin - 60) / 2) * (RUN_MPH * 1609.344 / 60);
+  T.runReachM = runReachM;
   T.reportAreas = areasFromReports(tw, T.species, { ramp: T.ramp, reachM: runReachM });
   if (!r.turns.length) {
     T.reportSaid = r.mentioned

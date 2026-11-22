@@ -6,7 +6,7 @@
  * Ryan, 11/8, of the area bar on Wateree: "for taylor creek or colonel creek this should tell you to launch at those
  * instead maybe?", and "i think taylors landing is closed temporarily because of a invasive grass". So an area names
  * the landing nearest it by water when that is not his ramp (plan-areas.js), and a closure known here is said beside
- * it with its source and the date it was read. A closure is a fact with a date, not a forever: it is said "as read on"
+ * it with its source and the date it was read (a source of 'Ryan' is his word, with no page behind it). A closure is a fact with a date, not a forever: it is said "as read on"
  * and a reopening is a line taken out of this list. Matched to a landing within NEAR_M of `at`, on the same water.
  */
 
@@ -19,6 +19,17 @@ export const LANDING_CLOSURES = Object.freeze([
     source: 'SCDES, Aquatic Nuisance Plants',
     url: 'https://des.sc.gov/programs/bureau-water/aquatic-science/aquatic-nuisance-plants',
     read: '2026-11-08',
+    // Ryan, 2026-11-22: "taylor creek is also closed and maybe permanently due to a grass issue".
+    note: 'Ryan, 11/22: maybe permanently',
+  }),
+  // Ryan, 2026-11-22, of the Wateree landings: "buckhill is closed, lakeside went out of business and is for sale".
+  Object.freeze({
+    water: 'wateree_lake', name: 'Buckhill Landing', at: [-80.707209, 34.335864],
+    why: 'not open to launch', source: 'Ryan', read: '2026-11-22',
+  }),
+  Object.freeze({
+    water: 'wateree_lake', name: 'Lakeside Marina', at: [-80.6993, 34.3641],
+    why: 'out of business and for sale', source: 'Ryan', read: '2026-11-22',
   }),
 ]);
 

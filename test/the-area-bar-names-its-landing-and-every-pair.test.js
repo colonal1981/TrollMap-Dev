@@ -54,7 +54,10 @@ test('Taylors Creek Access Area on Wateree is known closed, with its source and 
   assert.ok(c && /giant salvinia/.test(c.why) && c.read === '2026-11-08' && /des\.sc\.gov/.test(c.url));
   assert.equal(closureFor('wateree_lake', { lat: 34.368854, lon: -80.797237 }), null);   // Colonel Creek is open
   assert.equal(closureFor('lake_marion', { lat: 34.43773, lon: -80.875784 }), null);     // another water
-  assert.ok(LANDING_CLOSURES.every((x) => x.source && x.read && x.url));
+  assert.ok(LANDING_CLOSURES.every((x) => x.source && x.read && (x.url || x.source === 'Ryan')));
+  // his word, 11/22: Buckhill is closed and Lakeside out of business; Lugoff is the river below the dam, not a closure
+  assert.equal(closureFor('wateree_lake', { lat: 34.335864, lon: -80.707209 }).why, 'not open to launch');
+  assert.equal(closureFor('wateree_lake', { lat: 34.3641, lon: -80.6993 }).why, 'out of business and for sale');
 });
 
 test('"both" tries every pair that fits, nearest together first, the nearer the ramp first', () => {

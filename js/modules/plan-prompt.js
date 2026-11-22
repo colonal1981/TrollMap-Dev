@@ -1454,7 +1454,8 @@ export function areaDayBlock(candidates) {
   if (!runs.length) return '';
   const baits = [...new Set(runs.flatMap((c) => c.theRun.baits || []))];
   return `
-THE DAY IS SPENT IN AN AREA THE FISHING REPORTS NAME, NOT TURNED AT IT. The legs above are, in order, the run out to
+THE DAY IS SPENT IN AN AREA THE FISHING REPORTS NAME (OR, IF HE PICKED IT, WHERE HIS OWN FISH CAME FROM IN THESE
+WEEKS), NOT TURNED AT IT. The legs above are, in order, the run out to
 the area, the loops inside it with the moves between them, and the run home (a day in two areas has a run across
 between them).
 - A LEG CARRYING \`theRun\` IS A RUN: the run out, across or home, or a move from one loop to the next (legs named

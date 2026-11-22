@@ -33,7 +33,7 @@ import { state } from '../core/state.js';
 import { LOOP_COLORS, TRANSIT_COLOR } from './plan-to-timeline.js';
 import { turnsReached } from './plan-troll-loop.js';
 import { findWater, trollForMe, buildFromPicked, loopForMap, riverHere, optionShapeSaid, bandFromSaid, layAreaOption } from './plan-water-ui.js';
-import { optionLines, RUN_MPH, hm, landingSaid } from './plan-areas.js';
+import { optionLines, RUN_MPH, hm, landingSaid, areaCountSaid } from './plan-areas.js';
 import { optionColor, optionBadge } from './plan-tracks.js';
 
 const MAX_TURNS = 4;           // a day is at most four loops (trollLoop's maxPetals)
@@ -541,8 +541,8 @@ function loopRange(loops) {
 function areasBar(loop, snap) {
   const day = loop.day;
   const sp = esc(snap.species || 'fish');
-  const areas = day.areas.map((a) => `<div style="margin-top:3px"><b style="color:#ffe082">${esc(a.name)}</b>: `
-    + `${plural(a.n, 'report')}${day.reports && day.reports.anyFish ? ' (any fish)' : ''} · `
+  const areas = day.areas.map((a) => `<div style="margin-top:3px"><b style="color:${a.mine ? '#80d8ff' : '#ffe082'}">${esc(a.name)}</b>: `
+    + `${esc(areaCountSaid(a, { anyFish: !!(day.reports && day.reports.anyFish) }))} · `
     + `${a.near ? 'by the ramp' : `${mi(a.run.lengthM)} by water, ${hm(a.runMin)} at ${RUN_MPH} mph`}`
     + ` · ${a.acres} acres of ${day.waterFt[0]}–${day.waterFt[1]} ft`
     + ` · ${plural(a.laps.length, 'different loop')}, ${loopRange(a.laps)} each`
@@ -559,8 +559,10 @@ function areasBar(loop, snap) {
   const op = day.options[loop.option];
   const clock = optionLines(day, op).map((l) => `<div style="margin-top:2px">${esc(l)}</div>`).join('');
   const run = (op.steps.find((s) => s.kind === 'run') || {});
+  const yours = day.areas.some((a) => a.mine);
   return `<div style="margin-top:6px;color:#ffb300"><b>Laid by the fishing reports</b>: the areas they name for your ${sp} `
-      + `within 3 weeks of this date, in any year from 2008. The day is spent in an area, in different loops on the `
+      + `within 3 weeks of this date, in any year from 2008${yours ? `, and in blue, where your own ${sp} came from in the same weeks` : ''}. `
+      + `The day is spent in an area, in different loops on the `
       + `${day.lines.map((l) => `${l} ft`).join(', ')} line${day.lines.length > 1 ? 's' : ''} before any is gone round again, `
       + 'not turned at it.</div>'
     + areas
