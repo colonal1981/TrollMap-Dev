@@ -775,7 +775,7 @@ export function colorInBox(lureName, written) {
   if (!w.length || !list.length) return null;
   const same = list.find((c) => words(c.name).join(' ') === w.join(' '));
   if (same) return same;
-  // Every word of one inside the other, either way round: "gold orange black" is his "gold/orange w/ black back",
+  // Every word of one inside the other, either way round: "gold orange black" is his "Black Gold",
   // and "chartreuse" alone is not his "chartreuse/white" when he also has a plain "chartreuse".
   let best = null, bestScore = 0;
   for (const c of list) {

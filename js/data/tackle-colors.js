@@ -44,8 +44,10 @@ export const COLORS_BY_ID = {
     ['pearl/purple', 1], ['silver w/ blue back, red eye', 1]],
   cb_flicker_9d: [['orange throat, silver/green back', 1]],
   cb_flicker_11d: [['silver w/ dark back', 1], ['firetiger', 1], ['purple head, silver', 1]],
-  cb_hitstick_9: [['red head, white w/ pink dots', 1]],
-  cb_hitstick_12: [['gold/orange w/ black back', 3], ['green/black back', 1], ['Pink Lemonade', 2]],
+  cb_hitstick_9: [['Shake and Bake', 1]],                // Berkley's name, his (11/22); read off his photo as red head, white w/ pink dots
+  // Berkley's names, his (11/22): "i have the black gold, pink lemonade and the last one is slick tennessee shad". They
+  // were 'gold/orange w/ black back' and 'green/black back' as read off his photos.
+  cb_hitstick_12: [['Black Gold', 3], ['Slick Tennessee Shad', 1], ['Pink Lemonade', 2]],
   cb_bandit_wd: [['chartreuse back/silver', 1], ['purple/teal w/ chartreuse spots', 1], ['pearl', 1],
     ['orange, red throat', 1], ['orange head, perch w/ green spots', 1], ['chrome w/ blue back, orange belly', 1],
     ['chartreuse w/ black dot', 1], ['pink head, white', 1]],

@@ -33,7 +33,7 @@ test('every colour list belongs to a lure in the box, and every lure carries its
   }
   // his Deep Hit Stick 12s, as he said them: "the 4 baits together are all berkeley deep hit stick 12s"
   assert.deepEqual(colorsOf('Berkley Deep Hit Stick 12').map((c) => c.name),
-    ['gold/orange w/ black back', 'green/black back', 'Pink Lemonade']);
+    ['Black Gold', 'Slick Tennessee Shad', 'Pink Lemonade']);
   // the weights carry no colour; they are not a bait
   assert.deepEqual(byId('troll_weight_2oz').colors, []);
 });
@@ -94,7 +94,12 @@ test('the two P-Line Laser Minnows are a 2 oz and a 3 oz, one of each', () => {
 });
 
 test('a written colour is read as his, in the box\'s spelling, or not at all', () => {
-  assert.equal(colorInBox('Berkley Deep Hit Stick 12', 'gold orange black').name, 'gold/orange w/ black back');
+  // Berkley's names since 11/22 ("i have the black gold, pink lemonade and the last one is slick tennessee shad")
+  assert.equal(colorInBox('Berkley Deep Hit Stick 12', 'black gold').name, 'Black Gold');
+  assert.equal(colorInBox('Berkley Deep Hit Stick 12', 'Tennessee Shad').name, 'Slick Tennessee Shad');
+  assert.equal(colorInBox('Berkley Deep Hit Stick 12', 'gold orange black').name, 'Black Gold');
+  // and the smaller one: "the smaller deep hit stick that i have 1 of is a color that berkley calls shake and bake"
+  assert.equal(colorInBox('Berkley Deep Hit Stick 9', 'shake and bake').name, 'Shake and Bake');
   assert.equal(colorInBox('Berkley Deep Hit Stick 12', 'PINK LEMONADE').name, 'Pink Lemonade');
   assert.equal(colorInBox('Berkley Deep Hit Stick 12', 'firetiger'), null);
   assert.equal(colorInBox('2oz Inline Trolling Weight', 'chrome'), null);
@@ -112,7 +117,7 @@ test('the prompt lists the colours he has of each bait and asks for one of them'
   }).user;
   assert.doesNotMatch(p, /assume any colour combination is aboard/);
   assert.match(p, /THE COLOURS HE HAS OF EACH/);
-  assert.match(p, /- Berkley Deep Hit Stick 12: gold\/orange w\/ black back; green\/black back; Pink Lemonade/);
+  assert.match(p, /- Berkley Deep Hit Stick 12: Black Gold; Slick Tennessee Shad; Pink Lemonade/);
   assert.match(p, /"color": "one of that bait's colours, as listed"/);
 });
 
