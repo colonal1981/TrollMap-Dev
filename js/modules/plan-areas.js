@@ -42,7 +42,7 @@ import { depthGrid, shortestFrom, pathTo, straighten, trollLoop, densify } from 
 import { metresBetween, minutesFor } from './plan-candidates.js';
 import { TROLL_MPH, TRANSIT_MPH } from './plan-water.js';
 import { HAND_STEER_BAND_FT } from './plan-tracks.js';
-import { LURE_KNOWLEDGE } from '../data/lure-knowledge.js';
+import { LURE_KNOWLEDGE, ratedDepthOf } from '../data/lure-knowledge.js';
 
 /**
  * An area is the water within this of the place a report names: 1.5 miles. It was 3/4 mile, and in front of Pinopolis
@@ -92,10 +92,10 @@ export function runCrankbaits(inventory) {
   const seen = new Set();
   return (inventory || [])
     .filter((l) => l && l.trollable !== false && /^crankbait_/.test(String(l.type || '')))
-    .map((l) => ({ l, k: LURE_KNOWLEDGE[l.type] }))
-    .filter(({ k }) => k && k.ratedDepth && fin(k.ratedDepth.min) && fin(k.ratedDepth.max))
+    .map((l) => ({ l, k: LURE_KNOWLEDGE[l.type], r: ratedDepthOf(l) }))
+    .filter(({ k, r }) => k && r && fin(r.min) && fin(r.max))
     .filter(({ l }) => (seen.has(l.name) ? false : seen.add(l.name)))
-    .map(({ l, k }) => ({ name: l.name, type: l.type, min: Number(k.ratedDepth.min), max: Number(k.ratedDepth.max),
+    .map(({ l, k, r }) => ({ name: l.name, type: l.type, min: Number(r.min), max: Number(r.max),
                           maxMph: k.speed && fin(k.speed.max) ? Number(k.speed.max) : null }))
     .sort((a, b) => b.max - a.max || b.min - a.min || a.name.localeCompare(b.name));
 }

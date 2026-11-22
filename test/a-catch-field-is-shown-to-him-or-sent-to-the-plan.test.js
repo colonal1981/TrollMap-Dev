@@ -49,7 +49,7 @@ const fnBody = (src, name) => {
 };
 
 // SENT TO THE PLAN: read by catchWhen() / catchSupport() into each leg's `yourHistory`, or by the loop.
-const TO_THE_PLAN = ['species', 'lat', 'lon', 'date', 'time', 'length', 'lure', 'depth', 'depthSource',
+const TO_THE_PLAN = ['species', 'lat', 'lon', 'date', 'time', 'length', 'lure', 'lureColor', 'depth', 'depthSource',
                      'waterTempF', 'weather'];
 // SHOWN TO HIM, and where.
 const SHOWN = {

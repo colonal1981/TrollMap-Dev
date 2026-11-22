@@ -20,15 +20,19 @@ const CUM = station(150, (i) => i * 40);
 const types = (r) => r.rods.map((x) => x.type).sort().join();
 
 test('a run over 20-24 ft floors with the fish at 10-20 ft goes out with two baits in the fish, not an SR', () => {
-  // The first 30% of the run holds 20 ft, the rest 24 ft: the DD1 and MR (need 23) go in later than the MR and SR (17).
+  // The first 30% of the run holds 20 ft, the rest 24 ft. With the type bands alone the DD1 and MR (need 23) went in
+  // later than the MR and SR (17). His box by name (2026-11-22) has a pair in the fish that clears the 20 ft from the
+  // start: the Jointed Deep Husky Jerk 12 (8-13 ft on its box) and the Ultra Diver 50 (an MR, 6-12).
   const r = runDivers(station(150, (i) => (i < 45 ? 20 : 24)), CUM, CRANKS, { fishFt: [10, 20] });
-  assert.equal(types(r), 'crankbait_dd1,crankbait_mr');
+  assert.equal(r.rods.map((x) => x.name).sort().join(), 'Freedom Tackle Ultra Diver Shad 50,Rapala Jointed Deep Husky Jerk 12');
+  assert.ok(r.rods.every((x) => x.type !== 'crankbait_sr'));
   assert.equal(r.inFish, 'both');
   assert.ok(r.rods.every((x) => x.max >= 10 && x.min <= 20), types(r));
 });
 
 test('where no two baits fit the fish, one in it beats none, and fewer below the fish beats deeper', () => {
-  const pr = (a, b) => ({ rods: [a, b].map((t) => CRANKS.find((c) => c.type === t)) });
+  // The type's own band, from the bait named for it: a named crank of the same type has its own box (Hit Stick 9, 18-24).
+  const pr = (a, b) => ({ rods: [a, b].map((t) => CRANKS.find((c) => c.type === t && /^DD\d Crankbait/.test(c.name))) });
   const dd43 = pr('crankbait_dd4', 'crankbait_dd3'), dd32 = pr('crankbait_dd3', 'crankbait_dd2');
   const t = pairTiers([dd43, dd32], [20, 23]);
   assert.equal(t.tier, 'one');                                   // the DD2's 16-20 ends where the fish start

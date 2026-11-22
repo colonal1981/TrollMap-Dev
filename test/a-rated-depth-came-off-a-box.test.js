@@ -29,7 +29,8 @@ import { depthWindow, leadForDepth, canReachDepth,
 import { buildPlanRequest } from '../js/modules/plan-prompt.js';
 import { TACKLE_INVENTORY } from '../js/data/tackle-inventory.js';
 
-const byName = (n) => TACKLE_INVENTORY.find((l) => l.name === n) || null;
+// The prompt spells an inch mark as `in` (promptSafeTackleName), so a name it lists may be either spelling.
+const byName = (n) => TACKLE_INVENTORY.find((l) => l.name === n || l.name.replace(/"/g, 'in') === n) || null;
 const DD3 = TACKLE_INVENTORY.find((l) => l.type === 'crankbait_dd3');
 // THE STAND-IN FOR "A BAIT WHOSE DEPTH IS LEAD AND SPEED" MUST NOT BE ONE THAT NEEDS A RIG.
 //

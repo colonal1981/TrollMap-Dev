@@ -1,7 +1,7 @@
 import { describe, it, expect } from './expect-shim.mjs';
 import { TACKLE_INVENTORY, RIGGED_TROLLING_WEIGHT_OZ } from '../js/data/tackle-inventory.js';
 import { LURE_KNOWLEDGE, LURE_COLORS, depthWindow, leadForDepth, canReachDepth,
-         requiresInlineWeight, levelsOffFt } from '../js/data/lure-knowledge.js';
+         requiresInlineWeight, levelsOffFt, ratedDepthOf } from '../js/data/lure-knowledge.js';
 import { TYPE_LABELS } from '../js/modules/tackle-inventory-ui.js';
 import { FISHING_STYLE } from '../js/data/fishing-style-profile.js';
 
@@ -97,7 +97,11 @@ describe('tackle parity — every type resolves in all three tables', () => {
   it('every LURE_KNOWLEDGE type is owned by at least one lure', () => {
     // Catches the reverse mistake: a type added to knowledge and then never
     // used, which looks like coverage but is dead weight.
-    const orphans = Object.keys(LURE_KNOWLEDGE).filter(t => !types.includes(t));
+    // EXCEPT ONE ON PURPOSE. The vertical jig's only lures were the two P-Line Haruki jigs, and Ryan, 2026-11-22: "i dont
+    // think i ever had the haruki jigs". The type stays for the day one is bought, and species-intel names it as a
+    // fallback presentation.
+    const KEPT_WITHOUT_A_LURE = ['vertical_jig'];
+    const orphans = Object.keys(LURE_KNOWLEDGE).filter(t => !types.includes(t) && !KEPT_WITHOUT_A_LURE.includes(t));
     expect(orphans).toEqual([]);
   });
 
@@ -239,7 +243,8 @@ describe('depth model — one source, four modes', () => {
       const a = depthWindow(l, { speedMph: 1.4, leadFt: 20 });
       const b = depthWindow(l, { speedMph: 2.6, leadFt: 200 });
       expect(a, l.id).toEqual(b);
-      expect(a.min, l.id).toBe(k.ratedDepth.min);
+      // the bait's own box when it has one (a named crank, 2026-11-22), its type's band when it does not
+      expect(a.min, l.id).toBe(ratedDepthOf(l).min);
     }
   });
 
@@ -247,7 +252,7 @@ describe('depth model — one source, four modes', () => {
     for (const l of trollable) {
       const k = LURE_KNOWLEDGE[l.type];
       if (k.depthMode !== 'rated') continue;
-      const atMax  = leadForDepth(l, k.ratedDepth.max, 1.8);
+      const atMax  = leadForDepth(l, ratedDepthOf(l).max, 1.8);
       const absurd = leadForDepth(l, 60, 1.8);
       expect(absurd, `${l.id} asked for 60ft`).toBe(atMax);
     }

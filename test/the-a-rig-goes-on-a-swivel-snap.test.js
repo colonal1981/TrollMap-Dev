@@ -117,17 +117,17 @@ test('a spoon takes a snap rod before a cast bait, and says its weight and leade
   assert.equal(ROD_RIG[on('A-Rig – five 1/2oz heads (~4.1oz)')], 'snap');
   assert.equal(ROD_RIG[on(BUCK)], 'fluoro', 'the cast bucktail ties on a leader rod');
   assert.deepEqual(seat.problems, []);
-  // the rigged spoon, as he said it
-  assert.equal(RIGGED_SPOON.weightOz, 0.75);
-  assert.equal(RIGGED_SPOON.lengthIn, 4);
-  // the big spoon: its weight, snap and leader said, and a re-tie
+  // NO SPOON IS "TIED ON NOW" ANY MORE. Ryan, 2026-11-22: "i am not going to run the spoons without a weight for
+  // trolling... so if it is for trolling it needs to tell which spoon and what weight and i will rig it". The plan names
+  // the spoon and the weight, and neither one is a re-tie.
+  assert.equal(RIGGED_SPOON, null);
   const big = spoonRig({ id: 'R6', lure: BIG, runsDepthFt: [26, 32] });
   assert.equal(big.weightOz, 2);
   assert.match(big.said, /behind the 2oz inline weight on the swivel snap, 5 ft fluoro leader to the spoon/);
-  assert.match(big.retie, /the 2oz weight has the 4" 3\/4oz spoon tied behind it now, so this is a re-tie at the truck/);
-  const small = spoonRig({ id: 'R6', lure: RIGGED_SPOON.name, runsDepthFt: [20, 24] });
-  assert.equal(small.retie, null);
-  assert.match(small.said, /as it is tied now$/);
+  assert.equal(big.retie, undefined);
+  const small = spoonRig({ id: 'R6', lure: 'Nichols Lake Fork Flutter Spoon 3/4oz', runsDepthFt: [20, 24] });
+  assert.equal(small.retie, undefined);
+  assert.doesNotMatch(small.said, /tied now/);
   // and through planArgsFrom, on a spoon that is only ever the backup
   const res = { loadout: { rods }, legs: [{ runId: 'w#1', deploy: { port: 'R1', starboard: 'R5' },
                                             ifNotProducing: { rodId: 'R6', insteadOf: 'R1', why: 'x' } }] };
@@ -136,7 +136,7 @@ test('a spoon takes a snap rod before a cast bait, and says its weight and leade
   const sp = a.loadout.rods.find((r) => r.lure === BIG);
   assert.equal(sp.inlineWeightOz, 2);
   assert.match(sp.rigSaid, /5 ft fluoro leader/);
-  assert.ok(a.problems.some((p) => /re-tie at the truck/.test(p)));
+  assert.ok(!a.problems.some((p) => /re-tie|tied on/.test(p)), 'nothing about the spoon wants him');
   // the rods list prints it for a rod that never goes in the water
   const { rodsAtLaunch } = await import('../js/modules/rods-at-launch.js');
   const list = rodsAtLaunch({ plan: { loadout: a.loadout }, timeline: [] });

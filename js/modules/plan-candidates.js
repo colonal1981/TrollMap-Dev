@@ -4176,6 +4176,8 @@ export function catchWhen(c) {
     time: c.time || undefined,
     lengthIn: num(c.length),
     lure: c.lure || undefined,
+    // THE COLOUR IT WAS, since 2026-11-22. Ryan: "yes to the color on the catch journal". Catches logged before have none.
+    lureColor: (c.lure && c.lureColor) || undefined,
     depthFt: num(c.depth),
     // His sounder at the waypoint he dropped at the bite, or the chart under the photo's position.
     depthFrom: num(c.depth) === undefined ? undefined : sounder ? 'his sounder at the bite' : 'the chart at the photo',

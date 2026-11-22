@@ -252,8 +252,10 @@ describe('the words that mean light are one lexicon, read by two things', () => 
   // "working values, not measurements". This test states the number so that when a source turns up
   // and the number moves, the move is deliberate.
   it('counts how many of his baits name a light at all, because the rest cannot be checked', () => {
+    // 5 until 2026-11-22, when his baits by name joined the box: the micro crank, the jerkbait, the jointed hard
+    // swimbait (SR) and the small Plopper share types whose records name a light. Same records, more of his baits.
     const named = TACKLE_INVENTORY.filter((l) => lightWindowFor(l));
-    expect(named.length).toBe(5);
+    expect(named.length).toBe(9);
     expect(named.every((l) => lightWindowFor(l).kinds.includes('low'))).toBe(true);
   });
 });

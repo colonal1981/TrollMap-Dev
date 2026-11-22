@@ -16,6 +16,21 @@ import { esc } from './escape.js';
  * @param {string[]} names     the tackle box's lure names (journalLureNames())
  * @returns {string} option elements
  */
+/**
+ * The <option>s for the colour of a catch's lure: the colours he has of that lure, the catch's own selected, and none.
+ * Same reason as the lure's: a select shows them all whatever is chosen. A colour typed at review that is not on file
+ * is kept as a choice.
+ * @param {string} current   the colour the catch has now ('' when none)
+ * @param {string[]} names   the colours he has of its lure (journalColorNames())
+ */
+export function colorChoices(current, names) {
+  const cur = String(current || '').trim();
+  const all = Array.isArray(names) ? names : [];
+  const list = cur && !all.includes(cur) ? [cur, ...all] : all;
+  return `<option value=""${cur ? '' : ' selected'}>— no colour —</option>`
+    + list.map((n) => `<option value="${esc(n)}"${n === cur ? ' selected' : ''}>${esc(n)}</option>`).join('');
+}
+
 export function lureChoices(current, names) {
   const cur = String(current || '').trim();
   const all = Array.isArray(names) ? names : [];

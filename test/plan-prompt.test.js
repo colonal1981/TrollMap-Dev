@@ -5,6 +5,7 @@ import {
   ROD_IDS, ROD_RIG, FLUORO_RODS, SNAP_RODS,
 } from '../js/modules/plan-prompt.js';
 import { assemblePlan, validatePlan } from '../js/modules/plan-assemble.js';
+import { colorsOf } from '../js/data/tackle-inventory.js';
 import { TERMINAL_CONNECTION, connectionFor, canTakeSnap, unratedTypes, MAX_TIE_ONLY }
   from '../js/data/lure-knowledge.js';
 
@@ -42,7 +43,8 @@ const CONN = {
 const connectionOf = (name) => CONN[name] || null;
 const TACKLE = Object.keys(CONN);
 
-function rod(id, lure, extra = {}) { return { id, lure, color: 'Chrome', role: 'troll', ...extra }; }
+// A colour he has of that bait (2026-11-22: the plan picks from the lure's list, and a colour off it is a problem).
+function rod(id, lure, extra = {}) { return { id, lure, color: (colorsOf(lure)[0] || {}).name || '', role: 'troll', ...extra }; }
 
 const CANDS = [
   { runId: 'w#1', runIndex: 1, lengthM: 2500, depthFt: 24, start: [-80.72, 34.38], end: [-80.70, 34.38],

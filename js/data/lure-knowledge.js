@@ -427,7 +427,7 @@ export const LURE_KNOWLEDGE = {
     label: 'Casting Spoon / Diamond Jig',
     depthMode: 'lead',
     ratedDepth: null,
-    leadRatio: { base: 3.5, refOz: 1.0 },    // quoted for the 1oz Dr.Fish diamond jig
+    leadRatio: { base: 3.5, refOz: 1.0 },    // quoted for the 1oz Dr.Fish diamond jig (lost 2026-11-22; the ratio stands)
     speedAffectsLead: true,
     speed:     { min:1.6, ideal:2.2, max:2.8 },
     speedIsHardLimit: false,
@@ -712,6 +712,23 @@ function resolveLeadRatio(lr, { weightOz, targetDepthFt }) {
  * Feet of lead to put the lure at targetDepthFt. Replaces autoCalculateLead()'s
  * substring matching on the display name with a type lookup plus weight.
  */
+/**
+ * THE DEPTH ON THIS BAIT'S BOX, or its type's band when it has none of its own.
+ *
+ * A type's `ratedDepth` is a band for every bait of that kind. Since 2026-11-22 a bait he has BY NAME can carry the
+ * maker's own number as `ratedDepthFt` (tackle-inventory.js, looked up for each one), and that number is the one that
+ * describes the bait on his rod: a Deep Hit Stick 12 is rated 26-33 ft and a Bandit Walleye Deep 23-27, and both are
+ * `crankbait_dd4`. Every place that reads a rated depth asks here, so the two can never disagree.
+ */
+export function ratedDepthOf(lure) {
+  const own = lure && lure.ratedDepthFt;
+  if (own && Number.isFinite(Number(own.min)) && Number.isFinite(Number(own.max))) {
+    return { min: Number(own.min), max: Number(own.max) };
+  }
+  const k = LURE_KNOWLEDGE[lure?.type];
+  return (k && k.ratedDepth) || null;
+}
+
 export function leadForDepth(lure, targetDepthFt, speedMph) {
   const k = LURE_KNOWLEDGE[lure?.type];
   if (!k) return Math.round(targetDepthFt * 4.0);
@@ -722,8 +739,8 @@ export function leadForDepth(lure, targetDepthFt, speedMph) {
   // A rated bait CANNOT be leaded past its bill. The old autoCalculateLead would
   // happily hand an SR crankbait 76ft of lead for a 20ft target, which buys you
   // nothing but a longer tangle -- it still runs 3-5ft.
-  if (k.depthMode === 'rated' && k.ratedDepth) {
-    targetDepthFt = Math.min(targetDepthFt, k.ratedDepth.max);
+  if (k.depthMode === 'rated' && ratedDepthOf(lure)) {
+    targetDepthFt = Math.min(targetDepthFt, ratedDepthOf(lure).max);
   }
   // Nor can one that levels off be leaded past where it does: the lead for its ceiling is the most it takes.
   const ceil = levelsOffFt(lure, speedMph);
@@ -767,7 +784,7 @@ export function depthWindow(lure, { speedMph, leadFt } = {}) {
                    + 'does not fish' };
   }
   if (k.depthMode !== 'lead') {
-    const d = k.ratedDepth || { min: 0, max: 1 };
+    const d = ratedDepthOf(lure) || { min: 0, max: 1 };
     // A RATED DEPTH CAME OFF A BOX. NOTHING HERE MEASURED IT.
     //
     // Ryan, 2026-08-30: "the only lure i have that has an actual max depth is the crankbaits...
@@ -946,10 +963,11 @@ export function canReachDepth(lure, depthFt, speedMph, { maxLeadFt, jigheads } =
   }
   if (k.depthMode === 'surface') return { ok: depthFt <= 2, leadFt: 80, limitedBy: null };
   if (k.depthMode === 'rated') {
-    const within = depthFt >= k.ratedDepth.min && depthFt <= k.ratedDepth.max;
+    const rd = ratedDepthOf(lure);
+    const within = depthFt >= rd.min && depthFt <= rd.max;
     return { ok: within, leadFt: leadForDepth(lure, depthFt, speedMph),
              limitedBy: within ? null : 'rating',
-             detail: within ? null : `${k.label} is rated ${k.ratedDepth.min}-${k.ratedDepth.max}ft` };
+             detail: within ? null : `${lure.ratedDepthFt ? lure.name : k.label} is rated ${rd.min}-${rd.max}ft` };
   }
   // A PADDLE TAIL HAS NO WEIGHT UNTIL A HEAD IS ON IT, and this is the filter that decides
   // whether the bait is OFFERED at all. Ryan, 2026-08-30, on a plan full of baits that could not
@@ -1273,7 +1291,7 @@ export function trollableBaits(inventory, o = {}) {
 
     // ── A RATED BAIT COVERS THE BAND ON ITS BOX AND NOTHING MOVES IT ──────────────────────────
     if (k.depthMode === 'rated' || k.depthMode === 'surface') {
-      const d = k.ratedDepth || { min: 0, max: 1 };
+      const d = ratedDepthOf(lure) || { min: 0, max: 1 };
       if (hasFloor && d.min > floor) {
         say(`the bill runs it ${d.min}-${d.max} ft and there is no oxygen below ${floor} ft — `
           + 'every pass would be in dead water');
@@ -1520,6 +1538,31 @@ export const ACTION_SOURCE = Object.freeze({
   // A pop is a rod stroke and a walk is a rhythm; neither survives a constant pull.
   tw_popper: 'the rod',
   tw_frog: 'the rod',
+
+  // ── HIS BAITS BY NAME, 2026-11-22 ───────────────────────────────────────────────────────────
+  // Entered from his photos (tackle-inventory.js). Every one below is MY call by the rule above, and he left the
+  // troll-or-cast list at those calls on 11/21; he can overrule any of them in a line.
+  //
+  // A swim jig is a skirted jig swum with the rod tip, and a mini A-rig is a casting rig of small heads that the
+  // retrieve works; neither has the mass or the shape to hold a depth on a tow. A small casting spoon (Kastmaster
+  // type) is cast and fluttered: on a troll rod the plan would treat it like a flutter spoon, which it is not.
+  jig_swim: 'the rod',
+  arig_mini: 'the rod',
+  spoon_small_cast: 'the rod',
+  // A Jitterbug gurgles at a crawl, well under the slowest the motor trolls; at 2 mph it skips.
+  tw_jitterbug: 'the rod',
+  // The soft plastics he fishes on a cast: a worm, a leech and a rigged shrimp are worked with the rod, and the flap
+  // tail and ribbon tail he rigs weedless. The crappie box has no head to tow them on that the planner prices.
+  cast_flap_swimbait: 'the rod',
+  cast_ribbon_8in: 'the rod',
+  cast_feather_worm: 'the rod',
+  cast_leech: 'the rod',
+  cast_shrimp: 'the rod',
+  crappie_minnow: 'the rod',
+  crappie_tube: 'the rod',
+  crappie_grub: 'the rod',
+  crappie_paddle: 'the rod',
+  crappie_marabou: 'the rod',
 
   // ── AND THE ONE THAT WAS UNRULED IS NOW TWO BAITS ───────────────────────────────────────────
   // `cast_worm` used to be absent from this table because Ryan could not rule on it: "the worm it

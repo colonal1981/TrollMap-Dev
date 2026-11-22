@@ -4,8 +4,8 @@
  * All changes persist to IndexedDB via tackle-inventory.js.
  */
 
-import { getInventory, saveInventory } from '../data/tackle-inventory.js';
-import { LURE_KNOWLEDGE } from '../data/lure-knowledge.js';
+import { getInventory, saveInventory, TACKLE_INVENTORY } from '../data/tackle-inventory.js';
+import { LURE_KNOWLEDGE, ratedDepthOf } from '../data/lure-knowledge.js';
 
 /**
  * Short display names for the inventory table's narrow Type column.
@@ -48,11 +48,38 @@ export const TYPE_LABELS = {
   cast_only:            'Cast Only',
 };
 
-function depthLabel(lure) {
-  const pd = LURE_KNOWLEDGE[lure.type]?.physicalDepth;
-  if (!pd) return 'Variable';
-  if (pd.min === 0 && pd.max <= 1) return 'Surface';
-  return `${pd.min}–${pd.max}ft`;
+const escHtml = (v) => String(v == null ? '' : v)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+/**
+ * THE BUILT-IN BY ID, for what a box saved before it existed does not carry. A box saved on this device keeps the
+ * entries as they were saved, so the colours (2026-11-22) and a bait's own rated depth come from the shipped list.
+ */
+const shipped = (lure) => (lure && lure.id ? TACKLE_INVENTORY.find((b) => b.id === lure.id) : null) || null;
+
+/** The colours he has of this lure, as "name ×n" for the line under it; '' when none are on file. */
+export function colorLine(lure) {
+  const list = (lure && Array.isArray(lure.colors) && lure.colors.length ? lure.colors : (shipped(lure) || {}).colors) || [];
+  return list.map((c) => (c.n > 1 ? `${c.name} ×${c.n}` : c.name)).join(' · ');
+}
+
+/**
+ * What the Depth column says. It read `physicalDepth`, which no type has, so every row said "Variable". A rated bait
+ * now says its box (the bait's own when it has one, its type's band when not), a surface bait says so, a cast-only
+ * bait says it is cast, and a bait whose depth is the lead and the speed says that.
+ */
+export function depthLabel(lure) {
+  const k = LURE_KNOWLEDGE[lure && lure.type];
+  if (!k) return 'Variable';
+  if (Number.isFinite(Number(lure.minDepth)) && Number.isFinite(Number(lure.maxDepth))
+      && lure.minDepth !== null && lure.maxDepth !== null) return `${lure.minDepth}–${lure.maxDepth}ft`;
+  if (k.depthMode === 'surface') return 'Surface';
+  if (k.depthMode === 'none') return 'Cast';
+  if (k.depthMode === 'rated') {
+    const r = ratedDepthOf({ ...lure, ratedDepthFt: lure.ratedDepthFt || (shipped(lure) || {}).ratedDepthFt });
+    return r ? `${r.min}–${r.max}ft` : 'Variable';
+  }
+  return 'Lead & speed';
 }
 
 async function renderTable(body) {
@@ -78,7 +105,8 @@ async function renderTable(body) {
         <tbody>
           ${inv.map((lure, i) => `
             <tr style="border-top:1px solid var(--line);${!lure.trollable ? 'opacity:0.5' : ''}">
-              <td style="padding:4px 8px;color:var(--text)">${lure.name}</td>
+              <td style="padding:4px 8px;color:var(--text)">${escHtml(lure.name)}${colorLine(lure)
+                ? `<div style="font-size:10px;color:var(--muted);margin-top:1px">${escHtml(colorLine(lure))}</div>` : ''}</td>
               <td style="padding:4px 8px;color:var(--muted);font-size:10px">${TYPE_LABELS[lure.type] || lure.type}</td>
               <td style="padding:4px 8px;text-align:center;color:var(--accent2);font-size:10px">${depthLabel(lure)}</td>
               <td style="padding:4px 8px;text-align:center">${lure.trollable ? '✅' : '—'}</td>

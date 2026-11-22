@@ -12,11 +12,12 @@
 
 import { state } from '../core/state.js';
 import { esc } from '../utils/escape.js';
-import { lureChoices } from '../utils/lure-choices.js';
+import { lureChoices, colorChoices } from '../utils/lure-choices.js';
 import { getLoadedRegistry, lakeRecordFor, workerBase } from '../data/lake-registry.js';
 import { describeCatchDepth, ON_CONTOUR_MI } from '../utils/catch-depth.js';
 import { loadAccessIndex, nearestLakeByAccessPoint } from '../data/access-index.js';
 import { TACKLE_INVENTORY } from '../data/tackle-inventory.js';
+import { colorsOf } from '../data/tackle-inventory.js';
 import { get as dbGet, tryPut } from '../utils/db.js';
 
 import { callGlobal } from '../utils/call-global.js';
@@ -659,7 +660,7 @@ function renderJournalOnly(body = document.getElementById('catchCenterBody')) {
         <span style="font-size:18px">🐟</span>
         <div style="flex:1;min-width:0">
           <div><b>${esc(c.species || 'Fish')}</b> <button data-editspecies="${i}" class="small" title="Change the species of this fish" style="padding:0 5px">✎</button>${c.length ? ` · ${esc(c.length)}"` : ''} · ${esc(c.date || '')} ${esc(c.time || '')} · ${esc(c.lake || '')} <button data-editlake="${i}" class="small" title="Change the water this fish is filed under" style="padding:0 5px">✎</button>${c.reviewFlags?.includes('lake_mismatch_on_recheck') ? ` <span style="color:#e0a030">⚠ suggested: ${esc(c.lakeRecheckSuggestion || '')}</span>` : ''}</div>
-          <div class="muted">Lure: ${esc(c.lure || 'not recorded')} <button data-editlure="${i}" class="small" title="Change the lure this fish was caught on" style="padding:0 5px">✎</button></div>
+          <div class="muted">Lure: ${esc(c.lure || 'not recorded')}${c.lure && c.lureColor ? ` · ${esc(c.lureColor)}` : ''} <button data-editlure="${i}" class="small" title="Change the lure and colour this fish was caught on" style="padding:0 5px">✎</button></div>
           <div class="muted">${c.depth ? `Depth: ${esc(describeCatchDepth(c).text)}` : ''}${c.waterTempF != null ? ` · Water ${esc(c.waterTempF)} °F` : ''}${c.sourceFile ? ` · ${esc(c.sourceFile)}` : ''}${c.verification?.length ? ` · length: ${esc(c.verification.length)}` : ''}</div>
           ${c.notes ? `<div style="margin-top:2px">${esc(c.notes)}</div>` : ''}
         </div>
@@ -864,6 +865,7 @@ function renderQueueDetail(el, q) {
       <div><label>Has fish</label><select id="rvHasFish"><option value="true" ${q.verified?.hasFish ? 'selected' : ''}>Yes</option><option value="false" ${!q.verified?.hasFish ? 'selected' : ''}>No</option></select></div>
       <div><label>On board</label><select id="rvOnBoard"><option value="true" ${q.verified?.onBoard ? 'selected' : ''}>Yes</option><option value="false" ${!q.verified?.onBoard ? 'selected' : ''}>No</option></select></div>
       <div><label>Lure ${lureImg ? '' : '(no paired photo — type freely)'}</label>${lureOptions(q.lure || '')}</div>
+      <div><label>Colour</label>${colorOptions(q.lure || '', q.lureColor || '')}</div>
     </div>
     <div style="margin-top:8px"><label>Notes</label><textarea id="rvNotes" rows="4">${esc(q.ai?.notes || '')}</textarea></div>
     <div class="muted" style="margin-top:6px">AI species: ${esc(q.ai?.species || '')}${q.ai?.inferredSpecies && q.ai.inferredSpecies !== q.ai.species ? ` → ${esc(q.ai.inferredSpecies)}` : ''} · Model: ${esc(q.ai?.model || '')} · Flags: ${esc(flags.join(', ') || 'none')}</div>
@@ -894,6 +896,11 @@ function renderQueueDetail(el, q) {
     await saveQueue();
     renderCatchSubtab();
   });
+  // The colour list follows the lure: pick or type a lure and its colours are the choices.
+  el.querySelector('#rvLure')?.addEventListener('input', (e) => {
+    const dl = el.querySelector('#rvLureColorList');
+    if (dl) dl.innerHTML = journalColorNames(e.target.value).map((c) => `<option value="${esc(c)}">`).join('');
+  });
   el.querySelector('#approveCatchBtn')?.addEventListener('click', async () => { applyDetailEdits(q); await approveQueueItem(q); moveNext(); renderCatchSubtab(); });
   el.querySelector('#rejectCatchBtn')?.addEventListener('click', async () => { q.status = 'rejected'; q.updatedAt = new Date().toISOString(); await saveQueue(); moveNext(); renderCatchSubtab(); });
   el.querySelector('#markPendingBtn')?.addEventListener('click', async () => { q.status = 'pending'; q.updatedAt = new Date().toISOString(); await saveQueue(); renderCatchSubtab(); });
@@ -921,6 +928,20 @@ function lureOptions(current) {
   const options = journalLureNames().map((l) => `<option value="${esc(l)}">`).join('');
   return `<input id="rvLure" list="rvLureList" value="${esc(current)}" placeholder="type or pick lure"><datalist id="rvLureList">${options}</datalist>`;
 }
+
+/**
+ * THE COLOUR OF THE LURE HE CAUGHT IT ON. Ryan, 2026-11-21: "yes to the color on the catch journal". The choices are the
+ * colours he has of the lure picked (tackle-colors.js, off his photos); like the lure, it is still a free-text box, so a
+ * colour he has not got on file can be typed. The list follows the lure box as he changes it.
+ */
+export function journalColorNames(lureName) {
+  return colorsOf(lureName).map((c) => c.name);
+}
+function colorOptions(lure, current) {
+  const options = journalColorNames(lure).map((c) => `<option value="${esc(c)}">`).join('');
+  return `<input id="rvLureColor" list="rvLureColorList" value="${esc(current)}" placeholder="type or pick colour">`
+    + `<datalist id="rvLureColorList">${options}</datalist>`;
+}
 function applyDetailEdits(q) {
   q.verified = q.verified || {};
   q.verified.species = document.getElementById('rvSpecies')?.value || '';
@@ -938,6 +959,7 @@ function applyDetailEdits(q) {
   q.lat = document.getElementById('rvLat')?.value || '';
   q.lon = document.getElementById('rvLon')?.value || '';
   q.lure = document.getElementById('rvLure')?.value || '';
+  q.lureColor = document.getElementById('rvLureColor')?.value || '';
   q.ai.notes = document.getElementById('rvNotes')?.value || '';
   q.verified.reviewed = true;
   q.updatedAt = new Date().toISOString();
@@ -970,6 +992,8 @@ async function approveQueueItem(q) {
     // to know how much line was out when a fish bit. Ryan, 10/4: "stop gathering it unless you know an
     // exact way to know how much line is in the water".
     lure: q.lure || '',
+    // The colour of it, from the review form (2026-11-22). Blank when no lure was logged.
+    lureColor: (q.lure && q.lureColor) || '',
     time: displayTime(q.time),
     date: q.date || '',
     lake: q.lake || '',
@@ -1289,17 +1313,25 @@ function editCatchLure(body, i, btn) {
   btn.disabled = true;
   const box = document.createElement('div');
   box.style.cssText = 'display:flex;gap:6px;align-items:center;margin-top:4px';
+  // AND ITS COLOUR, beside it (2026-11-22): the colours he has of the lure chosen, which change when the lure does.
   box.innerHTML = `<select style="flex:1;min-width:0" aria-label="Lure this fish was caught on">${lureChoices(c.lure, journalLureNames())}</select>`
+    + `<select style="flex:1;min-width:0" aria-label="Colour of that lure">${colorChoices(c.lureColor, journalColorNames(c.lure))}</select>`
     + '<button class="primary small">Save</button><button class="small">Cancel</button>';
   btn.parentElement.after(box);
-  const [input, save, cancel] = [box.querySelector('select'), ...box.querySelectorAll('button')];
+  const [input, colour] = box.querySelectorAll('select');
+  const [save, cancel] = box.querySelectorAll('button');
   input.focus();
+  input.addEventListener('change', () => { colour.innerHTML = colorChoices('', journalColorNames(input.value)); });
   cancel.addEventListener('click', () => { box.remove(); btn.disabled = false; });
-  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') save.click(); if (e.key === 'Escape') cancel.click(); });
+  for (const s of [input, colour]) {
+    s.addEventListener('keydown', (e) => { if (e.key === 'Enter') save.click(); if (e.key === 'Escape') cancel.click(); });
+  }
   save.addEventListener('click', async () => {
     const lure = input.value.trim();
-    if (!lure || lure === c.lure) { box.remove(); btn.disabled = false; return; }
+    const lureColor = colour.value.trim();
+    if (!lure || (lure === c.lure && lureColor === (c.lureColor || ''))) { box.remove(); btn.disabled = false; return; }
     c.lure = lure;
+    c.lureColor = lureColor;
     await saveCatches();
     renderJournalOnly(body);
   });
@@ -1343,7 +1375,7 @@ function exportJournalCsv() {
   const rows = getCatches().map(c => ({
     species: c.species, length: c.length, date: c.date, time: c.time, lake: c.lake, depth: c.depth,
     waterTempF: c.waterTempF ?? '',
-    lat: c.lat, lon: c.lon, lure: c.lure, notes: c.notes,
+    lat: c.lat, lon: c.lon, lure: c.lure, lureColor: c.lureColor || '', notes: c.notes,
     tempF: c.weather?.tempF ?? '', windMph: c.weather?.windMph ?? '', windDir: c.weather?.windDir ?? '', cloudPct: c.weather?.cloudPct ?? '', pressureHpa: c.weather?.pressureHpa ?? '', moonPhase: c.weather?.moonPhase || '',
     sourceFile: c.sourceFile, lengthVerification: c.verification?.length || ''
   }));

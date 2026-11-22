@@ -22,8 +22,10 @@ const rig = (id) => TACKLE_INVENTORY.find((l) => l.id === id);
 const middle = (w) => (w.min + w.max) / 2;
 
 test('the three A-rigs are his one frame with its five heads', () => {
-  const arigs = TACKLE_INVENTORY.filter((l) => l.type === 'umbrella_rig');
+  // The mini A-rig off his 11/21 photos is a casting rig of small heads, not this frame, and never goes behind the boat.
+  const arigs = TACKLE_INVENTORY.filter((l) => l.type === 'umbrella_rig' && l.id !== 'arig_mini');
   assert.deepEqual(arigs.map((l) => l.id), ['arig_light', 'arig_medium', 'arig_heavy']);
+  assert.equal(TACKLE_INVENTORY.find((l) => l.id === 'arig_mini').trollable, false);
   assert.ok(Math.abs(rig('arig_light').weightOz - 3.475) < 1e-9, 'five 3/8 oz heads on 1.6 oz');
   assert.ok(Math.abs(rig('arig_medium').weightOz - 4.1) < 1e-9, 'five 1/2 oz heads on 1.6 oz');
   assert.ok(Math.abs(rig('arig_heavy').weightOz - 5.6) < 1e-9, 'four 3/4 oz and a 1 oz on 1.6 oz');

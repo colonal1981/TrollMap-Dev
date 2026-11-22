@@ -63,7 +63,7 @@ import { NO_GO_SUSTAINED_MPH, NO_GO_GUST_MPH } from '../utils/wind-waves.js';
 import { isNum, num } from '../utils/num.js';
 import { depthWindow, jigheadRangeOz, trollableBaits, describeBait, LURE_KNOWLEDGE,
          gpsWindowFor, leadForDepth, requiresInlineWeight, levelsOffFt } from '../data/lure-knowledge.js';
-import { RIGGED_TROLLING_WEIGHT_OZ, JIGHEADS_OWNED_OZ, TROLLING_WEIGHTS_OWNED_OZ, TACKLE_INVENTORY, RIGGED_SPOON } from '../data/tackle-inventory.js';
+import { RIGGED_TROLLING_WEIGHT_OZ, JIGHEADS_OWNED_OZ, TROLLING_WEIGHTS_OWNED_OZ, TACKLE_INVENTORY, colorsOf, colorInBox } from '../data/tackle-inventory.js';
 import { ozLabel } from '../utils/oz.js';
 import { promptSafeTackleName } from '../utils/tackle-name.js';
 import { FISHING_STYLE } from '../data/fishing-style-profile.js';
@@ -2237,7 +2237,7 @@ export function buildPlanRequest(o) {
     // spoon's depth is set by its BILL and that it runs null to null feet.
     if (w.mode === 'needs_weight') {
       return `${name} — this bait ONLY fishes behind an inline trolling weight, and the app `
-           + `fits it (Ryan owns 1, 2 and 3 oz; the 2 oz is what is tied on). Bare it is a `
+           + `fits it (Ryan owns 1, 2 and 3 oz and rigs whichever weight the plan names). Bare it is a `
            + `planing surface and rides just under the top at any lead, so do not put one on a `
            + `rod expecting it to sink on its own. Say what depth you want it at and leave the `
            + `weight and the lead to the app — a depth you quote for this bait without a weight `
@@ -2345,6 +2345,14 @@ export function buildPlanRequest(o) {
    * IT RANKS NOTHING and it does not say when. What band each bait covers is a fact; which one to
    * put out, and at what hour, is the judgement the model and the fisherman are here for.
    */
+  // WHICH COLOURS ARE IN THE BOX. Ryan, 2026-11-21: the plan "picks a color from the lure's list", and the list is his,
+  // counted off his photos (tackle-colors.js). "Colour is a free string; assume any colour combination is aboard" was
+  // what this said before, and it let a plan put a colour on a rod that he could not tie on.
+  const colourLines = (o.tackle || [])
+    .map((n) => ({ n, c: colorsOf(n) }))
+    .filter((x) => x.c.length)
+    .map((x) => `- ${promptSafeTackleName(x.n)}: ${x.c.map((c) => c.name).join('; ')}`);
+
   const gate = (() => {
     if (!Array.isArray(o.inventory) || !o.inventory.length) return null;
     const floor = Number(o.oxygenFloorFt);
@@ -2372,10 +2380,6 @@ export function buildPlanRequest(o) {
                : l.leadIsLimit ? `, ${l.leadFt} ft of lead, the most he runs`
                                : `, ${l.leadFt} ft of lead at its deepest`) : ''}`
       + `${l.inlineWeightOz ? ` behind the ${l.inlineWeightOz}oz inline weight` : ''}`
-      // WHICH SPOON IS TIED BEHIND THE WEIGHT NOW (Ryan, 11/6): the other one is a re-tie at the truck.
-      + `${RIGGED_SPOON && l.inlineWeightOz && requiresInlineWeight(l.type)
-            ? (l.name === RIGGED_SPOON.name ? ' (this is the spoon tied behind his weight now)'
-               : ' (not tied on now: his weight has the other spoon behind it, so this one is a re-tie at the truck)') : ''}`
       + `${l.jigheadOz ? ` on a ${ozLabel(l.jigheadOz)} head` : ''}`
       + `${describeBait(l.type) ? ` — ${describeBait(l.type)}` : ''}`
       // AND WHAT TO HOLD ON THE GPS TO GET IT THERE, on a river. See riverSpeedNote().
@@ -2484,9 +2488,14 @@ weight; a paddle-tail swimbait on a jighead; a bucktail), so that whatever the s
 25 ft, two rigged rods can be slowed down to it. Each leg's card carries a ladder the app works out
 from the rods you rig: for each 5 ft of fish depth, which two rods and what speed.
 
-Colour is a free string; assume any colour combination is aboard. Use ONLY these exact lure names:
+Use ONLY these exact lure names:
 ${gate ? gate.names : ((o.tackle || []).map(promptSafeTackleName).join(', ') || '(inventory unavailable)')}
-${gate ? gate.block : ''}
+${gate ? gate.block : ''}${colourLines.length ? `
+THE COLOURS HE HAS OF EACH. A rod's \`color\` is one of that bait's colours below, written as it is
+here: those are the ones in his box, counted off his photos, and he has no others. A bait that is not
+listed here has no colour on file, so leave its \`color\` empty.
+${colourLines.join('\n')}
+` : ''}
 ${depthNotes.length ? `
 HOW EACH OF THESE GETS TO A DEPTH. There are only three ways to move a bait: the lead, the speed,
 or a different bait. Do not read a depth off a lure's NAME — the name is what the box says.
@@ -2537,7 +2546,7 @@ its own: weigh it as you would a person who was out there last week.
 HIS OWN FISH ON A LEG, AND THE WEATHER THEY CAME IN. \`yourHistory\` on a leg counts his catches
 within 300 m of it -- photo positions, a few hundred metres of drift, so "in this pocket", not "on
 this line". \`thisSpeciesWhen\` lists each of his catches of the day's species there: the date and the
-local time he caught it, the length, the lure where he logged one, the depth and where it came from
+local time he caught it, the length, the lure and its colour where he logged them, the depth and where it came from
 (his sounder at the bite, or the chart under the photo), the water temperature his unit read, and
 \`then\`: the air temperature, cloud, wind, surface pressure and moon at the hour of the catch, from the
 weather archive. SET THEM AGAINST TODAY, which is in THE DAY above: the month, the hour you put the leg
@@ -2811,7 +2820,7 @@ RETURN EXACTLY THIS SHAPE
   "loadout": {
     "why": "how these six cover the day's depth bands",
     "rods": [
-      { "id": "R1", "lure": "exact name from the list", "color": "free text",
+      { "id": "R1", "lure": "exact name from the list", "color": "one of that bait's colours, as listed",
         "role": ${o.isRiver ? '"troll"' : '"troll" or "cast"'}, "leadFt": 95, "runsDepthFt": [22, 28],
         "why": "one sentence" }
       // Only the rods this plan uses — two is a complete answer. Put tie-only lures on
@@ -3234,19 +3243,22 @@ export function needsInlineWeightByName(name) {
 }
 
 /**
- * HOW A SPOON IS RIGGED: the inline weight it goes behind, and whether that is what is tied on now.
+ * HOW A SPOON IS RIGGED: the spoon and the inline weight it goes behind, named so he can tie it.
  *
- * The weight is the one rigged (RIGGED_TROLLING_WEIGHT_OZ, his 2 oz) unless the depth the plan wants the spoon at needs
- * more than his 120 ft of line at 2 mph with it; then the lightest in his box that gets there. The spoon tied behind the
- * rigged weight now is RIGGED_SPOON (Ryan, 11/6: "the spoon i have tied to the 2oz weight is the smaller 4 inch spoon
- * that is 3/4oz"); any other spoon, or another weight, is a re-tie at the truck, and is said.
- * {weightOz, said, retie}.
+ * Ryan, 2026-11-22: "i am not going to run the spoons without a weight for trolling... so if it is for trolling it needs
+ * to tell which spoon and what weight and i will rig it. i have 1,2,3 oz weights". So nothing here is a re-tie: before
+ * that, the 3/4 oz spoon was "tied on now" and every other spoon came with a re-tie note, and the 2 oz weight has since
+ * moved to the 5" Nichols, which made the note wrong the day he moved it. The rod says which spoon (rod.lure) and this
+ * says which weight.
+ *
+ * The weight starts at the 2 oz, the middle of his three, and goes heavier then lighter only when the depth the plan
+ * wants the spoon at needs more than his 120 ft of line at 2 mph with it. {weightOz, said}.
  */
 export function spoonRig(rod) {
   const lure = TACKLE_INVENTORY.find((l) => l.name === rod.lure) || null;
-  const rigged = Number(RIGGED_TROLLING_WEIGHT_OZ) > 0 ? Number(RIGGED_TROLLING_WEIGHT_OZ) : null;
+  const first = Number(RIGGED_TROLLING_WEIGHT_OZ) > 0 ? Number(RIGGED_TROLLING_WEIGHT_OZ) : null;
   const owned = [...(TROLLING_WEIGHTS_OWNED_OZ || [])].sort((a, b) => a - b);
-  const order = rigged ? [rigged, ...owned.filter((w) => w !== rigged && w > rigged), ...owned.filter((w) => w < rigged)] : owned;
+  const order = first ? [first, ...owned.filter((w) => w !== first && w > first), ...owned.filter((w) => w < first)] : owned;
   const runs = Array.isArray(rod.runsDepthFt) && rod.runsDepthFt.length === 2 && rod.runsDepthFt.every((v) => isNum(v))
     ? (Number(rod.runsDepthFt[0]) + Number(rod.runsDepthFt[1])) / 2 : null;
   const maxLead = FISHING_STYLE.rigging?.maxLeadFt ?? 120;
@@ -3255,20 +3267,9 @@ export function spoonRig(rod) {
     const w = order.find((x) => { const lead = leadForDepth({ ...lure, inlineWeightOz: x }, runs, TROLL_MPH); return lead > 0 && lead <= maxLead; });
     if (w != null) weightOz = w;
   }
-  const isRiggedSpoon = !!(RIGGED_SPOON && RIGGED_SPOON.name === rod.lure);
   const w = weightOz != null ? ozLabel(weightOz) : 'an inline';
-  const said = `behind the ${w} inline weight on the swivel snap, 5 ft fluoro leader to the spoon (no-slip loop knot)`
-    + (isRiggedSpoon && weightOz === rigged ? ' — as it is tied now' : '');
-  const spoonNow = RIGGED_SPOON ? `${RIGGED_SPOON.lengthIn ? `${RIGGED_SPOON.lengthIn}" ` : ''}${ozLabel(RIGGED_SPOON.weightOz)} spoon` : 'other spoon';
-  let retie = null;
-  if (!isRiggedSpoon && RIGGED_SPOON) {
-    retie = `${rod.id} is the ${rod.lure}: the ${rigged != null ? ozLabel(rigged) : ''} weight has the ${spoonNow} tied behind it `
-      + `now, so this is a re-tie at the truck — the ${rod.lure} on a 5 ft fluoro leader behind the ${w} weight`;
-  } else if (weightOz !== rigged && rigged != null) {
-    retie = `${rod.id}: the ${rod.lure} needs the ${w} weight to reach ${Math.round(runs)} ft on ${maxLead} ft of line at `
-      + `${TROLL_MPH} mph; the ${ozLabel(rigged)} is the one tied on, so swap the weight at the truck`;
-  }
-  return { weightOz, said, retie };
+  const said = `behind the ${w} inline weight on the swivel snap, 5 ft fluoro leader to the spoon (no-slip loop knot)`;
+  return { weightOz, said };
 }
 
 export function seatRods(rods, connOf, firstOf = null, weightOf = null) {
@@ -3401,9 +3402,19 @@ export function planArgsFrom(res, candidates, ctx = {}) {
     // problem above says the bag does not hold it, and swapping in a different lure would be
     // choosing his tackle for him.
     const lure = (hit && hit.name) || asked;
+    // THE COLOUR IS ONE HE HAS OR IT IS NOTHING. Read forgivingly (case, punctuation, word order) and written back in
+    // the box's own spelling; a colour that is not his is said and dropped, rather than kept on a rod he cannot rig.
+    // A bait with no colours on file keeps none: whatever was written about it is not something anyone checked.
+    const wroteColor = str(r.color);
+    const owned = colorsOf(lure);
+    const inBox = owned.length && wroteColor ? colorInBox(lure, wroteColor) : null;
+    if (owned.length && wroteColor && !inBox) {
+      problems.push(`${id}: he has no ${lure} in "${wroteColor}" — he has ${owned.map((c) => c.name).join(', ')}; `
+                  + 'colour left blank');
+    }
     return {
       id, role: r.role === 'cast' ? 'cast' : 'troll',
-      lure, color: str(r.color), why: str(r.why),
+      lure, color: inBox ? inBox.name : '', why: str(r.why),
       leadFt: num(r.leadFt),
       runsDepthFt: Array.isArray(r.runsDepthFt) && r.runsDepthFt.length === 2
         ? r.runsDepthFt.map(Number) : null,
@@ -3417,7 +3428,6 @@ export function planArgsFrom(res, candidates, ctx = {}) {
   seat.rods = seat.rods.map((r) => {
     if (r.staged || !needsInlineWeightByName(r.lure)) return r;
     const rig = spoonRig(r);
-    if (rig.retie) problems.push(rig.retie);
     return { ...r, inlineWeightOz: rig.weightOz, rigSaid: rig.said };
   });
   const moved = Object.keys(seat.map);

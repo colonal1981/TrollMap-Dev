@@ -31,7 +31,8 @@
  *      here zero times, and had already drifted from the knowledge copy on 11.
  *   ✅ IDB persistence
  *   ✅ Planner API (selectBestLure — delegates scoring to lure-knowledge)
- *   ❌ No color logic
+ *   ✅ WHICH COLOURS HE HAS OF EACH LURE -- `colors`, from tackle-colors.js (his photos, 2026-11-21/22).
+ *      Which colour suits the water is not here; the plan picks from his list.
  *   ❌ No fishing tactics
  *   ❌ No jighead selection logic
  *   ❌ No species knowledge
@@ -133,20 +134,31 @@ const AS_BOUGHT = [
   { id:'underspin_owner', name:'Underspin Jig (Flashy Swimmer)',
     type:'underspin', trollable:true, castable:true, weightOz:0.375 },
 
-  // ── Spoons (Preserving spoon_3quarter, Adding Jigging/Diamond Spoon) ──────
-  // THE SPOON TIED BEHIND THE 2 OZ WEIGHT NOW. Ryan, 2026-11-06: "right now the spoon i have tied to the 2oz weight is
-  // the smaller 4 inch spoon that is 3/4oz". A plan that wants another spoon says it is a re-tie (spoonRig()).
+  // ── Spoons ────────────────────────────────────────────────────────────────
+  // NO SPOON IS "THE ONE TIED ON" ANY MORE. Ryan, 2026-11-06, had the 4" behind his 2 oz weight, and a plan that picked the
+  // other spoon called it a re-tie at the truck. 2026-11-22: "weight moved over... no weight on the 4 inch right now",
+  // then "i am not going to run the spoons without a weight for trolling... so if it is for trolling it needs to tell
+  // which spoon and what weight and i will rig it. i have 1,2,3 oz weights". So spoonRig() names the spoon and the
+  // weight, and nothing is a re-tie.
   { id:'spoon_3quarter', name:'Nichols Lake Fork Flutter Spoon 3/4oz',
-    type:'flutter_spoon', trollable:true, castable:true, weightOz:0.75, lengthIn:4, riggedOn:'troll_weight_2oz' },
+    type:'flutter_spoon', trollable:true, castable:true, weightOz:0.75, lengthIn:4 },
 
-  { id:'spoon_casting_dr_fish', name:'Dr.Fish Diamond Jig / Jigging Spoon 1oz',
-    type:'spoon_casting', trollable:true, castable:true, weightOz:1.0 },
+  // The Dr.Fish diamond jig and the 3/4 oz marabou jig left the box 2026-11-22, Ryan: "i think the diamond jig and the
+  // marabou are at the bottom of a lake and i dont think i ever had the haruki jigs". RETIRED_IDS below takes them out
+  // of a saved box too.
 
   { id:'spoon_nichols_118', name:'Nichols Lake Fork Flutter Spoon 5" 1-1/8oz (FS14-118)',
     type:'flutter_spoon', trollable:true, castable:true, weightOz:1.125 },
 
+  // TWO SIZES, ONE OF EACH. Ryan, 2026-11-22: "p-line lures that are the same color i believe are 2 different sizes",
+  // then, measured, "no stamp or label the big one is 4 inches and the smaller one looks to be 3.75". P-Line makes the
+  // 1 oz at 3", the 2 oz at 3-3/4" and the 3 oz at 4-1/4" and nothing between, so his are the 2 and the 3 (my read
+  // of his tape against the maker's lengths). Both Chartreuse Silver Blue (PLM-04).
   { id:'spoon_laser_minnow_2oz', name:'P-Line Laser Minnow 2oz (PLM2)',
-    type:'spoon_casting', trollable:true, castable:true, weightOz:2.0 },
+    type:'spoon_casting', trollable:true, castable:true, weightOz:2.0, lengthIn:3.75 },
+
+  { id:'spoon_laser_minnow_3oz', name:'P-Line Laser Minnow 3oz (PLM3)',
+    type:'spoon_casting', trollable:true, castable:true, weightOz:3.0, lengthIn:4.25 },
 
   // ── Inline trolling weights ───────────────────────────────────────────────
   //
@@ -180,16 +192,8 @@ const AS_BOUGHT = [
     type:'trolling_weight', trollable:false, castable:false, weightOz:3.0, rigged:false },
 
   // ── Vertical / Knife Jigs ────────────────────────────────────
-  // Trollable, not cast-only — a dense wire-through body holds depth at speed.
-  // 2-3oz is not heavy in context: a 1oz bucktail behind a 2oz trolling weight is
-  // already 3oz through the water -- and since 2026-09-14 that is arithmetic the app
-  // does, not a remark. See TROLLING_WEIGHTS_OWNED_OZ below. Depth comes from lead
-  // length, so diveDepth stays null and the planner works it out from tacticalDepth.
-  { id:'jig_haruki_21', name:'P-Line Haruki Jig 2.1oz (PHJ21)',
-    type:'vertical_jig', trollable:true, castable:true, weightOz:2.1 },
-
-  { id:'jig_haruki_29', name:'P-Line Haruki Jig 2.9oz (PHJ29)',
-    type:'vertical_jig', trollable:true, castable:true, weightOz:2.9 },
+  // None. The two P-Line Haruki jigs that stood here were never his (2026-11-22, above). The type stays in
+  // lure-knowledge.js for the day one is bought.
 
   // ── Spinnerbaits ──────────────────────────────────────────────────────────
   { id:'spinner_quarter',  name:'1/4oz Spinnerbait',
@@ -224,8 +228,6 @@ const AS_BOUGHT = [
   { id:'bucktail_shark_shooter', name:'Shark Shooter Bucktail w/ Spinner 3/4oz',
     type:'bucktail', trollable:true, castable:true, weightOz:0.75 },
 
-  { id:'marabou_3quarter',  name:'3/4oz Marabou Jig',
-    type:'marabou_jig', trollable:true, castable:true, weightOz:0.75 },
 
   // ── Jigheads ─────────────────────────────────────────────────────────────
   { id:'jighead_quarter',  name:'1/4oz Jighead',
@@ -346,6 +348,124 @@ const AS_BOUGHT = [
 
   { id:'cast_worm_speed_7in', name:'Speedworm 7" – Jighead',
     type:'swimbait_paddle', trollable:true, castable:true, weightOz:null, lengthIn: 7.0 },
+
+  // ══ HIS BAITS BY NAME, FROM HIS PHOTOS (2026-11-21/22) ═══════════════════════════════════════════════════════════
+  //
+  // Ryan, 11/21: "if an entry doesn't exist why not just make one that matches... you know what the lures are... dont
+  // try to force them into a category if they belong in their own". So each of these is HIS bait, by the name he knows
+  // it by or by what it is. The `type` is only the physics the planner already models for it (how its depth is set,
+  // what speed it keeps, snap or tie); it is not what the bait is called. The colours are tackle-colors.js. The lists
+  // he checked: claude/LURE_INVENTORY_HARD_BAITS_2026-11-21.md, LURE_INVENTORY_SOFT_PLASTICS_2026-11-21.md,
+  // LURE_REVIEW_CHECKED_2026-11-22.md.
+  //
+  // `ratedDepthFt` IS THE MAKER'S NUMBER for a crankbait with a name, looked up 11/22 (the hard-bait list's "Dive
+  // depths from the makers" table), and it replaces the type's band for that bait (ratedDepthOf() in
+  // lure-knowledge.js). Where the maker gives only a top depth ("to 27 ft"), the shallow end is 4 ft above it: that
+  // gap is mine, the width of the app's own DD bands, and the shallow end is the one the plan counts on. Weights are the
+  // maker's where printed and a common weight for the size where not (his rule for the lipless, 11/21).
+
+  // ── Crankbaits he has by name ──────────────────────────────────────────────────────────────
+  { id:'cb_knockoff_10ft', name:'Amazon Knock-off Minnow Crankbait (to 10ft)',
+    type:'crankbait_mr', trollable:true, castable:true, weightOz:0.375, ratedDepthFt:{ min:6, max:10 } },
+  { id:'cb_flicker_9d', name:'Berkley Flicker Minnow 9D',
+    type:'crankbait_dd2', trollable:true, castable:true, weightOz:0.333, ratedDepthFt:{ min:18, max:23 } },
+  { id:'cb_flicker_11d', name:'Berkley Flicker Minnow 11D',
+    type:'crankbait_dd2', trollable:true, castable:true, weightOz:0.5, ratedDepthFt:{ min:18, max:23 } },
+  { id:'cb_hitstick_9', name:'Berkley Deep Hit Stick 9',
+    type:'crankbait_dd2', trollable:true, castable:true, weightOz:0.333, ratedDepthFt:{ min:18, max:24 } },
+  { id:'cb_hitstick_12', name:'Berkley Deep Hit Stick 12',
+    type:'crankbait_dd4', trollable:true, castable:true, weightOz:0.75, ratedDepthFt:{ min:26, max:33 } },
+  { id:'cb_bandit_wd', name:'Bandit Walleye Deep',
+    type:'crankbait_dd4', trollable:true, castable:true, weightOz:0.625, ratedDepthFt:{ min:23, max:27 } },
+  { id:'cb_reef_runner_800', name:'Reef Runner Deep Diver 800',
+    type:'crankbait_dd4', trollable:true, castable:true, weightOz:0.625, ratedDepthFt:{ min:24, max:28 } },
+  { id:'cb_bomber_b24a', name:'Bomber Deep Long A B24A',
+    type:'crankbait_dd1', trollable:true, castable:true, weightOz:0.375, ratedDepthFt:{ min:15, max:20 } },
+  { id:'cb_bomber_bd7f', name:'Bomber Fat Free Shad BD7F',
+    type:'crankbait_dd1', trollable:true, castable:true, weightOz:0.75, ratedDepthFt:{ min:14, max:18 } },
+  { id:'cb_ultradiver_80', name:'Freedom Tackle Ultra Diver Shad 80',
+    type:'crankbait_dd4', trollable:true, castable:true, weightOz:0.875, ratedDepthFt:{ min:26, max:30 } },
+  // The 65 is published as "12-plus" cranked and the 50 not at all: they keep their type's band.
+  { id:'cb_ultradiver_65', name:'Freedom Tackle Ultra Diver Shad 65',
+    type:'crankbait_dd1', trollable:true, castable:true, weightOz:0.375 },
+  { id:'cb_ultradiver_50', name:'Freedom Tackle Ultra Diver Shad 50',
+    type:'crankbait_mr', trollable:true, castable:true, weightOz:0.3125 },
+  { id:'cb_rapala_jdhj12', name:'Rapala Jointed Deep Husky Jerk 12',
+    type:'crankbait_mr', trollable:true, castable:true, weightOz:0.5, ratedDepthFt:{ min:8, max:13 } },
+  { id:'cb_yozuri_cmdd130', name:'Yo-Zuri Crystal Minnow Deep Diver 130mm',
+    type:'crankbait_dd2', trollable:true, castable:true, weightOz:0.875, ratedDepthFt:{ min:18, max:20 } },
+  // No label showing; filed by the lip.
+  { id:'cb_deep_minnow', name:'Deep Minnow Crankbait ~4.5" (no label)',
+    type:'crankbait_dd1', trollable:true, castable:true, weightOz:0.5 },
+  { id:'cb_jointed_minnow', name:'Jointed Minnow Crankbait ~5" (no label)',
+    type:'crankbait_dd1', trollable:true, castable:true, weightOz:0.5 },
+  { id:'cb_micro', name:'Micro Crankbait 1-1.6"',
+    type:'crankbait_sr', trollable:true, castable:true, weightOz:0.125 },
+  // Ryan, 11/22, of the 3.6" firetiger: "jerkbait i think".
+  { id:'cb_jerkbait', name:'Jerkbait ~3.6"',
+    type:'crankbait_sr', trollable:true, castable:true, weightOz:0.25 },
+  { id:'cb_jointed_swimbait', name:'Jointed Hard Swimbait 3.7"',
+    type:'crankbait_sr', trollable:true, castable:true, weightOz:0.375 },
+
+  // ── Tail spinners: a lead body with a blade on the tail; depth from weight, lead and speed like a blade bait ──
+  // Ryan, 11/22: "I found my order on amazon for the small tail spinners they are 1/2 oz". The rest by size.
+  { id:'ts_half', name:'Tail Spinner 1/2oz',
+    type:'blade_vibe', trollable:true, castable:true, weightOz:0.5 },
+  { id:'ts_small', name:'Tail Spinner, small (~1/4oz)',
+    type:'blade_vibe', trollable:true, castable:true, weightOz:0.25 },
+  { id:'ts_large', name:'Tail Spinner, large (~3/4oz)',
+    type:'blade_vibe', trollable:true, castable:true, weightOz:0.75 },
+  { id:'tsj_30g', name:'Tail-Spinner Metal Jig 30g (~1oz)',
+    type:'spoon_casting', trollable:true, castable:true, weightOz:1.06 },
+  { id:'spoon_small_cast', name:'Small Casting Spoon (Kastmaster type)',
+    type:'spoon_casting', trollable:false, castable:true, weightOz:0.375 },
+
+  // ── Topwater ───────────────────────────────────────────────────────────────────────────────
+  { id:'tw_plopper_small', name:'Whopper Plopper, small (~2.5")',
+    type:'topwater_troll', trollable:true, castable:true, weightOz:0.25 },
+  { id:'tw_jitterbug', name:'Jitterbug',
+    type:'topwater_cast', trollable:false, castable:true, weightOz:0.25 },
+
+  // ── Skirted and spinner baits ──────────────────────────────────────────────────────────────
+  { id:'jig_swim', name:'Swim Jig (skirted)',
+    type:'jig_football', trollable:false, castable:true, weightOz:0.375 },
+  { id:'inline_small', name:'Inline Spinner 1/8oz (Rooster Tail type)',
+    type:'inline_spinner', trollable:true, castable:true, weightOz:0.125 },
+  { id:'underspin_painted', name:'Underspin Swimbait (painted head)',
+    type:'underspin', trollable:true, castable:true, weightOz:0.375 },
+  { id:'bucktail_soft_jerk', name:'Bucktail Soft Jerk 6" (chartreuse head)',
+    type:'bucktail', trollable:true, castable:true, weightOz:1.0 },
+
+  // ── Soft plastics ──────────────────────────────────────────────────────────────────────────
+  { id:'swimbait_7in', name:'Swimbait 7" – Jighead',
+    type:'swimbait_paddle', trollable:true, castable:true, weightOz:null, lengthIn: 7.0 },
+  { id:'thin_tail_4in', name:'Thin-Tail Minnow 4.3" – Jighead',
+    type:'swimbait_paddle', trollable:true, castable:true, weightOz:null, lengthIn: 4.3 },
+  // Cast by my read; he left the troll-or-cast list at my guesses (11/21).
+  { id:'cast_flap_swimbait', name:"Flapping-Tail Swimbait (Flapp'n Shad / Escape Swim Twin)",
+    type:'cast_only', trollable:false, castable:true, weightOz:0.25 },
+  { id:'cast_ribbon_8in', name:'Ribbon-Tail Worm 8" (Mad Wag)',
+    type:'cast_only', trollable:false, castable:true, weightOz:0.25 },
+  { id:'cast_feather_worm', name:'Feather-Tail Worm ~6"',
+    type:'cast_only', trollable:false, castable:true, weightOz:0.25 },
+  { id:'cast_leech', name:'Leech 3.8" (Zaza)',
+    type:'cast_only', trollable:false, castable:true, weightOz:0.25 },
+  { id:'cast_shrimp', name:'Rigged Soft Shrimp (Prawn StarZ / D.O.A.)',
+    type:'cast_only', trollable:false, castable:true, weightOz:0.5 },
+  { id:'arig_mini', name:'Mini A-Rig (1 willow, 4 minnows)',
+    type:'umbrella_rig', trollable:false, castable:true, weightOz:null },
+  // His crappie box, shot as it is. Cast baits here: the box has no 1/16-1/8 oz heads to troll them on.
+  { id:'crappie_minnow', name:'Crappie Ribbed Minnow 2.5-3"',
+    type:'cast_only', trollable:false, castable:true, weightOz:0.125 },
+  { id:'crappie_tube', name:'Crappie Tube 1.5-2"',
+    type:'cast_only', trollable:false, castable:true, weightOz:0.125 },
+  { id:'crappie_grub', name:'Curly-Tail Grub ~2"',
+    type:'cast_only', trollable:false, castable:true, weightOz:0.125 },
+  { id:'crappie_paddle', name:'Small Paddle Tail ~2"',
+    type:'cast_only', trollable:false, castable:true, weightOz:0.125 },
+  // A marabou jig is its own kind (the 3/4 oz one he lost was the type's only lure until now).
+  { id:'crappie_marabou', name:'Marabou Crappie Jig',
+    type:'marabou_jig', trollable:false, castable:true, weightOz:0.125 },
 ];
 
 /**
@@ -489,11 +609,28 @@ export function replaceShippedBuiltins(saved) {
   return { inventory, changed };
 }
 
+/**
+ * BUILT-INS HE DOES NOT HAVE, taken out of a saved box. Ryan, 2026-11-22: "i think the diamond jig and the marabou are at
+ * the bottom of a lake and i dont think i ever had the haruki jigs". Only the shipped entry goes: a lure he typed in
+ * under another id is his.
+ */
+export const RETIRED_IDS = ['spoon_casting_dr_fish', 'marabou_3quarter', 'jig_haruki_21', 'jig_haruki_29'];
+
+export function dropRetired(saved) {
+  const inventory = (saved || []).filter((l) => !RETIRED_IDS.includes(l && l.id));
+  return { inventory, dropped: (saved || []).length - inventory.length };
+}
+
 export async function getInventory() {
   if (_inventory) return _inventory;
   const saved = await idbLoad();
   if (saved) {
-    const r = replaceShippedBuiltins(await mergeNewBuiltins(saved));
+    const gone = dropRetired(saved);
+    if (gone.dropped) {
+      await saveInventory(gone.inventory);
+      console.log(`[tackle-inventory] took ${gone.dropped} lure(s) he no longer has out of the saved box`);
+    }
+    const r = replaceShippedBuiltins(await mergeNewBuiltins(gone.inventory));
     if (r.changed) {
       await saveInventory(r.inventory);
       console.log(`[tackle-inventory] brought ${r.changed} A-rig(s) in the saved box over to his rigs`);
@@ -520,8 +657,45 @@ export async function getInventory() {
  */
 export const TACKLE_INVENTORY = AS_BOUGHT.map((l) => {
   const trollable = trollsBehindTheBoat(l);
-  return trollable === l.trollable ? l : { ...l, trollable };
+  const colors = (COLORS_BY_ID[l.id] || []).map(([name, n]) => ({ name, n: Number.isFinite(n) ? n : null }));
+  return { ...l, trollable, colors };
 });
+
+/** The colours he has of the lure by this name (inventory spelling), [] when none are listed. */
+export function colorsOf(name) {
+  const hit = lureByName(name);
+  return hit && Array.isArray(hit.colors) ? hit.colors : [];
+}
+
+/**
+ * THE COLOUR HE HAS THAT A WRITTEN COLOUR MEANS, in the box's own spelling, or null.
+ *
+ * The plan is asked for a colour off the lure's list. Matching is forgiving about case, spaces and punctuation and
+ * about a colour written inside a longer phrase ("Live Threadfin" in "live threadfin shad"), because that is still his
+ * colour; anything else is not, and the caller says so rather than keeping a colour he does not own.
+ */
+export function colorInBox(lureName, written) {
+  const list = colorsOf(lureName);
+  const FILLER = new Set(['w', 'with', 'and', 'back', 'belly', 'the', 'a', 'on', 'of']);
+  const words = (x) => String(x || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(' ')
+    .filter((t) => t && !FILLER.has(t));
+  const w = words(written);
+  if (!w.length || !list.length) return null;
+  const same = list.find((c) => words(c.name).join(' ') === w.join(' '));
+  if (same) return same;
+  // Every word of one inside the other, either way round: "gold orange black" is his "gold/orange w/ black back",
+  // and "chartreuse" alone is not his "chartreuse/white" when he also has a plain "chartreuse".
+  let best = null, bestScore = 0;
+  for (const c of list) {
+    const cw = words(c.name);
+    if (!cw.length) continue;
+    const inside = cw.every((t) => w.includes(t)) || w.every((t) => cw.includes(t));
+    if (!inside) continue;
+    const score = cw.filter((t) => w.includes(t)).length / Math.max(cw.length, w.length);
+    if (score > bestScore) { best = c; bestScore = score; }
+  }
+  return best;
+}
 
 // ── Planner API — delegates all scoring to lure-knowledge.js ─────────────────
 /**
@@ -552,7 +726,7 @@ export const TROLLING_WEIGHTS_OWNED_OZ = TACKLE_INVENTORY
   .map((l) => l.weightOz)
   .sort((a, b) => a - b);
 
-/** The spoon tied behind the rigged weight now, or null. */
+/** The spoon tied behind the rigged weight now, or null. Null since 2026-11-22: he rigs whichever the plan names. */
 export const RIGGED_SPOON = TACKLE_INVENTORY.find((l) => l.type === 'flutter_spoon' && l.riggedOn) || null;
 
 export const RIGGED_TROLLING_WEIGHT_OZ =
@@ -562,5 +736,6 @@ export const RIGGED_TROLLING_WEIGHT_OZ =
 // selectBestLure() and getRecommendedSpeed() stood here, the lure scorer's only callers, and
 // were called by nothing. Both went with scoreLureForContext() on 2026-09-25.
 import { trollsBehindTheBoat } from './lure-knowledge.js';
+import { COLORS_BY_ID } from './tackle-colors.js';
 
 console.log(`[tackle-inventory] ${TACKLE_INVENTORY.filter(l=>l.trollable).length} trollable lures loaded`);

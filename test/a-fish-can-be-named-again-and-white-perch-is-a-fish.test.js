@@ -47,7 +47,8 @@ test('every journal card can change the species of its fish', () => {
 // the card could change only the species and the water ("it appears that i can only edit the species and the lake"). His
 // "yeah lets do that" to a ✎ beside the lure.
 test('every journal card shows the lure of its fish and can change it', () => {
-  assert.ok(src.includes('Lure: ${esc(c.lure || \'not recorded\')} <button data-editlure="${i}" class="small" title="Change the lure this fish was caught on"'));
+  // and the colour after it, since 2026-11-22 ("yes to the color on the catch journal")
+  assert.ok(src.includes('Lure: ${esc(c.lure || \'not recorded\')}${c.lure && c.lureColor ? ` · ${esc(c.lureColor)}` : \'\'} <button data-editlure="${i}" class="small" title="Change the lure and colour this fish was caught on"'));
   assert.ok(src.includes("body.querySelectorAll('[data-editlure]').forEach((btn) => btn.addEventListener('click', () => editCatchLure(body, +btn.dataset.editlure, btn)));"));
   const edit = fnBody('editCatchLure');
   // A SELECT: an <input list> opened on the fish's lure showed only that lure (his "the dropdown doesn't have the lures").
@@ -55,8 +56,11 @@ test('every journal card shows the lure of its fish and can change it', () => {
   assert.doesNotMatch(edit, /<input list=/);
   assert.match(edit, /c\.lure = lure;/);
   assert.match(edit, /await saveCatches\(\);\s*renderJournalOnly\(body\);/);
-  assert.match(edit, /if \(!lure \|\| lure === c\.lure\) \{ box\.remove\(\); btn\.disabled = false; return; \}/,
-    'the same lure, or none, changes nothing');
+  assert.match(edit, /if \(!lure \|\| \(lure === c\.lure && lureColor === \(c\.lureColor \|\| ''\)\)\) \{ box\.remove\(\); btn\.disabled = false; return; \}/,
+    'the same lure and colour, or no lure, changes nothing');
+  // its colour beside it, a select of the colours he has of that lure
+  assert.match(edit, /<select [^>]*aria-label="Colour of that lure">\$\{colorChoices\(c\.lureColor, journalColorNames\(c\.lure\)\)\}<\/select>/);
+  assert.match(edit, /c\.lureColor = lureColor;/);
   // only the lure
   assert.doesNotMatch(edit, /c\.(species|length|lake|lat|lon|depth)\s*=/);
 });

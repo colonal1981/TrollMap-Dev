@@ -55,7 +55,7 @@ export const LURE_PRESETS = [
   '3/8oz Road Runner / Beetle Spin',
   '— Spoons —',
   'Nichols Lake Fork Flutter Spoon 3/4oz',
-  'Dr.Fish Diamond Jig / Jigging Spoon 1oz',
+  // The Dr.Fish diamond jig is at the bottom of a lake (Ryan, 2026-11-22).
   '— Topwater —',
   'Walking Bait / Spook',
   'Prop Bait / Choppo',

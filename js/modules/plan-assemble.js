@@ -27,7 +27,7 @@ import { ampHours, ampHoursAlong, minutesFor, metresBetween, cumulative, pointAt
          travelOrder, trimReach, riverPassFlipped, historyForModel } from './plan-candidates.js';
 import { depthWindow, lightWindowFor, leadForDepth, jigheadForSwimbait,
          requiresInlineWeight, changeCostFor, presentationDelta,
-         LURE_KNOWLEDGE, gpsWindowFor, sharedSpeedWindow, CRANK_MAX_MPH } from '../data/lure-knowledge.js';
+         LURE_KNOWLEDGE, ratedDepthOf, gpsWindowFor, sharedSpeedWindow, CRANK_MAX_MPH } from '../data/lure-knowledge.js';
 import { castHeadOz } from '../utils/cast-head.js';
 import { JIGHEADS_OWNED_OZ, TROLLING_WEIGHTS_OWNED_OZ,
          RIGGED_TROLLING_WEIGHT_OZ } from '../data/tackle-inventory.js';
@@ -983,7 +983,7 @@ export function depthLadder(rods, deploy, rodPlan, legMph, lureByName, ceilingFt
     const at = new Map();
     for (const v of LADDER_SPEEDS) {
       if (v < spMin - 1e-9 || v > spMax + 1e-9) continue;
-      const w = rated ? (k.ratedDepth || null) : depthWindow(rigged, { speedMph: v, leadFt: lead });
+      const w = rated ? ratedDepthOf(lure) : depthWindow(rigged, { speedMph: v, leadFt: lead });
       if (w && Number.isFinite(w.min) && Number.isFinite(w.max)) at.set(v, { min: w.min, max: w.max });
     }
     cands.push({ id: rod.id, lure: rod.lure, rated, deep, inWater: out.includes(rod.id), at });

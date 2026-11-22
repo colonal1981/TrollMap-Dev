@@ -102,7 +102,7 @@ test('an area is 1.5 miles round the place, and its day is different loops befor
   assert.equal(step.distinct, seen.size);
   assert.ok(step.distinct >= Math.min(3, far.laps.length));
   // and the moves between loops are said: at 3 mph with the area's two divers
-  assert.match(optionLines(DAY, op).join('\n'), /on them, \d.* moving between them at 3 mph with DD3 Crankbait \(20-25ft\) and DD2/);
+  assert.match(optionLines(DAY, op).join('\n'), /on them, \d.* moving between them at 3 mph with DD3 Crankbait \(20-25ft\) and Berkley Deep Hit Stick 9/);
 });
 
 test('the options: each area all day and both, every minute of the window accounted for, no filler loop', () => {
@@ -180,7 +180,7 @@ test('a move between loops goes with the divers only over water they clear; over
   const moving = step.moveList.reduce((a, m) => a + m.minutes, 0);
   assert.ok(Math.abs(onLoops + moving - step.min) <= 2, `${onLoops} + ${moving} vs ${step.min}`);
   const said = optionLines(BAR_DAY, op).join('\n');
-  assert.match(said, /moving between them at 3 mph with DD3 Crankbait \(20-25ft\) and DD2 Crankbait \(16-20ft\)/);
+  assert.match(said, /moving between them at 3 mph with DD3 Crankbait \(20-25ft\) and Berkley Deep Hit Stick 9/);
   assert.match(said, /moving with the lines up where the water between is too shallow for them/);
   // the loop after a lines-up move says so, and the join to it is run with the lines up -- nothing on the water
   const loop = optionLoop(BAR_DAY, 0);
@@ -316,7 +316,8 @@ test('an area day builds: the run at 3 mph with its divers, the laps at the mode
   const pieces = loopPieces(loop, { depthAt, spots: [], slug: 'test_lake', rampName: 'Ramp' });
   pieces.forEach((p, k) => { const leg = loop.legs[k]; p.runId = `test_lake#${leg.name}`; if (leg.run) p.run = leg.run; });
   const steps = loopSteps(loop, pieces);
-  const RUN_BAITS = ['DD3 Crankbait (20-25ft)', 'DD2 Crankbait (16-20ft)'];
+  // His Deep Hit Stick 9 (18-24 ft on its box) is the second diver since his box by name went in, 2026-11-22.
+  const RUN_BAITS = ['DD3 Crankbait (20-25ft)', 'Berkley Deep Hit Stick 9'];
   const ARIG = 'A-Rig – five 1/2oz heads (~4.1oz)', BUCK = 'SPRO Prime Bucktail Jig 1oz (SBTJ-1)';
   let prompt = '';
   const askModel = async ({ user }) => {
@@ -338,7 +339,7 @@ test('an area day builds: the run at 3 mph with its divers, the laps at the mode
   });
   assert.ok(r.plan, (r.problems || []).join('; '));
   assert.match(prompt, /THE DAY IS SPENT IN AN AREA THE FISHING REPORTS NAME/);
-  assert.match(prompt, /"theRun":\{"mph":3,"baits":\["DD3 Crankbait \(20-25ft\)","DD2 Crankbait \(16-20ft\)"\]/);
+  assert.match(prompt, /"theRun":\{"mph":3,"baits":\["DD3 Crankbait \(20-25ft\)","Berkley Deep Hit Stick 9"\]/);
   const legs = (r.plan.route || r.plan.legs || []).filter((l) => l && l.runId);
   const runOut = legs.find((l) => /#run-out$/.test(l.runId));
   const lap = legs.find((l) => /lap1-out$/.test(l.runId));
