@@ -64,7 +64,8 @@ test('a box saved before takes the new name and drops the empty three; one he re
   assert.equal(his.inventory[0].name, 'My chartreuse crank');
 });
 
-test('the 1.16 oz metal jig is its own entry, with the two feathered colours off the small spoons', () => {
+// Which ones, asked: "I see 3 on the board they are all together 1 below the 2 above" -- the three with a feather.
+test('the 1.16 oz metal jig is its own entry, with the three feathered ones off the small spoons', () => {
   const j = byId('jig_metal_116');
   assert.equal(j.name, 'Metal Jig 2.56" 1.16oz (feathered treble)');
   assert.equal(j.type, 'spoon_casting');
@@ -72,8 +73,8 @@ test('the 1.16 oz metal jig is its own entry, with the two feathered colours off
   assert.equal(j.lengthIn, 2.56);
   assert.equal(connectionFor(j.type), 'snap');
   assert.equal(j.trollable, byId('tsj_30g').trollable, 'trolls as the 30 g jig does');
-  assert.deepEqual(colorsOf(j.name).map((c) => c.name), ['silver/blue', 'red head/silver']);
+  assert.deepEqual(colorsOf(j.name).map((c) => c.name), ['silver/blue', 'red head/silver', 'yellow/black']);
   const spoons = colorsOf(byId('spoon_small_cast').name).map((c) => c.name);
-  assert.equal(spoons.length, 6);
-  assert.ok(!spoons.some((c) => /feather/.test(c)), spoons.join('; '));
+  assert.equal(spoons.length, 5);
+  assert.ok(!spoons.some((c) => /feather|yellow\/black/.test(c)), spoons.join('; '));
 });

@@ -427,8 +427,9 @@ const AS_BOUGHT = [
   { id:'spoon_small_cast', name:'Small Casting Spoon (Kastmaster type)',
     type:'spoon_casting', trollable:false, castable:true, weightOz:0.375 },
   // Ryan, 2026-11-22, with the maker's picture of them: "some of the "small spoons" on the saltwater lures pic were
-  // these" -- a metal jig 2.56" long and 1.16 oz with a feathered treble on the tail, sold five to a box. The two small
-  // spoons on that board with a feather (silver/blue, red head/silver) are these; the other six stay small spoons. Its
+  // these" -- a metal jig 2.56" long and 1.16 oz with a feathered treble on the tail, sold five to a box. Which ones,
+  // asked: "I see 3 on the board they are all together 1 below the 2 above" -- the three with a feather low on board 14
+  // (silver/blue, red head/silver, yellow/black). The other five stay small spoons. Its
   // own entry, not the 30 g jig's: a third shorter for the same weight. No ruling of its own on the troll, so it trolls
   // as the type does, like the 30 g jig.
   { id:'jig_metal_116', name:'Metal Jig 2.56" 1.16oz (feathered treble)',
