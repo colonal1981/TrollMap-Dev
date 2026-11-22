@@ -64,7 +64,7 @@ import { isNum, num } from '../utils/num.js';
 import { depthWindow, jigheadRangeOz, trollableBaits, describeBait, LURE_KNOWLEDGE,
          gpsWindowFor, leadForDepth, requiresInlineWeight, levelsOffFt } from '../data/lure-knowledge.js';
 import { RIGGED_TROLLING_WEIGHT_OZ, JIGHEADS_OWNED_OZ, TROLLING_WEIGHTS_OWNED_OZ, TACKLE_INVENTORY, colorsOf, colorInBox,
-         arigHeadsOz, trailerFits, trailersFor, colorOnItsOwnHead, TRAILER_COUNT } from '../data/tackle-inventory.js';
+         arigHeadsOz, trailerFits, trailersFor, colorFitsHead, ownHeadOz, TRAILER_COUNT } from '../data/tackle-inventory.js';
 import { ozLabel } from '../utils/oz.js';
 import { promptSafeTackleName } from '../utils/tackle-name.js';
 import { FISHING_STYLE } from '../data/fishing-style-profile.js';
@@ -2520,7 +2520,8 @@ ${colourLines.join('\n')}
 AN A-RIG NAMES ITS TRAILERS: the plastics on its heads are the bait. On an A-rig rod return \`trailers\`:
 {"outside": {"lure": ..., "color": ...}, "middle": {"lure": ..., "color": ...}}. \`lure\` is one of the
 swimbaits listed for that head below (by body length: a heavy head's hook tears a small body), and \`color\`
-is one of that swimbait's colours above that is not already on its own head (pre-rigged). The four outside arms carry the same bait, so the outside colour is one he has at least
+is one of that swimbait's colours above; a pre-rigged one goes on as it is, so only on a rig whose heads
+weigh what its own head does (the 1/4 oz pre-rigged ones on the 1/4 oz rig). The four outside arms carry the same bait, so the outside colour is one he has at least
 ${TRAILER_COUNT} of. The middle may be a different size or colour; he often runs one.
 ${arigLines.join('\n')}
 ` : ''}
@@ -3470,8 +3471,10 @@ export function planArgsFrom(res, candidates, ctx = {}) {
           problems.push(`${id}: he has no ${nameT} in "${str(given.color)}" for the ${which} — trailer named without a colour`);
           return { lure: nameT, color: '', bag: null, n: null, headOz };
         }
-        if (colorOnItsOwnHead(c)) {
-          problems.push(`${id}: ${nameT} ${c.name} is already on its own head and cannot go on the rig — ${which} trailer left off`);
+        if (!colorFitsHead(c, headOz)) {
+          const own = ownHeadOz(c);
+          problems.push(`${id}: ${nameT} ${c.name} came on ${Number.isFinite(own) ? `its own ${ozLabel(own)} head` : 'a head of its own'}`
+            + `, not the rig's ${ozLabel(headOz)} — ${which} trailer left off`);
           return null;
         }
         if (need > 1 && c.n != null && c.n < need) {

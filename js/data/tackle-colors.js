@@ -130,7 +130,7 @@ export const COLORS_BY_ID = {
     ['Plum/Chart Tail', 8, 'Saltwater Assassin Sea Shad 5"'], ['Houdini', 6, 'Reaction Innovations Skinny Dipper'],
     ['Plum Chartreuse', 16, 'Down South Lures 5" (model not read), 2 packs'], ['black/blue flake', null, 'in the swimbait box']],
   swimbait_6in: [['Smoky Shad', 4, 'BioBait Shadow Swimmer 6"'], ['pearl/gold flake (pre-rigged)', 1, 'loose (belly treble)'],
-    ['yellow perch, pink glitter tail', 1, 'loose'], ['black/silver flake (on a 1 oz head)', 1, 'loose (saltwater board)'],
+    ['yellow perch, pink glitter tail', 1, 'loose'], ['black/silver flake', 1, 'loose (on a 1 oz head he set up)'],
     ['green pumpkin, orange belly', null, 'in the swimbait box']],
   swimbait_7in: [['mackerel, red tail', 2, 'loose (saltwater board)']],
   thin_tail_4in: [['tan/gold', 1, 'loose (ribbed)']],
@@ -229,7 +229,8 @@ export const COLORS_BY_ID = {
     ['white, pink head (tied under the popping cork)', 1]],
   bucktail_3oz: [['blue/black, gold perch head', 1]],
   bucktail_1oz: [['white, red throat', 1]],
-  bucktail_3quarter: [['tan, silver head', 1], ['black/white', 2]],
+  // Ryan, 11/22: "The 'tan' bucktails are white that are slightly stained."
+  bucktail_3quarter: [['white (a little stained), silver head', 1], ['black/white', 2]],
   bucktail_soft_jerk: [['firetiger/green', 1]],
   popping_cork_rig: [['orange cork', 1]],
   // Ryan, 11/22: the 4" is "nichols lake fork flutter spoon in shattered glass", the 5" "super shad".

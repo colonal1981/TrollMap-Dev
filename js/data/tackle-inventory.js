@@ -107,6 +107,12 @@ const AS_BOUGHT = [
   { id:'arig_heavy',  name:'A-Rig – four 3/4oz heads, 1oz middle (~5.6oz)',
     type:'umbrella_rig', trollable:true, castable:true, weightOz: 1.6 + 4 * 0.75 + 1, headsOz: { outside: 0.75, middle: 1.0 } },
 
+  // AND A LIGHT ONE FOR SHALLOWER WATER, on his 1/4 oz pre-rigged swimbaits as they come. Ryan, 11/22: "And an arig is
+  // shallower water can run them. You told me you wanted 3 sizes for the a rigs and I picked based on what weights I
+  // have the most of". So the three above were never his limit, and five 1/4 oz baits on the same frame is a fourth.
+  { id:'arig_quarter', name:'A-Rig – five 1/4oz heads (~2.85oz)',
+    type:'umbrella_rig', trollable:true, castable:true, weightOz: 1.6 + 5 * 0.25, headsOz: { outside: 0.25, middle: 0.25 } },
+
   // ── Swimbaits (Paddle Tail) ───────────────────────────────────────────────
   { id:'swimbait_3in', name:'Swimbait 3.8" – Jighead',
     type:'swimbait_paddle', trollable:true, castable:true, weightOz:null, lengthIn: 3.8 },
@@ -667,12 +673,30 @@ export const TACKLE_INVENTORY = AS_BOUGHT.map((l) => {
 
 // ── A-RIG TRAILERS ──────────────────────────────────────────────────────────────────────────────────────────────────
 // The soft plastics that go on an A-rig's heads: his paddle-tail swimbaits (`swimbait_*`, `thin_tail_*`), not the flukes
-// or worms filed under the same type. One already on its own head (pre-rigged, rigged, on a jighead) cannot go on the
-// rig's heads. Whether a body fits a head is the app's head table by length (jigheadRangeOz() in lure-knowledge.js), whose
+// or worms filed under the same type. One the maker sold on its own head (pre-rigged) goes only on a rig whose heads
+// weigh what its own does (colorFitsHead()).  Whether a body fits a head is the app's head table by length (jigheadRangeOz() in lure-knowledge.js), whose
 // heavy end is the hook rule he gave on 8/3 ("for 2-3 inch nothing more than 1/2 oz, for 3-4 inch nothing more than 1oz").
 export const TRAILER_COUNT = 4;     // the four outside arms take the same bait; the middle is its own
 const isTrailerId = (id) => /^(swimbait_|thin_tail_)/.test(String(id || ''));
-const onItsOwnHead = (c) => /pre-rigged|\brigged\b|on (a |)jighead|on a 1 oz head|belly treble/i.test(`${c.name} ${c.bag || ''}`);
+// A bait the maker sold on its own head goes on the rig AS IT IS, so only on a rig whose heads weigh what its own head
+// does (Ryan, 11/22: "an arig is shallower water can run them"); one whose head weight nobody read, or with a belly
+// treble, does not go on. A body he put on a jighead himself is a body: of the 6" on a 1 oz head, "The 6 inch isn't pre
+// rigged it was just already set up by me".
+const OZ_WORDS = { '1/8': 0.125, '1/4': 0.25, '3/8': 0.375, '1/2': 0.5, '3/4': 0.75, '1': 1 };
+/** null: a loose body; a number: the oz of the head it came on; NaN: it came on a head of unknown weight. */
+export function ownHeadOz(c) {
+  const s = `${(c && c.name) || ''} ${(c && c.bag) || ''}`;
+  if (/belly treble/i.test(s)) return NaN;
+  if (!/pre-rigged/i.test(s)) return null;
+  const m = /pre-rigged\s+(1\/8|1\/4|3\/8|1\/2|3\/4|1)\s*oz/i.exec(s);
+  return m ? OZ_WORDS[m[1]] : NaN;
+}
+/** Whether this colour of a swimbait can go on a rig head of `headOz`: a body always, a pre-rigged one on its own weight. */
+export function colorFitsHead(c, headOz) {
+  const own = ownHeadOz(c);
+  return own === null || Math.abs(own - Number(headOz)) < 1e-9;
+}
+const onItsOwnHead = (c) => ownHeadOz(c) !== null;
 
 /** The A-rig's heads, {outside, middle} in oz, or null when the lure is not one of his A-rigs. */
 export function arigHeadsOz(name) {
@@ -698,12 +722,12 @@ export function trailerFits(lureName, headOz) {
 /** The swimbaits (inventory names) whose bodies fit a head of `headOz`, with their colours that can go on a rig head. */
 export function trailersFor(headOz) {
   return TACKLE_INVENTORY.filter((l) => isTrailerId(l.id) && trailerFits(l.name, headOz).ok)
-    .map((l) => ({ name: l.name, lengthIn: l.lengthIn, colors: (l.colors || []).filter((c) => !onItsOwnHead(c)) }))
+    .map((l) => ({ name: l.name, lengthIn: l.lengthIn, colors: (l.colors || []).filter((c) => colorFitsHead(c, headOz)) }))
     .filter((x) => x.colors.length)
     .sort((a, b) => (a.lengthIn || 0) - (b.lengthIn || 0));
 }
 
-/** Whether this colour of a swimbait is already on its own head (so it cannot go on a rig's). */
+/** Whether this colour of a swimbait came from the maker on a head of its own. */
 export function colorOnItsOwnHead(c) { return !!c && onItsOwnHead(c); }
 
 /** The colours he has of the lure by this name (inventory spelling), [] when none are listed. */

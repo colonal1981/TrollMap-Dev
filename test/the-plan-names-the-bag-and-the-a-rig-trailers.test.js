@@ -50,7 +50,15 @@ test('a trailer fits a head by the head table, and a bait already on its own hea
   assert.equal(trailerFits(SW5, 1.0).ok, true);
   assert.equal(trailerFits('Fluke 4" – Jighead', 0.5).ok, false);
   assert.deepEqual(trailersFor(0.375).map((t) => t.name), [SW3, 'Swimbait 3.8" – Jighead']);
-  assert.ok(!trailersFor(0.375).some((t) => t.colors.some((c) => /pre-rigged|rigged/.test(c.name))));
+  assert.ok(!trailersFor(0.375).some((t) => t.colors.some((c) => /pre-rigged/.test(c.name))));
+  // the 1/4 oz pre-rigged ones go on the 1/4 oz rig as they are (Ryan, 11/22: "an arig is shallower water can run them")
+  assert.deepEqual(arigHeadsOz('A-Rig – five 1/4oz heads (~2.85oz)'), { outside: 0.25, middle: 0.25 });
+  const q = trailersFor(0.25).find((t) => t.name === SW3).colors.map((c) => c.name);
+  assert.ok(q.includes('Pearl Red Eye (pre-rigged 1/4 oz)') && q.includes('Live Threadfin'), q.join(' | '));
+  assert.ok(!trailersFor(0.25).some((t) => t.colors.some((c) => /Winnow|belly treble/.test(`${c.name} ${c.bag}`))));
+  // one he set up on a head himself is a body ("The 6 inch isn't pre rigged it was just already set up by me")
+  assert.ok(trailersFor(1.0).find((t) => t.name === 'Swimbait 6" – Jighead').colors.some((c) => c.name === 'black/silver flake'));
+  assert.ok(trailersFor(0.375).find((t) => t.name === 'Swimbait 3.8" – Jighead').colors.some((c) => /Crappie Maxx/.test(c.bag)));
   assert.equal(colorOnItsOwnHead({ name: 'Perch (pre-rigged 1/4 oz)' }), true);
   assert.equal(TRAILER_COUNT, 4);
 });
@@ -92,7 +100,7 @@ test('a trailer that does not fit, a colour he has too few of, or none named is 
   assert.ok(few.problems.some((p) => /he has 2 Swimbait 3\.8" – Jighead in Orange Pearl; the 4 outside arms need 4/.test(p)), few.problems.join(' | '));
   const rigged = ask([{ id: 'R5', lure: LIGHT, role: 'troll',
     trailers: { outside: { lure: SW3, color: 'Perch (pre-rigged 1/4 oz)' }, middle: { lure: SW3, color: 'Live Menhaden' } } }]);
-  assert.ok(rigged.problems.some((p) => /already on its own head/.test(p)));
+  assert.ok(rigged.problems.some((p) => /came on its own 1\/4oz head, not the rig's 3\/8oz — outside trailer left off/.test(p)), rigged.problems.join(' | '));
   const none = ask([{ id: 'R5', lure: LIGHT, role: 'troll' }]);
   assert.ok(none.problems.some((p) => /the A-rig's outside trailer is not named/.test(p)));
 });
