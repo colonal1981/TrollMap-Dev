@@ -44,7 +44,7 @@ from collections import deque
 _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
-from build_chartpack import build_mask, _rings              # noqa: E402
+from build_chartpack import build_mask, _rings, LakeMask    # noqa: E402
 
 try:
     from shapely.geometry import Polygon, LineString, Point, shape
@@ -570,6 +570,41 @@ def write_graph(path, nodes, edges, depths, layer=0, base_ft=0):
     return os.path.getsize(path)
 
 
+def graph_grid(path):
+    """(ours, coarsen) of the graph file at `path`, read from the file itself.
+
+    OURS: Garmin's MAR mesh (build_water_graphs.py) has about two edges a node, never more than 2.81
+    (diversion_canal, 11/26); ours from the depth areas have 3.18 (ferry_lake, the thinnest) to 8. The
+    same test as build_water_graphs.is_ours().
+
+    COARSEN: our nodes sit on a grid of `coarsen` raster cells (LakeMask.CELL, 0.0002 deg), so the
+    smallest step between two node latitudes is that grid. Nodes are written column by column, so the
+    first few thousand already hold neighbours. None when it cannot be read off.
+
+    (False, None) for no file or a graph that is not ours.
+
+    WHY. The November 2026 rebuild rebuilt the inland graphs at --coarsen 1 when 278 of them had
+    shipped at 2 (the 10/02 rebuild), and they came out four times the nodes -- Thurmond 166,323 ->
+    662,232 -- with nothing saying so. Read off all 303 shipped graphs, this gave 291 at 2 and 12 at 1.
+    """
+    try:
+        with open(path, 'rb') as f:
+            head = f.read(16)
+            if len(head) < 16 or head[:4] != MAGIC:
+                return False, None
+            n, e = struct.unpack('<II', head[8:16])
+            if n == 0 or 2.0 * e / n < 3.0:
+                return False, None
+            m = min(n, 6000)
+            ys = sorted(set(struct.unpack('<%di' % (2 * m), f.read(8 * m))[1::2]))
+    except (OSError, struct.error):
+        return False, None
+    steps = [b - a for a, b in zip(ys, ys[1:]) if b > a]
+    if not steps:
+        return True, None
+    return True, max(1, round(min(steps) / (LakeMask.CELL * 1e7)))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -589,7 +624,7 @@ def main():
                          "routing at all today. Nothing that already works is touched. 'all' "
                          "considers every pack with depth_areas.geojson, and still refuses to "
                          "replace an existing graph without --overwrite.")
-    ap.add_argument('--coarsen', type=int, default=1, metavar='N',
+    ap.add_argument('--coarsen', default='1', metavar='N|same',
                     help='aggregate an NxN block of 22.3 m raster cells into ONE routing node. '
                          'Default 1, unchanged. The raster is never coarsened -- the water keeps '
                          'its exact shape and only the node grid moves, so a creek narrower than '
@@ -597,7 +632,16 @@ def main():
                          'Cape Romain, St. Helena and ACE Basin it cost ZERO routable runs, '
                          'gained 8/9/42, came out better connected on two of the three, and took '
                          'ACE Basin from 44.7 MB to 12.0 MB -- which is the difference between '
-                         'fitting a 128 MB Worker isolate and not. See coarsen_cells().')
+                         'fitting a 128 MB Worker isolate and not. See coarsen_cells(). '
+                         "'same' builds each water on the grid of OUR graph it replaces (read off "
+                         'the file, graph_grid()) and leaves alone a water with no graph of ours '
+                         'to match: THE ONE TO USE FOR A QUARTERLY REBUILD (most inland waters '
+                         'shipped at 2, Wateree and a few rivers at 1). With a number and '
+                         '--overwrite, a water whose graph of ours is on another grid is left '
+                         'alone unless --regrid.')
+    ap.add_argument('--regrid', action='store_true',
+                    help='with --coarsen N --overwrite: replace our graph even when it was built '
+                         'on another grid. Only on purpose.')
     ap.add_argument('--out-name', default='water_graph.bin')
     ap.add_argument('--report', default='registry/_bathy_graphs.json')
     ap.add_argument('--dry-run', action='store_true', help='measure, write no .bin')
@@ -609,6 +653,13 @@ def main():
                          "putting it back is a file move and not a rebuild of 455 lakes. The "
                          "report records where each one went.")
     a = ap.parse_args()
+    same = str(a.coarsen).strip().lower() == 'same'
+    want = None
+    if not same:
+        try:
+            want = max(1, int(a.coarsen))
+        except ValueError:
+            ap.error("--coarsen is a number or 'same'")
     reg = a.registry or os.path.join(a.root, 'registry')
     pack = a.pack or os.path.join(a.root, 'chartpack')
 
@@ -647,8 +698,24 @@ def main():
     print('  of those, no Garmin graph: %d' % len(missing))
     report, built, failed, left, measured = {}, 0, 0, 0, 0
     for s in slugs:
+        # THE GRID OF THE GRAPH BEING REPLACED. See graph_grid() for the November rebuild that made
+        # 278 inland graphs four times their shipped size.
+        ours, had = graph_grid(os.path.join(pack, s, a.out_name))
+        if same and not had:
+            report[s] = {'slug': s, 'skipped': 'no graph of ours here to match (--coarsen same); '
+                                                'give --coarsen N'}
+            print('  %-30s no graph of ours to match, left alone' % s, flush=True)
+            left += 1
+            continue
+        step = had if same else want
+        if a.overwrite and had and had != step and not a.regrid:
+            report[s] = {'slug': s, 'skipped': 'ours is at --coarsen %d, asked %d: --coarsen same keeps '
+                                                'it, --regrid changes it' % (had, step)}
+            print('  %-30s OURS IS AT --coarsen %d, asked %d, left alone' % (s, had, step), flush=True)
+            left += 1
+            continue
         try:
-            rep, graph = build_lake(reg, pack, s, coarsen=a.coarsen)
+            rep, graph = build_lake(reg, pack, s, coarsen=step)
         except Exception as e:
             rep, graph = {'slug': s, 'error': '%s: %s' % (type(e).__name__, e)}, None
             print('  %-30s ERROR %s' % (s, rep['error']), flush=True)
@@ -681,6 +748,13 @@ def main():
                 keep = os.path.join(pack, '_to_delete', 'graph_replaced_' + STAMP)
                 os.makedirs(keep, exist_ok=True)
                 kept = os.path.join(keep, '%s_%s' % (s, a.out_name))
+                # A second run the same day must not land on the first one's file: on Windows
+                # shutil.move falls back to copy-over-the-top when the name is taken, and the
+                # graph moved there first would be gone.
+                k = 2
+                while os.path.exists(kept):
+                    kept = os.path.join(keep, '%s_%d_%s' % (s, k, a.out_name))
+                    k += 1
                 shutil.move(dest, kept)
                 rep['replaced_graph_moved_to'] = os.path.relpath(kept, pack)
                 print('  %-30s previous graph -> %s' % (s, rep['replaced_graph_moved_to']),

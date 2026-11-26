@@ -355,6 +355,31 @@ def _merge_prior_report(path, lakes, partial):
     return lakes
 
 
+def is_ours(path):
+    """True when the graph at `path` is OUR OWN (bathy_graph.py, from the depth areas), not Garmin's.
+
+    THIS SCRIPT ONCE WROTE GARMIN'S MESH OVER OUR GRAPHS. The November 2026 rebuild ran it with
+    --force over all 353 offered waters; 303 of them shipped our graph, and the 100 where Garmin
+    had cells came back as his: Wateree 115,836 nodes -> 9,023, Marion 191,261 -> 21,571, ACE Basin
+    321,844 -> 1,953, and 29% of the big waters' runs unreachable (October: 4%). Ryan: "make sure
+    something is updated with the steps so that this doesn't happen next quarter".
+
+    Told apart by the file itself, so no list can go stale: Garmin's mesh is triangles, so a cell
+    has at most three neighbours and his graphs measure 1.9-2.81 edges a node at both ends counted
+    (diversion_canal the highest); ours is a grid with diagonals and measures 3.18 (ferry_lake, 44
+    nodes) to 7.7. Measured on all 352 shipped graphs, 2026-11-26. The same format otherwise.
+    """
+    try:
+        with open(path, 'rb') as f:
+            head = f.read(16)
+    except OSError:
+        return False
+    if len(head) < 16 or head[:4] != MAGIC:
+        return False
+    _v, _layer, _base, n, e = struct.unpack('<BBHII', head[4:16])
+    return n > 0 and 2.0 * e / n >= 3.0
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -377,7 +402,11 @@ def main():
     ap.add_argument('--only-lakes', help='comma list or @file of slugs')
     ap.add_argument('--force', action='store_true',
                     help='rebuild even when the boundary, the MAR tiles and the settings are '
-                         'unchanged')
+                         'unchanged. Never replaces OUR graph (see --replace-ours)')
+    ap.add_argument('--replace-ours', action='store_true',
+                    help="write Garmin's mesh even where the pack holds our own graph from the "
+                         "depth areas (bathy_graph.py). Without this a water with our graph is "
+                         "left alone and reported 'kept: our graph' -- see is_ours()")
     ap.add_argument('--limit', type=int)
     ap.add_argument('--report', help='write a JSON summary here; DEFAULTS to '
                                      '<registry>/_water_graphs.json')
@@ -417,6 +446,7 @@ def main():
     # --seam-m and --buffer-m all change the output from identical inputs, so they are keys too.
     GR_PARAMS = (a.layer, a.seam_m, a.buffer_m)
     current = 0
+    kept_ours = 0
     for n, slug in enumerate(slugs, 1):
         outdir_s = os.path.join(a.out, slug)
         gr_inputs = [os.path.join(a.registry, 'boundaries', slug + '.geojson')]
@@ -430,6 +460,12 @@ def main():
         if (not a.force and os.path.isdir(outdir_s)
                 and _ps().is_current(outdir_s, 'water_graph.bin', gr_inputs, GR_PARAMS)):
             current += 1
+            continue
+        # OUR GRAPH STAYS. --force means "the inputs did not change, build anyway", never "put
+        # Garmin's mesh over the graph we chose instead of it". bathy_graph.py rebuilds ours.
+        if not a.replace_ours and is_ours(os.path.join(outdir_s, 'water_graph.bin')):
+            report[slug] = {'kept': 'our graph (bathy_graph.py); --replace-ours to write MAR'}
+            kept_ours += 1
             continue
         rings = load_boundary(a.registry, slug)
         if not rings:
@@ -572,6 +608,9 @@ def main():
           % (made, current, skipped, (time.time() - t0) / 60))
     if current and not a.force:
         print('   up to date = same boundary, same MAR tiles, same settings. --force overrides.')
+    if kept_ours:
+        print('   %d kept: our own graph from the depth areas. Rebuild those with bathy_graph.py '
+              '--overwrite; --replace-ours writes MAR over them.' % kept_ours)
     if made:
         tot = sum(r.get('bytes', 0) for r in report.values())
         nn = sum(r.get('nodes', 0) for r in report.values())
