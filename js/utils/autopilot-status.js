@@ -40,6 +40,9 @@ export function newStatus() {
     wpAck: 0,               // the last "WP n"
     potMv: null,
     lastFollowAt: 0,
+    flat: false,            // L: learning the compass on the boat (one flat circle)
+    flatTurned: 0,          // degrees of that circle turned through so far
+    trim: null,             // B: the box's saved heading trim, degrees
   };
 }
 
@@ -97,6 +100,14 @@ export function applyLine(s, line, now = Date.now()) {
   if (/^WP (bad|full)/.test(t)) return { type: 'wp-bad', text: t };
   if (/^NO: /.test(t)) return { type: 'no', text: t.slice(4) };
   if (/^POT FAULT/.test(t)) return { type: 'fault', text: t };
+  // The compass on the boat (L, B; firmware 11/26): progress quietly, the rest said.
+  if ((m = /^LEARN boat: \d+ readings, turned through (\d+)/.exec(t))) { s.flatTurned = Number(m[1]); return null; }
+  if (/^LEARN boat on/.test(t)) { s.flat = true; s.flatTurned = 0; return { type: 'compass', text: t }; }
+  if (/^LEARN boat off/.test(t)) { s.flat = false; return { type: 'compass', text: t }; }
+  if ((m = /^compass cal .* trim ([+-]?[\d.]+)/.exec(t))) { s.trim = Number(m[1]); return null; }
+  if ((m = /^TRIM ([+-][\d.]+)/.exec(t))) { s.trim = Number(m[1]); return { type: 'compass', text: t }; }
+  if (/^TRIM cleared/.test(t) || /^CAL saved/.test(t)) { s.trim = 0; return { type: 'compass', text: t }; }
+  if (/^(boat pull|not a full circle|fit (failed|out of range)|BOW bad|[KL] is learning)/.test(t)) return { type: 'compass', text: t };
   return null;
 }
 

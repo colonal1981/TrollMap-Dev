@@ -47,6 +47,23 @@ test('a day of lines: fix, hold, follow, a lap, a pause at the mount', () => {
   assert.equal(applyLine(s, 'NO: no GPS fix', 1500).text, 'no GPS fix');
 });
 
+test('the compass on the boat: the circle, the fit, the trim', () => {
+  const s = newStatus();
+  assert.equal(applyLine(s, 'LEARN boat on: turn the whole boat one slow flat circle, box mounted; L to finish').type, 'compass');
+  assert.equal(s.flat, true);
+  assert.equal(applyLine(s, 'LEARN boat: 412 readings, turned through 195 of 360'), null);
+  assert.equal(s.flatTurned, 195);
+  assert.equal(applyLine(s, 'LEARN boat off: 900 readings, turned through 345 of 360').type, 'compass');
+  assert.equal(s.flat, false);
+  assert.equal(applyLine(s, 'boat pull 4.9 uT on a level field of 22.3 uT: up to 13 deg of heading').type, 'compass');
+  applyLine(s, 'CAL saved (boat): moved 2.5,-4.2,0.1 uT, trim cleared');
+  assert.equal(s.trim, 0);
+  assert.equal(applyLine(s, 'TRIM -4.5 deg: the bow reads 240 now').type, 'compass');
+  assert.equal(s.trim, -4.5);
+  applyLine(s, 'compass cal -18,-6,-19 r48 trim +2.0');
+  assert.equal(s.trim, 2);
+});
+
 test('what the panel says', () => {
   assert.equal(offLineText(-4), '13 ft left');
   assert.equal(offLineText(0.5), 'on the line');

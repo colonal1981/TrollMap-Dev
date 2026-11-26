@@ -63,7 +63,7 @@ function link() {
         S.linkWhy = why || '';
         if (st === 'on') {
           say('Connected.');
-          // What route does it hold? (It keeps one through a power cycle.)
+          // What route does it hold? (It keeps the last one it followed through a power cycle.)
           setTimeout(() => { if (S.linkState === 'on') send('V').catch(() => {}); }, 1800);
         }
         wakeLock();
@@ -129,6 +129,7 @@ function onEvent(ev) {
   else if (ev.type === 'hold-off') say(ev.text.replace(/^HOLD off: /, 'Steering off: '));
   else if (ev.type === 'fault') { buzz(); say(`${ev.text} -- check the rod's wiring.`, true); }
   else if (ev.type === 'wp-bad') say(`The box refused a point (${ev.text}).`, true);
+  else if (ev.type === 'compass') say(ev.text, /^(not a full|fit |BOW bad|[KL] is learning)/.test(ev.text));
 }
 
 // ── ROUTES ───────────────────────────────────────────────────────────────────────────────────────
@@ -450,6 +451,12 @@ async function onPanelClick(e) {
   else if (what === 'yes') { const f = S.ask && S.ask.yes; S.ask = null; render(); if (f) f(); }
   else if (what === 'no') { S.ask = null; render(); }
   else if (what === 'log') { const n = await saveLogFile(); say(n ? `Saved ${n} lines from the day.` : 'Nothing kept yet.'); }
+  else if (what === 'set-bow') {
+    const v = Number((S.el.querySelector('[data-ap="bow"]') || {}).value);
+    if (S.linkState !== 'on') say('Not connected.', true);
+    else if (!Number.isFinite(v) || v < 0 || v >= 360) say("Type the bow's true bearing, 0 to 359.", true);
+    else send(`B${Math.round(v) % 360};`).catch((er) => say(er.message, true));
+  }
 }
 
 function chip() {
@@ -469,7 +476,7 @@ function render() {
   requestAnimationFrame(() => { S.renderQueued = false; draw(); });
 }
 
-const PARTS = ['ask', 'conn', 'nums', 'btns', 'route', 'log', 'msg'];
+const PARTS = ['ask', 'conn', 'nums', 'btns', 'route', 'compass', 'bow', 'log', 'msg'];
 
 function put(name, html) {
   const el = S.parts && S.parts[name];
@@ -545,6 +552,20 @@ function draw() {
     + `<div class="ap-row"><button data-ap="tap" class="${S.tapping ? 'ap-on' : ''}">${S.tapping ? 'Done tapping' : 'Tap a route'}</button>`
     + `<button data-ap="plan" ${on && !S.sending && plan.length ? '' : 'disabled'} title="${plan.length ? `${plan.length} pieces` : 'no plan on the map'}">Send the plan</button></div>`
     + tapHtml + dayHtml + optHtml + `</div>`);
+  // THE COMPASS ON THE BOAT (firmware 11/26). In the driveway the heading was 17 deg low one way and 7 high
+  // the other: the boat pulls the compass, and K, done off the boat, can't know it. L learns it from one
+  // slow flat circle of the whole boat; then the bow on a known bearing (the driveway, 239-241 true) and
+  // "The bow points here" sends B<deg>; for whatever steady error is left.
+  put('compass', `<div class="ap-sec"><b>Compass</b> <span class="ap-muted">${s.flat
+      ? 'turn the whole boat one slow full circle'
+      : (s.trim != null ? `trim ${s.trim > 0 ? '+' : ''}${s.trim.toFixed(1)}°` : '')}</span>`
+    + `<div class="ap-row"><button data-ap-cmd="L" class="${s.flat ? 'ap-on' : ''}" ${on && !steering ? '' : 'disabled'}>`
+    + `${s.flat ? `Finish (${s.flatTurned} of 360°)` : 'Learn on the boat'}</button></div></div>`);
+  // The bearing box is drawn once, so a number being typed is never redrawn away.
+  put('bow', '<div class="ap-row"><input data-ap="bow" type="number" inputmode="numeric" min="0" max="359" placeholder="bow °" '
+    + 'style="width:84px;min-height:40px;border-radius:7px;border:1px solid rgba(232,239,244,.28);background:#0b1623;'
+    + 'color:#e8eff4;font:600 15px system-ui,sans-serif;padding:0 8px">'
+    + '<button data-ap="set-bow">The bow points here</button></div>');
   put('log', `<div class="ap-sec"><span class="ap-muted">Log: ${S.logCount} lines on this phone</span>`
     + `<div class="ap-row"><button data-ap="log">Save the day's log</button></div></div>`);
   put('msg', `<div class="ap-msg ${S.msgBad ? 'bad' : ''}">${esc(S.msg)}</div>`);
