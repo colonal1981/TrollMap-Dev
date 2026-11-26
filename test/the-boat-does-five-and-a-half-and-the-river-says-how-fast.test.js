@@ -143,14 +143,18 @@ describe('the real Wateree, when its pack is on this machine', () => {
   const f = new URL('../../chartpack/wateree_river/centreline.geojson', import.meta.url);
   const l = new URL('../../chartpack/wateree_river/launches.json', import.meta.url);
   const have = existsSync(f) && existsSync(l);
-  it(have ? 'the Camden gauge is on the river, 7.5 miles down, where USGS says 7.4'
+  it(have ? 'the Camden gauge is on the river, within 0.2 miles of where USGS says it is (7.4)'
           : 'skipped: the Wateree pack is not on this machine', () => {
     if (!have) return;
     const g = slimCentreline(JSON.parse(readFileSync(f, 'utf8')));
     g.landings = slimLandings(JSON.parse(readFileSync(l, 'utf8')));
     const at = stationAt(g, 34.2446, -80.654);
     expect(at.off_m <= g.snap_cap_m).toBe(true);
-    expect(Math.round(at.station_m / 1609.344 * 10) / 10).toBe(7.5);
+    // The line drawn off the September charts put it at 7.5 miles; the one off the November charts
+    // (2026-11-26, re-centred on the new depth areas and 2.4 miles shorter end to end) at 7.3. Both
+    // are 0.1 off USGS, so the test asks how close, not for one rebuild's number.
+    const mi = at.station_m / 1609.344;
+    expect(Math.abs(mi - 7.4) <= 0.2).toBe(true);
     // His danger line is 8,000 ft3/s. The current there says caution, the bands say no-go, and on
     // the curated river the stricter one stands.
     const s = stretchAround(g, at.station_m);
