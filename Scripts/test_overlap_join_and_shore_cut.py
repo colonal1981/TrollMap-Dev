@@ -135,16 +135,17 @@ def test_only_shore_joined_to_the_rest_of_the_shore_is_a_barrier(tmp_dir=None):
     assert len(s.cut(piece)) == 2
 
 
-def test_the_fitter_cuts_fitted_passes_and_runs_kept_as_drawn():
+def test_the_fitter_cuts_fitted_passes_and_writes_no_refused_run():
     src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fit_trolling_runs.py'),
                encoding='utf-8').read()
     assert 'shore = ChartedShore(pack, lat0)' in src
-    # closed/short, and thin; each piece says whether the shore or a keep-out zone cut it (2026-10-03)
-    assert src.count('for c2, how in unfitted_at_shore(coords, min_leg):') == 2
     assert 'bits = shore.cut(piece)' in src
-    # and the keep-out zones cut the same two paths: fitted passes, and runs kept as drawn
+    # the keep-out zones cut the fitted passes (2026-10-03)
     assert 'zones = KeepOut(pack, lat0)' in src and 'bits = zones.outside(piece)' in src
-    assert 'return at_keep_out(pieces, min_leg)' in src
+    # A RUN THE FITTER REFUSES IS NOT WRITTEN (2026-11-26, Ryan: "if we don't use it don't build it"):
+    # closed, short and thin runs are counted and dropped, so every lane in the file is a fitted one.
+    assert 'unfitted_at_shore' not in src and 'at_keep_out(' not in src
+    assert "pr['fitted'] = False" not in src and 'fit_note' not in src
 
 
 if __name__ == '__main__':

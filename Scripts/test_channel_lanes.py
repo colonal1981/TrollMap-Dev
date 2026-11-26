@@ -201,9 +201,11 @@ def test_through_the_fitter_a_channel_lane_is_a_lane():
         assert p.get('envelope_ft'), 'measure_pass gave it an envelope'
         assert p['shallowest_ft'] <= p['depth_ft'], 'shallowest is the shallowest'
         assert p['length_m'] >= 600.0, 'and it is a pass'
+    # The ring it was given is not a pass, and since 2026-11-26 the fitter writes no run it refuses
+    # (Ryan: "if we don't use it don't build it") -- every lane in the file is a fitted one.
     ring = [f for f in fs if f['properties'].get('closed')]
-    eq(len(ring), 1, 'the contour it was given is still there')
-    eq(ring[0]['properties']['fitted'], False, 'and left as drawn')
+    eq(len(ring), 0, 'the contour it was given is not written')
+    eq([f for f in fs if f['properties'].get('fitted') is not True], [], 'every lane written is fitted')
     lens = [f['properties']['length_m'] for f in fs]
     eq(lens, sorted(lens, reverse=True), 'sorted longest first, as the ids assume')
 

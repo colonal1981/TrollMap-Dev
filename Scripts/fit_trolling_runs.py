@@ -1619,40 +1619,12 @@ def fit_pack(pack, a):
     # NOT `keep`: the shore cut below already uses that name for the pieces it keeps.
     zones = KeepOut(pack, lat0)
 
-    def unfitted_at_shore(coords, min_leg):
-        """A run kept as drawn is cut at the shore too, when it is long enough to be offered as a leg
-        (`min_leg`, which is what both planners ask for). What is kept of it is the pieces that
-        still are. A shorter run is left as it was: no planner offers it, and cutting a 2 ft
-        contour at every dock it passes was 36,849 fragments and 24 MB on Lake Keowee alone.
-
-        Returns [(coords, how)], `how` None for a run left as it was, else 'shore' or 'keep_out'."""
-        pieces = [(coords, None)]
-        if shore.tree is not None and length_m(coords) >= min_leg:
-            bits = shore.cut(_xy(coords, lat0))
-            if len(bits) >= 2:
-                st['cut_at_shore'] += 1
-                pieces = [(_ll(b, lat0), 'shore') for b in bits if float(_seglens(b).sum()) >= min_leg]
-        return at_keep_out(pieces, min_leg)
-
-    def at_keep_out(pieces, min_leg):
-        """EVERY RUN, WHATEVER ITS LENGTH, is cut at a keep-out zone -- unlike the shore cut. A lake
-        has a handful of zones, not 36,849 docks, and the continuous troll strings short runs and
-        rings together, so a short one left inside would still be trolled. A run long enough to be
-        a leg keeps the pieces that still are; a shorter one keeps whatever is outside."""
-        if not zones.n:
-            return pieces
-        out = []
-        for c, how in pieces:
-            bits = zones.outside(_xy(c, lat0))
-            if bits is None:
-                out.append((c, how))
-                continue
-            st['cut_at_keep_out'] += 1
-            was = length_m(c)
-            kept = [b for b in bits if was < min_leg or float(_seglens(b).sum()) >= min_leg]
-            st['m_cut_at_keep_out'] += was - float(sum(_seglens(b).sum() for b in kept))
-            out.extend((_ll(b, lat0), 'keep_out') for b in kept)
-        return out
+    # A RUN THE FITTER REFUSES IS NOT WRITTEN, 2026-11-26. Ryan: "if we don't use it don't build it". Nothing on
+    # the screen reads one: Find water and the options take fitted lanes only (buildPieces(), plan-options.js),
+    # stamp_channels.mjs stamps fitted lanes only, and the one reader left, Generate Smart Plan, has been off the
+    # screen since 10/4. Card-wide they were 467,621 of 646,877 runs, 571 MB of the 1,262 MB of lane files, and
+    # half of what Find water downloads on Murray. They are still counted (kept_closed, kept_short, kept_thin),
+    # and the stitched originals are kept in the pre-fit backup, which is what --refit reads.
 
     out = []
     st = {'in': len(runs), 'fitted': 0, 'split': 0, 'kept_closed': 0, 'kept_short': 0,
@@ -1691,18 +1663,6 @@ def fit_pack(pack, a):
             # A closed ring at depth is a hump, and you circle it -- smoothing a closed curve
             # with its ends pinned collapses it toward a point. Short runs are not passes.
             st['kept_closed' if pr.get('closed') else 'kept_short'] += 1
-            pr['fitted'] = False
-            for c2, how in unfitted_at_shore(coords, min_leg):
-                p3 = dict(pr)
-                if how:
-                    p3['length_m'] = round(length_m(c2), 1)
-                    p3['vertices'] = len(c2)
-                    p3['closed'] = False
-                    p3.pop('area_m2', None)
-                    p3['cut_at_' + how] = True
-                annotate(p3, c2, grid, cell, a.annotate_m, depth, lat0)
-                out.append({'type': 'Feature', 'properties': p3,
-                            'geometry': {'type': 'LineString', 'coordinates': c2}})
             continue
 
         xy0 = _xy(coords, lat0)
@@ -1801,22 +1761,7 @@ def fit_pack(pack, a):
             pieces = cut
 
         if not pieces:
-            st['kept_thin'] += 1
-            pr['fit_note'] = ('no fitted pass of %.0f m survived: this %s is not %.1f ft '
-                              'deep for that far at a time'
-                              % (min_leg, st_seed or 'contour', floor / 3.048))
-            # Every piece came out under min_leg_m: the water here does not hold a pass. Keep the
-            # contour rather than inventing one, and say so in the properties.
-            pr['fitted'] = False
-            for c2, how in unfitted_at_shore(coords, min_leg):
-                p3 = dict(pr)
-                if how:
-                    p3['length_m'] = round(length_m(c2), 1)
-                    p3['vertices'] = len(c2)
-                    p3['cut_at_' + how] = True
-                annotate(p3, c2, grid, cell, a.annotate_m, depth, lat0)
-                out.append({'type': 'Feature', 'properties': p3,
-                            'geometry': {'type': 'LineString', 'coordinates': c2}})
+            st['kept_thin'] += 1      # every piece under min_leg_m: the water here does not hold a pass
             continue
 
         st['fitted'] += 1
