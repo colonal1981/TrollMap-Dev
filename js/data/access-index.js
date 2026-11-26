@@ -669,7 +669,8 @@ export function foldActiveCaptainRamp(index, lakeName, item) {
  * an ActiveCaptain ramp is usually a listed landing in other words. His is a place he stood on and
  * named, and my_launch.py adds one only where no feed lists a landing. So it joins a row only when
  * sameLanding() says it is that landing, and then his name wins, as it does everywhere else
- * (ryanName()). Anything else is a row of its own.
+ * (the rename under HIS OWN NAMES). Anything else is a row of its own. Both run there, after every
+ * merge.
  */
 export function ownLaunchItem(l, rec) {
   return {
@@ -895,18 +896,14 @@ async function buildAccessIndex() {
   // Awaited rather than fired-and-forgotten so the first populateLakeSelect() sees the full
   // list. loadLakeRegistry() swallows its own failure and returns an empty registry, so a
   // missing or unreachable index degrades to exactly the previous behaviour.
+  //
+  // offeredWaters: the water each offered registry record became, by slug, for the launches he
+  // added himself. They go on after every merge, with his names (see HIS OWN NAMES below).
+  const offeredWaters = new Map();
   try {
     // Fetched beside the registry, not after it. loadActiveCaptain() never throws: a missing file
     // is an index without its ramps, exactly the index from before it existed.
-    // His launch-name file too, now that pass 2 adds the launches he put in it (addOwnLaunch()). It never
-    // throws either: a missing file is the index without his launches.
-    await Promise.all([loadLakeRegistry(), loadActiveCaptain(),
-                       Promise.resolve(primeLaunchNames(workerBase())).catch(() => null)]);
-    const mine = new Map();
-    for (const l of ryanLaunches()) {
-      if (!mine.has(l.water)) mine.set(l.water, []);
-      mine.get(l.water).push(l);
-    }
+    await Promise.all([loadLakeRegistry(), loadActiveCaptain()]);
 
     // PASS 1 -- KNOW about every lake. Adds nothing to the dropdown.
     //
@@ -940,7 +937,6 @@ async function buildAccessIndex() {
     let folded = 0;
     let acNew = 0;
     let acFolded = 0;
-    let ownAdded = 0;
     for (const rec of filterLakes(REGISTRY_DEFAULT_FILTER)) {
       const existingKey = findExistingLakeKey(index, rec.name, rec.lat, rec.lon, 15, rec);
       const lakeName = existingKey || rec.displayName;
@@ -959,11 +955,7 @@ async function buildAccessIndex() {
       for (const p of acAccessPointsFor(rec)) {
         if (foldActiveCaptainRamp(index, lakeName, p)) acNew += 1; else acFolded += 1;
       }
-      // And the launches he added himself, last of all, under his name. See addOwnLaunch().
-      for (const l of mine.get(rec.slug) || []) {
-        addOwnLaunch(index, lakeName, ownLaunchItem(l, rec));
-        ownAdded += 1;
-      }
+      offeredWaters.set(rec.slug, { lakeName, rec });
 
       // A lake with no mapped ramp still has to be selectable and still has to fly the map
       // somewhere — that IS the discovery case, 141 of the 322. Without a point here the
@@ -979,7 +971,6 @@ async function buildAccessIndex() {
       console.info(`[access-index] ActiveCaptain ramps: ${acNew} new landing(s), ${acFolded} joined `
                  + 'a landing already listed');
     }
-    if (ownAdded) console.info(`[access-index] ${ownAdded} launch(es) you added yourself, on their water`);
     // Was `registryByName.size of byLake.size`, which printed "1560 of 1104" — more than
     // all of them. The two maps are keyed differently: registryByName holds every registry
     // NAME VARIANT, byLake holds DNR waterbody names, and neither contains the other. The
@@ -1021,6 +1012,18 @@ async function buildAccessIndex() {
   // samePlace, because it is the same question about the same file.
   try {
     await primeLaunchNames(workerBase());
+    // THE LAUNCHES HE ADDED HIMSELF go on their water first, under his name (Second Mill, 2026-11-26:
+    // a water is offered in the Plan tab only with a launch, and his lived only in the pack). Here
+    // rather than in pass 2 because this is where his file is read, once, after every other merge.
+    // See addOwnLaunch().
+    let ownAdded = 0;
+    for (const l of ryanLaunches()) {
+      const w = offeredWaters.get(l.water);
+      if (!w) continue;
+      addOwnLaunch(index, w.lakeName, ownLaunchItem(l, w.rec));
+      ownAdded += 1;
+    }
+    if (ownAdded) console.info(`[access-index] ${ownAdded} launch(es) you added yourself, on their water`);
     let renamed = 0;
     for (const list of index.byLake.values()) {
       for (const item of list) {

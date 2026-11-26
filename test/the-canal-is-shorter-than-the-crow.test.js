@@ -551,7 +551,8 @@ test('the rename happens once, where the index is built, and not at each label',
   // Two label sites patched separately would leave the research engine and Smart Plan reading the
   // feed's spelling while the dropdown showed his. One call, on the built index, before the name
   // list is rebuilt -- so every reader of byLake sees the same name.
-  assert.match(IDX, /import \{ primeLaunchNames, ryanName \} from '\.\/launch-reach\.js';/);
+  // (ryanLaunches came in beside them on 2026-11-26: his added launches go on in the same place.)
+  assert.match(IDX, /import \{ primeLaunchNames, ryanName(, \w+)* \} from '\.\/launch-reach\.js';/);
   // THE PATH, because getting it wrong is silent. upload_garmin_to_r2.py publishes
   // registry/_launch_name_overrides.json as _registry/launch_name_overrides.json -- the leading
   // underscore is the FOLDER's mark on disk and is stripped on the way to R2. I shipped the disk
