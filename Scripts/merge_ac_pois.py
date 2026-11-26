@@ -3,6 +3,12 @@ r"""merge_ac_pois.py -- put the ActiveCaptain POIs into packs that are already b
 
 Personal use only, not for distribution or resale; not for navigation.
 
+NO LONGER HOW THE MARKERS REACH THE APP, 2026-11-26. The pack build owns pois.geojson and every
+rebuild wrote it fresh, so what this put in came back out -- three of 1,074 packs still had it.
+build_ac_by_lake.py now writes one file the browser joins at runtime, and imports this module's
+classing and ray cast so they stay in one place. Running this still works; the app skips a
+marker the pack already carries by its ac_id.
+
     py .\scripts\merge_ac_pois.py --packs F:\TrollMapPipeline\chartpack `
        --registry F:\TrollMapPipeline\registry `
        --db "F:\TrollMapPipeline\POSSIBLY_NEW_GARMIN_CHARTS\active_captain.db" --dry-run

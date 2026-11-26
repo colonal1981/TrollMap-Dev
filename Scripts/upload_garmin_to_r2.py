@@ -1008,6 +1008,21 @@ def main():
             print(f"!! {_mw.name} not found -- no plan says when the water was moving; build it with "
                   f"build_moving_water.py")
 
+        # THE ACTIVECAPTAIN MARKERS, 2026-11-26. Read by the BROWSER (js/data/activecaptain.js),
+        # which joins them onto each pack's POIs and puts the ramps in the access index -- so here
+        # beside the other browser-read objects, not in the Worker's PASSTHROUGH_REGISTRIES. It
+        # replaced merge_ac_pois.py writing into the packs, which every pack rebuild undid.
+        _ac = regdir / "activecaptain_by_lake.json"
+        if _ac.exists():
+            reg_jobs.append((str(_ac), f"{args.prefix}_registry/activecaptain_by_lake.json",
+                             "_registry", "activecaptain_by_lake"))
+            print(f"AC:       ActiveCaptain markers by water -> "
+                  f"{args.prefix}_registry/activecaptain_by_lake.json ({_ac.stat().st_size/1024:.0f} KB)")
+        else:
+            print(f"!! {_ac.name} not found -- no ActiveCaptain marker on any map and no ActiveCaptain "
+                  f"ramp in the picker; build it with build_ac_by_lake.py --registry <registry> "
+                  f"--db <active_captain.db>")
+
         # NORTH CAROLINA'S SPECIES. Not slimmed -- the file is already only what it needs to be,
         # a species list and a stocking list per registry slug.
         #

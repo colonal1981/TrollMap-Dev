@@ -32,6 +32,7 @@ import { workerBase, loadLakeRegistry, filterLakes, accessPointsFor, getLoadedRe
 import { registerR2Key } from './lake-keys.js';
 import { setLiveAccessSource } from './water-filter.js';
 import { primeLaunchNames, ryanName } from './launch-reach.js';
+import { loadActiveCaptain, acAccessPointsFor } from './activecaptain.js';
 import { cacheClear } from '../utils/db.js';
 
 // Manual coastal ramps not in DNR ArcGIS feed — add here when a known
@@ -482,13 +483,16 @@ export function rampMeta(raw) {
  * @param {Map<string, object[]>} byLake  the built index, filtered IN PLACE
  * @returns {number} how many rows were hidden
  */
+const HIDE_UNNAMED_FROM = new Set(['registry:osm', 'activecaptain']);
 export function hideUnnamedSlipways(byLake) {
   let hidden = 0;
   for (const [lake, list] of byLake) {
     if (!Array.isArray(list) || !list.length) continue;
     // A named row from ANY source -- agency, manual, or OSM itself.
     if (!list.some((x) => x && !x.unnamed)) continue;
-    const keep = list.filter((x) => !(x && x.unnamed && String(x.sourcePath || '') === 'registry:osm'));
+    // ActiveCaptain too, since 2026-11-26: its `Boat Ramp` and `Public Boat Ramp` rows say what
+    // the label beside them already says, the same as an OSM `Boat Ramp`.
+    const keep = list.filter((x) => !(x && x.unnamed && HIDE_UNNAMED_FROM.has(String(x.sourcePath || ''))));
     if (keep.length !== list.length) { hidden += list.length - keep.length; byLake.set(lake, keep); }
   }
   return hidden;
@@ -593,6 +597,64 @@ function addAccessItem(index, lakeName, item) {
   if (existing) { mergeLanding(existing, item); return; }
 
   list.push(item);
+}
+
+/**
+ * ── AN ACTIVECAPTAIN RAMP JOINS THE LANDING IT IS ON, AND NEVER RENAMES IT ─────────────────────
+ *
+ * sameLanding() is the first test and catches half of them. Measured on the 2026-11-15 database
+ * against the ramps the registry already lists, 485 ActiveCaptain ramps on the water of a shipped
+ * lake:
+ *
+ *     within 11 m of a listed landing                                   151   sameLanding folds
+ *     same name within 180 m                                             97   sameLanding folds
+ *     another name, under 50 m                                          117   <- the same landing
+ *     another name, 50-150 m                                             25   <- the same landing
+ *     another name, 150-500 m                                            22   mixed
+ *     more than 500 m from any, or the water lists none                  73   new
+ *
+ * Every one read under 150 m -- all 25 in the 50-150 band and 40 of the 117 closer -- is the landing
+ * it sits beside, in ActiveCaptain's wording: `Town of Badin Public Boat Launch` 58 m from `Badin Lake Boat Ramp`, `Dam boat ramp` 74 m
+ * from `Lake Murray Dam`, `Jack's Creek Marina Boat Ramp` 70 m from an unnamed OSM slipway on
+ * Marion. Past 150 m it stops being one answer: `Lake Greenwood State Recreation Area` 224 m from
+ * `Lake Greenwood State Park` is one landing, `Anchor Marina Boat Ramp - Private` 191 m from
+ * `Highway 17 Bridge (South)` is not. So the gate is 150 m, the radius this project already uses
+ * for one ramp from two sources (RAMP_MERGE_M in supplemental-layers.js, COLLAPSE_M in
+ * build_chartpack.py), and the 150-500 band stays as rows.
+ *
+ * THE NEW ONES ARE THE POINT. Atkins Boat Landing on Moultrie is 2.4 km from any landing the
+ * registry lists. Lake Wheeler Park Boat Ramp and Croft State Natural Area are on waters that
+ * listed none -- Lake Edwin Johnson is one of the two that lost their only pin on 2026-08-22.
+ *
+ * ITS NAME DOES NOT WIN. mergeLanding() keeps the longer of two names, and ActiveCaptain's are long
+ * by habit -- `Edisto State Park Boat Ramp - Hazard at Low Tide`. Let that rule run and a few hundred
+ * rows in the picker change their names to his surprise. A folded ramp adds its label, and its name
+ * only where the row had none. Only a fold onto a row that launches: a fishing pier 100 m from a
+ * ramp is not that ramp.
+ *
+ * @returns {boolean} true when it became a row of its own
+ */
+export const AC_FOLD_M = 150;
+export function foldActiveCaptainRamp(index, lakeName, item) {
+  if (!lakeName || !item || !Number.isFinite(item.lat) || !Number.isFinite(item.lon)) return false;
+  if (!index.byLake.has(lakeName)) index.byLake.set(lakeName, []);
+  const list = index.byLake.get(lakeName);
+  let hit = sameLanding(list, item);
+  if (!hit) {
+    let best = AC_FOLD_M;
+    for (const x of list) {
+      if (!x || x.launch === false) continue;
+      const d = accessMetres(x, item);
+      if (d <= best) { best = d; hit = x; }
+    }
+  }
+  if (!hit) { list.push(item); return true; }
+  const labels = new Set([...(hit.sourceLabels || [hit.typeLabel]), item.typeLabel].filter(Boolean));
+  hit.sourceLabels = [...labels];
+  hit.typeLabel = hit.sourceLabels.join(' / ');
+  if (hit.unnamed && !item.unnamed) { hit.name = item.name; hit.unnamed = false; }
+  hit.launch = true;
+  return false;
 }
 
 // ── Worker data load ─────────────────────────────────────────────────────
@@ -789,7 +851,9 @@ async function buildAccessIndex() {
   // list. loadLakeRegistry() swallows its own failure and returns an empty registry, so a
   // missing or unreachable index degrades to exactly the previous behaviour.
   try {
-    await loadLakeRegistry();
+    // Fetched beside the registry, not after it. loadActiveCaptain() never throws: a missing file
+    // is an index without its ramps, exactly the index from before it existed.
+    await Promise.all([loadLakeRegistry(), loadActiveCaptain()]);
 
     // PASS 1 -- KNOW about every lake. Adds nothing to the dropdown.
     //
@@ -821,6 +885,8 @@ async function buildAccessIndex() {
     let added = 0;
     let pruned = 0;
     let folded = 0;
+    let acNew = 0;
+    let acFolded = 0;
     for (const rec of filterLakes(REGISTRY_DEFAULT_FILTER)) {
       const existingKey = findExistingLakeKey(index, rec.name, rec.lat, rec.lon, 15, rec);
       const lakeName = existingKey || rec.displayName;
@@ -834,6 +900,11 @@ async function buildAccessIndex() {
 
       const pts = accessPointsFor(rec);
       for (const p of pts) addAccessItem(index, lakeName, p);
+      // After every other source, so there is a listed landing for it to join. See
+      // foldActiveCaptainRamp().
+      for (const p of acAccessPointsFor(rec)) {
+        if (foldActiveCaptainRamp(index, lakeName, p)) acNew += 1; else acFolded += 1;
+      }
 
       // A lake with no mapped ramp still has to be selectable and still has to fly the map
       // somewhere — that IS the discovery case, 141 of the 322. Without a point here the
@@ -845,6 +916,10 @@ async function buildAccessIndex() {
     if (added) console.info(`[access-index] registry contributed ${added} lakes not in the DNR feeds`);
     if (pruned) console.info(`[access-index] dropped ${pruned} access point(s) that sit outside the lake they were filed under`);
     if (folded) console.info(`[access-index] folded ${folded} duplicate DNR name(s) into the lake they belong to`);
+    if (acNew || acFolded) {
+      console.info(`[access-index] ActiveCaptain ramps: ${acNew} new landing(s), ${acFolded} joined `
+                 + 'a landing already listed');
+    }
     // Was `registryByName.size of byLake.size`, which printed "1560 of 1104" — more than
     // all of them. The two maps are keyed differently: registryByName holds every registry
     // NAME VARIANT, byLake holds DNR waterbody names, and neither contains the other. The

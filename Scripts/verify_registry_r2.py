@@ -165,6 +165,11 @@ FILES = [
      "js/modules/river-line-layer.js draws a picked river below zoom 11 off this -- 57 rivers. "
      "Without it a river that frames at zoom 8-10 is inside one basemap pixel, and finding it "
      "means panning"),
+    # 2026-11-26. Also read by the APP.
+    ("activecaptain_by_lake.json", "activecaptain_by_lake.json", "verbatim",
+     "js/data/activecaptain.js joins the ActiveCaptain markers onto each pack's POIs and its ramps "
+     "into the access index -- 130 waters, 564 ramps. Without it no ActiveCaptain marker is on any "
+     "map, and Atkins Boat Landing on Moultrie is not in the picker"),
 ]
 
 # ── THE TABLE THE UPLOADER PUBLISHES FROM, READ RATHER THAN RESTATED ─────────────────────────

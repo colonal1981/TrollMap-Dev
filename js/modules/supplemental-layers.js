@@ -16,6 +16,7 @@ import { distMiFromCoords as distMi, geoDistanceM } from '../utils/geo.js';
 import { workerHeaders } from '../utils/worker-auth.js';
 import { depthColor } from '../utils/depth-palette.js';
 import { allAccessPoints, loadAccessIndex } from '../data/access-index.js';
+import { loadActiveCaptain, mergeActiveCaptain } from '../data/activecaptain.js';
 import { displayDepth, setDisplayTide } from './tide-engine.js';
 
 import { cacheGet, cacheSet, cacheClear, CACHE_NS_CHART_LAYERS } from '../utils/db.js';
@@ -224,17 +225,31 @@ const PREFETCH_LAYERS = ['pois', 'docks', 'structure'];
 
 async function ensureData(lakeKey, layer) {
   if (_garminData[layer]) return _garminData[layer];
+  // ActiveCaptain's markers join the pack's POIs HERE, once per water, so the symbols, the chart
+  // text, Smart Plan's context and the agency ramp names all read one list. Started before the
+  // pack fetch so the two travel together. See js/data/activecaptain.js.
+  const acReady = layer === 'pois' ? loadActiveCaptain() : null;
+  let gj = null;
   try {
-    const gj = await loadLayer(lakeKey, layer);
-    _garminData[layer] = gj;
-    return gj;
+    gj = await loadLayer(lakeKey, layer);
   } catch (_) {
     // Audited 2026-08-04 -- a 404 is the common case, not a fault: most lakes have no Garmin
     // pack for this layer and loadLayer throws on the miss. Caching null is what stops every
     // toggle re-requesting a file that is not there. loadLayer reports anything worse.
-    _garminData[layer] = null;
-    return null;
+    gj = null;
   }
+  if (acReady) {
+    // A water with no pack POIs still gets ActiveCaptain's, which is a gain and not a fault.
+    await acReady;
+    const r = mergeActiveCaptain(gj, lakeKey);
+    gj = r.gj;
+    if (r.added || r.merged) {
+      console.log(`[supplemental] ActiveCaptain: ${r.added} added, ${r.merged} joined a Garmin POI `
+                + `of the same name for ${lakeKey}${r.already ? `, ${r.already} already in the pack` : ''}`);
+    }
+  }
+  _garminData[layer] = gj && gj.features && gj.features.length ? gj : null;
+  return _garminData[layer];
 }
 
 export function getStructureGeoJSON() { return _garminData.structure || null; }
