@@ -503,6 +503,34 @@ export function primeLaunchNames(worker) {
 }
 
 /**
+ * ── THE LAUNCHES HE ADDED HIMSELF ──────────────────────────────────────────────────────────────
+ *
+ * Scripts/my_launch.py writes a put-in no feed lists into the same file, as `add: true` with the
+ * water's slug -- "Second Mill ramp" on second_millpond, "Dirt road kayak launch" on Bates. Until
+ * 2026-11-26 those reached the app only through the pack's launches.json, which is read after a
+ * water is picked, so the Plan tab's list -- which offers a water only when it has a launch
+ * (water-filter.js, the planner preset) -- never saw them. Ryan: "second mill doesn't show up in
+ * the waterbody dropdown on the planner tab". access-index.js puts these on their water.
+ *
+ * @returns {{lat:number, lon:number, name:string, water:string, why:string}[]}
+ */
+export function ryanLaunches() {
+  const names = (LAUNCH_NAMES.get() || {}).names;
+  const out = [];
+  if (!names) return out;
+  for (const key of Object.keys(names)) {
+    const rec = names[key];
+    if (!rec || rec.add !== true || !rec.name || !rec.water) continue;
+    const parts = String(key).split(',');
+    const lat = Number(parts[0]);
+    const lon = Number(parts[1]);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+    out.push({ lat, lon, name: String(rec.name), water: String(rec.water), why: String(rec.why || '') });
+  }
+  return out;
+}
+
+/**
  * What HE calls the landing at this position, or '' when he has not said.
  *
  * Same 40 m as samePlace(), because it is the same question: is the row on the screen this landing.

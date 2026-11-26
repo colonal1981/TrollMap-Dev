@@ -31,7 +31,7 @@ import { workerBase, loadLakeRegistry, filterLakes, accessPointsFor, getLoadedRe
          namesALanding } from './lake-registry.js';
 import { registerR2Key } from './lake-keys.js';
 import { setLiveAccessSource } from './water-filter.js';
-import { primeLaunchNames, ryanName } from './launch-reach.js';
+import { primeLaunchNames, ryanName, ryanLaunches } from './launch-reach.js';
 import { loadActiveCaptain, acAccessPointsFor } from './activecaptain.js';
 import { cacheClear } from '../utils/db.js';
 
@@ -657,6 +657,51 @@ export function foldActiveCaptainRamp(index, lakeName, item) {
   return false;
 }
 
+/**
+ * ── A LAUNCH HE ADDED IS A LAUNCH ON ITS WATER, UNDER HIS NAME ─────────────────────────────────
+ *
+ * Ryan, 2026-11-26: "second mill doesn't show up in the waterbody dropdown on the planner tab". The
+ * planner preset offers a water only when it has a launch (water-filter.js), and the launch he added
+ * with Scripts/my_launch.py lived only in the pack's launches.json, read after a water is picked.
+ * Bates showed only because it is on the hand-written KEEP_ALWAYS list.
+ *
+ * Not the ActiveCaptain fold. That one joins anything within 150 m and keeps the listed name, because
+ * an ActiveCaptain ramp is usually a listed landing in other words. His is a place he stood on and
+ * named, and my_launch.py adds one only where no feed lists a landing. So it joins a row only when
+ * sameLanding() says it is that landing, and then his name wins, as it does everywhere else
+ * (ryanName()). Anything else is a row of its own.
+ */
+export function ownLaunchItem(l, rec) {
+  return {
+    name: l.name,
+    unnamed: false,
+    lat: l.lat,
+    lon: l.lon,
+    // His word decides which kind it is: "Second Mill ramp" is a ramp, "Dirt road kayak launch" is not.
+    typeLabel: /\bramp\b/i.test(l.name) ? 'Boat ramp (yours)' : 'Launch (yours)',
+    marker: '🛶',
+    sourcePath: 'mine',
+    sourceState: rec && rec.state,
+    launch: true,
+    meta: { source: 'Ryan (my_launch.py)', why: l.why || '' },
+  };
+}
+/** @returns {boolean} true when it became a row of its own, false when it is a listed landing (his name on it). */
+export function addOwnLaunch(index, lakeName, item) {
+  if (!lakeName || !item || !Number.isFinite(item.lat) || !Number.isFinite(item.lon)) return false;
+  if (!index.byLake.has(lakeName)) index.byLake.set(lakeName, []);
+  const list = index.byLake.get(lakeName);
+  const hit = sameLanding(list, item);
+  if (!hit) { list.push(item); return true; }
+  const labels = new Set([...(hit.sourceLabels || [hit.typeLabel]), item.typeLabel].filter(Boolean));
+  hit.sourceLabels = [...labels];
+  hit.typeLabel = hit.sourceLabels.join(' / ');
+  hit.name = item.name;
+  hit.unnamed = false;
+  hit.launch = true;
+  return false;
+}
+
 // ── Worker data load ─────────────────────────────────────────────────────
 
 async function fetchAccessSource(source, stateCode) {
@@ -853,7 +898,15 @@ async function buildAccessIndex() {
   try {
     // Fetched beside the registry, not after it. loadActiveCaptain() never throws: a missing file
     // is an index without its ramps, exactly the index from before it existed.
-    await Promise.all([loadLakeRegistry(), loadActiveCaptain()]);
+    // His launch-name file too, now that pass 2 adds the launches he put in it (addOwnLaunch()). It never
+    // throws either: a missing file is the index without his launches.
+    await Promise.all([loadLakeRegistry(), loadActiveCaptain(),
+                       Promise.resolve(primeLaunchNames(workerBase())).catch(() => null)]);
+    const mine = new Map();
+    for (const l of ryanLaunches()) {
+      if (!mine.has(l.water)) mine.set(l.water, []);
+      mine.get(l.water).push(l);
+    }
 
     // PASS 1 -- KNOW about every lake. Adds nothing to the dropdown.
     //
@@ -887,6 +940,7 @@ async function buildAccessIndex() {
     let folded = 0;
     let acNew = 0;
     let acFolded = 0;
+    let ownAdded = 0;
     for (const rec of filterLakes(REGISTRY_DEFAULT_FILTER)) {
       const existingKey = findExistingLakeKey(index, rec.name, rec.lat, rec.lon, 15, rec);
       const lakeName = existingKey || rec.displayName;
@@ -905,6 +959,11 @@ async function buildAccessIndex() {
       for (const p of acAccessPointsFor(rec)) {
         if (foldActiveCaptainRamp(index, lakeName, p)) acNew += 1; else acFolded += 1;
       }
+      // And the launches he added himself, last of all, under his name. See addOwnLaunch().
+      for (const l of mine.get(rec.slug) || []) {
+        addOwnLaunch(index, lakeName, ownLaunchItem(l, rec));
+        ownAdded += 1;
+      }
 
       // A lake with no mapped ramp still has to be selectable and still has to fly the map
       // somewhere — that IS the discovery case, 141 of the 322. Without a point here the
@@ -920,6 +979,7 @@ async function buildAccessIndex() {
       console.info(`[access-index] ActiveCaptain ramps: ${acNew} new landing(s), ${acFolded} joined `
                  + 'a landing already listed');
     }
+    if (ownAdded) console.info(`[access-index] ${ownAdded} launch(es) you added yourself, on their water`);
     // Was `registryByName.size of byLake.size`, which printed "1560 of 1104" — more than
     // all of them. The two maps are keyed differently: registryByName holds every registry
     // NAME VARIANT, byLake holds DNR waterbody names, and neither contains the other. The
