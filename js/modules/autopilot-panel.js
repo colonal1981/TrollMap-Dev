@@ -21,7 +21,7 @@
  *   - THE FIRST TEST ROUTE IS TAPPED ON THE MAP: "probably the easiest way to build a route for this test".
  *
  * The box's commands are its own one-letter set (the terminal app still works beside this): H hold, < > ten
- * degrees, S stop, C center, G follow, R rod in, Q clear the route, W<lat>,<lon>; a point, J make it a loop,
+ * degrees, + - a step of the rod by hand, S stop, C center, G follow, R rod in, Q clear the route, W<lat>,<lon>; a point, J make it a loop,
  * V say what route it holds. Nothing here steers: the box does, on its own GPS and compass.
  */
 import { state } from '../core/state.js';
@@ -528,8 +528,15 @@ function draw() {
   put('btns', `<div class="ap-btns">`
     + `<button data-ap-cmd="H" class="${steering ? 'ap-on' : ''}" ${on && !steering ? '' : 'disabled'}>Hold</button>`
     + `<button data-ap-cmd="G" class="${following ? 'ap-on' : ''}" ${on && s.route.n > 1 && !following && !S.sending ? '' : 'disabled'}>Follow</button>`
-    + `<button data-ap-cmd="<" ${on && steering ? '' : 'disabled'}>◀ Left 10</button>`
-    + `<button data-ap-cmd=">" ${on && steering ? '' : 'disabled'}>Right 10 ▶</button>`
+    // WHILE IT STEERS, Left and Right move the heading it holds 10 degrees. WHEN IT DOES NOT, they turn the
+    // motor by hand, a step of the rod each tap (the terminal's + and -, about 1/4" or 6 degrees). Ryan,
+    // 2026-11-26: "there is no way to manually steer the boat with that screen". + (extend) turns the
+    // bow left on his mount (garage_test.ino, steerSign, measured 11/26).
+    + (steering
+      ? `<button data-ap-cmd="<" ${on ? '' : 'disabled'}>◀ Left 10°</button>`
+        + `<button data-ap-cmd=">" ${on ? '' : 'disabled'}>Right 10° ▶</button>`
+      : `<button data-ap-cmd="+" ${on ? '' : 'disabled'}>◀ Turn left</button>`
+        + `<button data-ap-cmd="-" ${on ? '' : 'disabled'}>Turn right ▶</button>`)
     + `<button data-ap-cmd="S" class="ap-stop" ${on ? '' : 'disabled'}>Stop</button>`
     + `<button data-ap-cmd="C" ${on ? '' : 'disabled'}>Center</button>`
     + `<button data-ap-cmd="R" ${on ? '' : 'disabled'} style="grid-column:1/3">Park (rod all the way in)</button>`
