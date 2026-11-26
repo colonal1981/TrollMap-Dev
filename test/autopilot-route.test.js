@@ -53,6 +53,17 @@ test('the day is its loops and the runs between them, in order', () => {
   assert.ok(Math.abs(p[0].lengthM - 300) < 2);
 });
 
+test('a day in two areas: each area numbers its laps from 1, and the run across stays a run', () => {
+  const legs = [
+    { id: 'a1o', runId: 'x#loop1-out', coordinates: line([0, 0], [300, 300], 5) },
+    { id: 'a1b', runId: 'x#loop1-back', coordinates: line([300, 300], [0, 0], 5) },
+    { id: 'run', runId: 'x#loop0-run', coordinates: line([0, 0], [3000, 0], 5) },
+    { id: 'a2o', runId: 'x#loop1-out', coordinates: line([3000, 0], [3300, 300], 5) },
+    { id: 'a2b', runId: 'x#loop1-back', coordinates: line([3300, 300], [3000, 0], 5) },
+  ];
+  assert.deepEqual(dayPieces({ legs }).map((q) => q.name), ['Loop 1', 'Run to loop 2', 'Loop 2']);
+});
+
 test('a route goes in as clear, points, loop, and a question', () => {
   const c = routeCommands([[-80.38016, 33.91829], [-80.381, 33.919]], { loop: true });
   assert.deepEqual(c, ['Q', 'W33.918290,-80.380160;', 'W33.919000,-80.381000;', 'J', 'V']);

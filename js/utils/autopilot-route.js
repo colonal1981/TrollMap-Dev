@@ -92,6 +92,9 @@ export function thin(coords, { loop = false, max = MAX_POINTS } = {}) {
   return idx.map((i) => pts[i]);
 }
 
+/** Longest leg between a loop's out and its back that is still part of that loop. */
+const JOIN_M = 300;
+
 function lineM(coords) {
   let m = 0;
   for (let i = 1; i < coords.length; i++) m += metres(coords[i - 1], coords[i]);
@@ -124,10 +127,12 @@ export function dayPieces(plan) {
     }
   }
   // A JOIN INSIDE ONE LOOP IS THE LOOP. When a loop's out and back do not touch, the plan joins them
-  // with a leg of its own that carries no runId; that is still loop N, not a run to loop N.
+  // with a short leg of its own that carries no runId; that is still loop N, not a run to loop N.
+  // A LONG run between two "loop 1"s is not a join: on a day in the areas the reports name
+  // (plan-areas.js) the laps are numbered again in each area, and the run across is a run.
   for (let i = 1; i + 1 < out.length;) {
     const [a, b, c] = [out[i - 1], out[i], out[i + 1]];
-    if (a.kind === 'loop' && b.kind === 'run' && c.kind === 'loop' && a.loopN === c.loopN) {
+    if (a.kind === 'loop' && b.kind === 'run' && c.kind === 'loop' && a.loopN === c.loopN && lineM(b.coords) < JOIN_M) {
       for (const q of [b, c]) {
         const tail = a.coords[a.coords.length - 1];
         a.coords.push(...(metres(tail, q.coords[0]) < 1 ? q.coords.slice(1) : q.coords));
@@ -136,14 +141,19 @@ export function dayPieces(plan) {
       out.splice(i, 2);
     } else i += 1;
   }
+  // Loops are named in the order the boat meets them, so the second area's first lap is not a
+  // second "Loop 1".
+  let seq = 0;
+  for (const p of out) if (p.kind === 'loop') p.seq = ++seq;
   out.forEach((p, i) => {
     p.lengthM = Math.round(lineM(p.coords));
-    if (p.kind === 'loop') p.name = `Loop ${p.loopN}`;
+    if (p.kind === 'loop') p.name = `Loop ${p.seq}`;
     else if (p.home || i === out.length - 1) p.name = 'The way home';
     else {
       const next = out.slice(i + 1).find((q) => q.kind === 'loop');
-      p.name = next ? `Run to loop ${next.loopN}` : 'Run';
+      p.name = next ? `Run to loop ${next.seq}` : 'Run';
     }
+    delete p.seq;
     delete p.key;
     delete p.home;
   });
