@@ -1,7 +1,7 @@
 import { describe, it, expect } from './expect-shim.mjs';
 import { TACKLE_INVENTORY, RIGGED_TROLLING_WEIGHT_OZ } from '../js/data/tackle-inventory.js';
 import { LURE_KNOWLEDGE, LURE_COLORS, depthWindow, leadForDepth, canReachDepth,
-         requiresInlineWeight, levelsOffFt, ratedDepthOf } from '../js/data/lure-knowledge.js';
+         requiresInlineWeight, levelsOffFt, ratedDepthOf, TYPES_KEPT_WITHOUT_A_LURE } from '../js/data/lure-knowledge.js';
 import { TYPE_LABELS } from '../js/modules/tackle-inventory-ui.js';
 import { FISHING_STYLE } from '../js/data/fishing-style-profile.js';
 
@@ -97,14 +97,10 @@ describe('tackle parity — every type resolves in all three tables', () => {
   it('every LURE_KNOWLEDGE type is owned by at least one lure', () => {
     // Catches the reverse mistake: a type added to knowledge and then never
     // used, which looks like coverage but is dead weight.
-    // EXCEPT ONE ON PURPOSE. The vertical jig's only lures were the two P-Line Haruki jigs, and Ryan, 2026-11-22: "i dont
-    // think i ever had the haruki jigs". The type stays for the day one is bought, and species-intel names it as a
-    // fallback presentation.
-    // And the 20-25 ft crank band: its only lure was the 'DD3 Crankbait (20-25ft)' placeholder, retired 11/22 ("Those
-    // were created because I don't know the brand of every crankbait"). The band stays: the box's add row offers it
-    // for an unlabelled crank he puts in at that depth.
-    const KEPT_WITHOUT_A_LURE = ['vertical_jig', 'crankbait_dd3'];
-    const orphans = Object.keys(LURE_KNOWLEDGE).filter(t => !types.includes(t) && !KEPT_WITHOUT_A_LURE.includes(t));
+    // EXCEPT TWO ON PURPOSE (11/22): the vertical jig and the 20-25 ft crank band. The list and the reasons live beside
+    // LURE_KNOWLEDGE, so this and check-tackle-parity.mjs read one list.
+    const orphans = Object.keys(LURE_KNOWLEDGE)
+      .filter(t => !types.includes(t) && !TYPES_KEPT_WITHOUT_A_LURE.includes(t));
     expect(orphans).toEqual([]);
   });
 

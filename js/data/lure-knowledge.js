@@ -472,6 +472,16 @@ export const LURE_KNOWLEDGE = {
   },
 };
 
+// TYPES KEPT WITH NO BAIT IN THE BOX, ON PURPOSE (2026-11-22). Every other LURE_KNOWLEDGE type has at least one lure in
+// TACKLE_INVENTORY, and both parity checks hold it to that; these two are the exceptions, read from here by both so
+// the list cannot drift between them (it did: check-tackle-parity.mjs went red when only the test learned it).
+//   vertical_jig    its only lures were the two P-Line Haruki jigs, and Ryan: "i dont think i ever had the haruki
+//                   jigs". It stays for the day one is bought, and species-intel names it as a fallback presentation.
+//   crankbait_dd3   its only lure was the 'DD3 Crankbait (20-25ft)' placeholder, retired 11/22 ("Those were created
+//                   because I don't know the brand of every crankbait"). The band stays: the box's add row offers it
+//                   for an unlabelled crank he puts in at that depth.
+export const TYPES_KEPT_WITHOUT_A_LURE = Object.freeze(['vertical_jig', 'crankbait_dd3']);
+
 // ── Scoring engine ────────────────────────────────────────────────────────────
 // scoreLureForContext() stood here: a score from species, season, clarity, tactical depth,
 // structure and cover fit. Its only caller, selectBestLure() in tackle-inventory.js, was called by

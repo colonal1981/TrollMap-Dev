@@ -13,7 +13,8 @@ import { TACKLE_INVENTORY, JIGHEADS_OWNED_OZ,
          RIGGED_TROLLING_WEIGHT_OZ } from '../js/data/tackle-inventory.js';
 import { LURE_KNOWLEDGE, LURE_COLORS, depthWindow, leadForDepth, canReachDepth,
          jigheadRangeOz, jigheadForSwimbait,
-         requiresInlineWeight } from '../js/data/lure-knowledge.js';
+         requiresInlineWeight, levelsOffFt, ratedDepthOf,
+         TYPES_KEPT_WITHOUT_A_LURE } from '../js/data/lure-knowledge.js';
 import { TYPE_LABELS } from '../js/modules/tackle-inventory-ui.js';
 import { FISHING_STYLE } from '../js/data/fishing-style-profile.js';
 
@@ -67,8 +68,9 @@ check('every entry has id, name, type', () =>
 check('every type has a LURE_KNOWLEDGE block', () => types.filter(t => !LURE_KNOWLEDGE[t]));
 check('every type has a LURE_COLORS entry',    () => types.filter(t => !LURE_COLORS[t]));
 check('every type has a TYPE_LABELS entry',    () => types.filter(t => !TYPE_LABELS[t]));
+// Two types are kept with no bait on purpose (11/22); the reason is beside the list in lure-knowledge.js.
 check('no orphan knowledge types',             () =>
-  Object.keys(LURE_KNOWLEDGE).filter(t => !types.includes(t)));
+  Object.keys(LURE_KNOWLEDGE).filter(t => !types.includes(t) && !TYPES_KEPT_WITHOUT_A_LURE.includes(t)));
 check('every colour map has clear/stained/muddy', () =>
   Object.entries(LURE_COLORS)
     .filter(([, m]) => ['clear', 'muddy', 'stained'].some(k => !(k in m)))
@@ -112,19 +114,25 @@ check('leadForDepth is monotonic and non-negative', () => {
   }
   return bad;
 });
+// The bait's own box when it has one (a named crank, 11/22), its type's band when it does not: ratedDepthOf().
 check('a rated bait is never leaded past its bill', () =>
   trollable.filter(l => LURE_KNOWLEDGE[l.type].depthMode === 'rated')
-    .filter(l => leadForDepth(l, 60, 1.8) !== leadForDepth(l, LURE_KNOWLEDGE[l.type].ratedDepth.max, 1.8))
+    .filter(l => leadForDepth(l, 60, 1.8) !== leadForDepth(l, ratedDepthOf(l).max, 1.8))
     .map(l => l.id));
 check('lead-controlled baits round-trip depth -> lead -> depth', () => {
   const bad = [];
   for (const bought of trollable) {
     if (LURE_KNOWLEDGE[bought.type].depthMode !== 'lead') continue;
     const l = rigged(bought);
+    // A BAIT THAT LEVELS OFF (the lipless, 11/9) round-trips up to its ceiling at this speed; asked for more, it is
+    // there and no deeper. The same rule as tackle-parity.test.js.
+    const ceil = levelsOffFt(l, 1.8);
     for (const d of [8, 15, 25, 35]) {
       const lead = leadForDepth(l, d, 1.8);
       const back = depthWindow(l, { speedMph: 1.8, leadFt: lead });
-      if (back.min > d || back.max < d) bad.push(`${l.id} ${d}ft -> ${lead}ft -> ${back.min}-${back.max}ft`);
+      const want = ceil != null ? Math.min(d, Math.floor(ceil)) : d;
+      if (back.min > want || back.max < want) bad.push(`${l.id} ${d}ft -> ${lead}ft -> ${back.min}-${back.max}ft`);
+      if (ceil != null && back.max > Math.round(ceil)) bad.push(`${l.id} ${d}ft -> past its ${ceil}ft ceiling`);
     }
   }
   return bad;
@@ -169,8 +177,12 @@ check('faster really does mean more line, for every trollable lead bait', () => 
   const bad = [];
   for (const l of trollable) {
     if (LURE_KNOWLEDGE[l.type].depthMode !== 'lead') continue;
-    const slow = leadForDepth(l, 20, 1.4), fast = leadForDepth(l, 20, 2.6);
-    if (!(fast > slow)) bad.push(`${l.id}: 1.4mph -> ${slow}ft, 2.6mph -> ${fast}ft`);
+    // At a depth both speeds can reach. Past a lipless's ceiling the lead is the one that reaches the ceiling, at any
+    // speed, so 20 ft would ask it something it cannot do (2.6 mph is where that ceiling is shallowest).
+    const c = levelsOffFt(rigged(l), 2.6);
+    const d = c != null ? Math.min(20, Math.floor(c)) : 20;
+    const slow = leadForDepth(rigged(l), d, 1.4), fast = leadForDepth(rigged(l), d, 2.6);
+    if (!(fast > slow)) bad.push(`${l.id} @${d}ft: 1.4mph -> ${slow}ft, 2.6mph -> ${fast}ft`);
   }
   return bad;
 });
