@@ -191,6 +191,7 @@ function wire() {
   state.MAP.on('click', (e) => {
     if (!S.on || S.building) return;
     if ($('editMode')?.value === 'add') return;     // adding a waypoint
+    if (window.autopilotTapping) return;            // a point for the steering box's route (autopilot-panel.js)
     clearTimeout(S.clickTimer);
     S.clickTimer = setTimeout(() => addTurn([e.latlng.lng, e.latlng.lat]), 260);
   });

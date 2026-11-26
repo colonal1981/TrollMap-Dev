@@ -76,6 +76,7 @@ import './modules/safety-checklist.js';
 import './modules/gis-toggles.js';
 import './modules/layers-panel.js';
 import './modules/ble-motor.js';
+import './modules/autopilot-panel.js';
 import './modules/wet-hands-remote.js';
 import './modules/gear-autopilot.js';
 import './modules/osm-structure.js';
