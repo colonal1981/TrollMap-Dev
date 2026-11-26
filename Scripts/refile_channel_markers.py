@@ -112,9 +112,28 @@ def main():
     ap.add_argument('--packs', required=True)
     ap.add_argument('--only', default=None)
     ap.add_argument('--dry-run', action='store_true')
+    ap.add_argument('--index', default=None,
+                    help='lake_index.json -- only the waters the app offers. Default '
+                         '<packs>/../registry/lake_index.json')
+    ap.add_argument('--all-packs', action='store_true',
+                    help='every pack dir under --packs, ignoring the index (an archive pass)')
     a = ap.parse_args()
     slugs = [a.only] if a.only else sorted(d for d in os.listdir(a.packs)
                                            if os.path.isfile(os.path.join(a.packs, d, 'pois.geojson')))
+    # ONLY WHAT THE APP OFFERS, the gate build_structure, build_water_features and the uploader already
+    # apply. Without it this read every pack on the drive -- 1,700-odd, depth areas and waterbody into
+    # shapely for each -- and took 28 minutes of the 2026-10-03 rebuild (5_markers.log) for the 353 the app
+    # can load. A pack the app does not offer is never uploaded, so refiling it changes nothing he sees.
+    if not a.only and not a.all_packs:
+        ip = a.index or os.path.join(os.path.dirname(os.path.abspath(a.packs)), 'registry', 'lake_index.json')
+        if not os.path.isfile(ip):
+            sys.exit('no lake_index.json at %s -- pass --index, or --all-packs to refile every pack on purpose' % ip)
+        with open(ip, 'r', encoding='utf-8') as fh:
+            offered = set(json.load(fh))
+        before = len(slugs)
+        slugs = [s for s in slugs if s in offered]
+        print('the app offers %d of the %d packs with a pois.geojson -- lake_index.json. '
+              '--all-packs to refile the rest.' % (len(slugs), before))
     t0 = time.time()
     changed, tot_m, tot_k = [], 0, 0
     for slug in slugs:
@@ -125,7 +144,10 @@ def main():
         with open(path, 'r', encoding='utf-8') as fh:
             gj = json.load(fh)
         feats = gj.get('features') or []
-        if not any((f.get('properties') or {}).get('poi_type') == 'road_shield' for f in feats):
+        # A NUMBERED road shield is the only thing refile() can move, so the water is read only for a pack that
+        # has one. Same answer as testing every road_shield: refile() keeps an unnumbered one before it looks.
+        if not any((f.get('properties') or {}).get('poi_type') == 'road_shield'
+                   and number_of((f.get('properties') or {}).get('name')) is not None for f in feats):
             continue
         polys, tree = water_of(pack)
         moved, kept = refile(feats, polys, tree)

@@ -429,14 +429,18 @@ def main():
                          'pattern. Default 3.')
     ap.add_argument('--only', default=None)
     ap.add_argument('--limit', type=int, default=0, help='audit only the first N packs')
+    ap.add_argument('--all-packs', action='store_true',
+                    help='every pack dir under --packs, ignoring lake_index.json (an archive pass)')
     ap.add_argument('-v', '--verbose', action='store_true')
     a = ap.parse_args()
 
     acres = {}
+    acres_rows = set()        # every slug the index offers, acreage or not
     reg_dir = a.registry or os.path.join(os.path.dirname(a.packs.rstrip('\\/')), 'registry')
     try:
         with open(os.path.join(reg_dir, 'lake_index.json'), 'r', encoding='utf-8') as fh:
             for slug, rec in (json.load(fh) or {}).items():
+                acres_rows.add(slug)
                 if isinstance(rec, dict) and rec.get('area_acres'):
                     acres[slug] = rec['area_acres']
     except Exception:
@@ -444,6 +448,16 @@ def main():
 
     slugs = [d for d in sorted(os.listdir(a.packs))
              if os.path.isdir(os.path.join(a.packs, d)) and (not a.only or d == a.only)]
+    # ONLY WHAT THE APP OFFERS unless asked: the same gate as the builders and the uploader. A pack the app
+    # cannot load is never uploaded, so auditing it says nothing about what he sees -- and the walk over every
+    # pack dir on the drive is 1,700-odd instead of 353.
+    if not a.only and not a.all_packs:
+        if not acres_rows:
+            sys.exit('no lake_index.json under %s -- pass --registry, or --all-packs to audit every pack' % reg_dir)
+        before = len(slugs)
+        slugs = [s for s in slugs if s in acres_rows]
+        print('the app offers %d of the %d pack dirs -- lake_index.json. --all-packs to audit the rest.'
+              % (len(slugs), before))
     if a.limit:
         slugs = slugs[:a.limit]
     print('auditing %d packs' % len(slugs))
