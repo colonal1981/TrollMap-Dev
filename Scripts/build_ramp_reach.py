@@ -414,11 +414,15 @@ def access_points(registry, overrides=None):
     return out
 
 
-def water_polys(extract, registry, slug, bbox, with_depth=False):
+def water_polys(extract, registry, slug, bbox, with_depth=False, cache=None):
     """Every zoom-0 depth-area polygon near this water, off the tiles it sits on.
 
     zoom 0 only: the coarser levels are redraws of the same water, not extra survey, and a
     generalised polygon closes the very gaps -- a canal mouth, a creek neck -- this walk is for.
+
+    `cache`, a dict the caller owns, keeps each tile's polygons between calls, already parsed. A
+    caller that walks every river (close_river_gaps.py) reads the same coastal tiles dozens of times
+    without it. Without one, nothing is kept and this reads exactly as it always has.
     """
     from shapely.geometry import shape, box
     tmap_p = os.path.join(registry, 'tile_lake_map.json')
@@ -426,7 +430,7 @@ def water_polys(extract, registry, slug, bbox, with_depth=False):
     if os.path.isfile(tmap_p):
         tiles = (load_json(tmap_p).get('by_lake') or {}).get(slug) or []
     if not tiles:
-        return [], 0
+        return ([], 0, []) if with_depth else ([], 0)
     import gzip
     win = box(*bbox)
     out, n, deep = [], 0, []
@@ -436,21 +440,30 @@ def water_polys(extract, registry, slug, bbox, with_depth=False):
             fp = os.path.join(extract, 'depth_areas', cid + ext)
             if not os.path.isfile(fp):
                 continue
-            raw = gzip.open(fp, 'rb').read() if ext.endswith('.gz') else open(fp, 'rb').read()
-            for f in (json.loads(raw).get('features') or []):
-                if (f.get('properties') or {}).get('zoom') != 0:
-                    continue
-                n += 1
-                try:
-                    g = shape(f['geometry'])
-                except Exception:
-                    continue
-                if g.is_empty:
-                    continue
-                if not g.is_valid:
-                    g = g.buffer(0)
-                if g.is_empty or 'Polygon' not in g.geom_type:
-                    continue
+            if cache is not None and fp in cache:
+                parsed, n_file = cache[fp]
+            else:
+                raw = gzip.open(fp, 'rb').read() if ext.endswith('.gz') else open(fp, 'rb').read()
+                parsed, n_file = [], 0
+                for f in (json.loads(raw).get('features') or []):
+                    if (f.get('properties') or {}).get('zoom') != 0:
+                        continue
+                    n_file += 1
+                    try:
+                        g = shape(f['geometry'])
+                    except Exception:
+                        continue
+                    if g.is_empty:
+                        continue
+                    if not g.is_valid:
+                        g = g.buffer(0)
+                    if g.is_empty or 'Polygon' not in g.geom_type:
+                        continue
+                    parsed.append((g, f))
+                if cache is not None:
+                    cache[fp] = (parsed, n_file)
+            n += n_file
+            for g, f in parsed:
                 if g.intersects(win):
                     out.append(g)
                     if with_depth:
