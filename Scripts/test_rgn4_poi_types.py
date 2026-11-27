@@ -58,8 +58,8 @@ def test_the_tapped_symbols():
     assert typ('4/3') == ('wreck', True)                   # "Exposed Wreck"
     assert typ('4/12') == ('rock', True)                   # "Exposed Rock"
     assert typ('4/9') == ('marine_farm', True)             # "Marine Farm"
-    assert typ('3/4') == ('obstruction', True)             # grey square, never named
-    assert typ('3/6') == ('obstruction', True)             # "+", never named
+    assert typ('3/4') == ('unnamed_symbol', True)          # grey square, never named: drawn, not counted
+    assert typ('3/6') == ('unnamed_symbol', True)          # "+", the same
     assert typ('3/26') == ('dock', True)                   # purple triangle on a dock
     assert typ('7/0') == ('power_cable', False)            # "OVHD PWR CBL"
     assert typ('3/8') == ('landmark', False)               # tower on land
@@ -96,6 +96,14 @@ def test_a_word_a_named_buoy_already_says_is_dropped():
     out, st = _run(recs)
     assert [p['poi_type'] for _la, _lo, p in out] == ['danger_buoy']
     assert st['label_repeats_named_hazard'] == 1
+
+
+def test_a_word_beside_a_square_is_still_its_own_thing():
+    # the square is not counted, so it must not swallow the stump printed beside it
+    recs = [(33.50000, -80.30000, {'mode': '3/4', 'zoom': 0}),
+            (33.50020, -80.30000, {'mode': '5/1', 'zoom': 0, 'name': 'Stump'})]
+    out, _ = _run(recs)
+    assert sorted(p['poi_type'] for _la, _lo, p in out) == ['flooded_timber', 'unnamed_symbol']
 
 
 def test_a_word_far_from_any_symbol_keeps_its_own_type():

@@ -908,6 +908,9 @@ export const POI_TYPE_KINDS = {
   // `obstruction`, which is why the obstruction layer sat a median 26-49 m from the state's
   // attractor coordinates on eight waters (DEFAULT_WEIGHTS). It is what that measurement found.
   fish_haven:          'attractor',
+  // NOT HERE, ON PURPOSE: `unnamed_symbol`, Garmin's grey squares and "+" that it draws and never
+  // names. Ryan, 2026-11-26: "lets not have the squares count since we are very unsure of what they
+  // actually are". A kind added for them is a weight nobody measured.
   // BOTH, decided by the leg type, which this table does not have. Left as one kind, as before.
   shallow_area:        'shallow',
   // AVOID. Only the two the old name keys actually caught — 'Hazard Area' and the hazard buoy.

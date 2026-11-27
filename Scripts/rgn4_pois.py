@@ -273,10 +273,11 @@ TYPE_BY_MODE = {
     # the depth area underneath. 98-99% sit in charted water (Murray to 138 ft, Watauga's "+" to
     # 180), so they are things on the bottom; the square is the chart sign for a building and the
     # cross for a church or cemetery, i.e. the flooded farms and settlements, but that part is
-    # inference. Filed as obstructions, which the planner already scores as structure; `symbol`
-    # (set below) is how the app draws them the way Garmin does.
-    '3/4':   'obstruction',
-    '3/6':   'obstruction',
+    # inference. So they are drawn and NOT COUNTED: no planner kind keys on `unnamed_symbol`.
+    # Ryan, 2026-11-26: "lets not have the squares count since we are very unsure of what they
+    # actually are". `symbol` (set below) is how the app draws them the way Garmin does.
+    '3/4':   'unnamed_symbol',
+    '3/6':   'unnamed_symbol',
     '3/8':   'landmark',      # a tower drawn on land, no name on a tap (Cape Romain, 15 m). Off the water.
     '3/26':  'dock',          # the purple triangles. Ryan: "they mark docks/piers/ramps they don't
                               # label them but they sit on those things". Measured on Wateree:
@@ -841,8 +842,9 @@ LABEL_WORDS = {'stump', 'stumps', 'tree', 'trees', 'snag', 'snags', 'submerged t
                'pile', 'piles', 'piling', 'pilings', 'subm pile', 'subm piles',
                'obstn', 'obstruction', 'rock', 'rocks', 'underwater rock', 'underwater rocks',
                'fish attractor', 'fish haven', 'hazard', 'wreck'}
-# Symbols that carry no name of their own and can take one from a word.
-SYMBOL_MODES = {'3/4', '3/6', '4/1', '4/3', '4/7', '4/8', '4/10', '4/12', '7/4'}
+# Symbols that carry no name of their own and can take one from a word. Not the square or the "+":
+# nobody knows what they are, they are not counted, and a "Stump" beside one is still a stump.
+SYMBOL_MODES = {'4/1', '4/3', '4/7', '4/8', '4/10', '4/12', '7/4'}
 # The word sits 15-30 m from its symbol at the closest zoom (median 28 m for Stump). At a coarser
 # level positions are quantised 2^zoom times more coarsely, so the reach grows with it -- up to two
 # levels, so a word on a very coarse level cannot reach a symbol a kilometre away.

@@ -626,6 +626,10 @@ const POI_STYLE = {
   power_cable:      { emoji: '⚡', color: '#b0bec5' },
   landmark:         { emoji: '🗼', color: '#90a4ae' },
   road_shield:      { emoji: '🛣️', color: '#b0bec5' },
+  // The grey square and the "+" (modes 3/4 and 3/6). Garmin draws them and names neither, so they
+  // are drawn here as the same shapes (`symbol`, SHAPE_ICON) and are NOT structure: Ryan,
+  // 2026-11-26, "lets not have the squares count since we are very unsure of what they actually are".
+  unnamed_symbol:   { emoji: '▪️', color: '#9e9e9e' },
   // ── decoded geometry, undecoded meaning ──
   // `garmin_3_26` is the purple triangle Ryan counts about a hundred of on Wateree: one symbol
   // class, position confirmed, name still unknown. It gets a real symbol rather than the grey
@@ -687,6 +691,7 @@ const POI_LABEL = {
   dock:             'Dock, pier or ramp',
   power_cable:      'Overhead power cable',
   marine_farm:      'Marine farm',
+  unnamed_symbol:   'Chart symbol Garmin does not name',
 };
 
 function poiLabel(type) {
