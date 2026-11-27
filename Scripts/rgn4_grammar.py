@@ -3,7 +3,7 @@
 
     type(1)  dx(2 s16)  dy(2 s16)          -- always, 5 bytes  (Session A: head is uniform)
     + label_ref(3)   if type & 1           -- Session B: pool offset = ref * 2
-    + 5 bytes        if type & 2
+    + `81 L` + L>>1  if type & 2           -- 5 bytes on every August tile (L = 07); see block2_len()
     + 6 bytes        if type & 4
 
 Mode 5/1's measured lengths fall straight out: 0x01 -> 8, 0x03 -> 13, 0x07 -> 19.
@@ -103,11 +103,34 @@ def walk_4x(b):
 def reclen(t, tail=0, a1=3, a2=5, a4=6):
     return 5 + (a1 if t & 1 else 0) + (a2 if t & 2 else 0) + (a4 if t & 4 else 0) + tail
 
+def block2_len(b, q, a2=5):
+    """Length of the type&2 block that starts at b[q].
+
+    THE BLOCK STATES ITS OWN LENGTH, AND THE 5 WAS ONE CASE OF IT. It is `81 L` and then
+    L >> 1 bytes. Every August tile wrote `81 07 xx xx xx`, so "+ 5 bytes if type & 2" fitted
+    them all and was written down as the grammar. Garmin's 2026-10-23 issue of Marion's basemap
+    tile (B4E0F3) also writes `81 05 xx xx`, 4 bytes, and each one threw the rest of its
+    sub-block out of step: 38 mode-5/1 sub-blocks no longer matched their stated record count,
+    57 points landed outside their own subdivision, and 47 flooded timber came out where the
+    tile holds about 180. Ryan's BlueStacks screen at 33.5221,-80.4608 showed the timber the
+    reader was dropping. Reading L: every 5/1 sub-block on that tile matches its count, none
+    lands outside its box, and August's tile improves too (8 count misses -> 0).
+
+    Anything that is not `81` + an odd L keeps the old 5, so a record this rule does not
+    recognise is framed exactly as before.
+    """
+    if q + 1 < len(b) and b[q] == 0x81 and b[q + 1] & 1:
+        return 2 + (b[q + 1] >> 1)
+    return a2
+
 def walk(b, mode=None, a1=3, a2=5, a4=6):
     tail = MODE_TAIL.get(mode, 0)
     out=[]; p=0; n=len(b)
     while p < n:
-        t=b[p]; ln=reclen(t,tail,a1,a2,a4)
+        t=b[p]
+        ln = 5 + (a1 if t & 1 else 0)
+        if t & 2: ln += block2_len(b, p + ln, a2)
+        ln += (a4 if t & 4 else 0) + tail
         if p+ln > n: break
         ref = (b[p+5] | b[p+6]<<8 | b[p+7]<<16) if (t & 1) else None
         out.append(dict(type=t, off=p, len=ln,

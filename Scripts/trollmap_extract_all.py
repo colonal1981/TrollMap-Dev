@@ -390,10 +390,29 @@ def extract_tile(path, outdir, want, zoom0_only, min_area, gz=False):
                     pf.append({"type": "Feature", "properties": pr,
                                "geometry": {"type": "Point",
                                             "coordinates": [round(lon, 6), round(lat, 6)]}})
-                _write(outdir, "pois", tid, fc(pf, path, "pois"))
+                # THE READER'S OWN FAILURE COUNTS GO IN THE FILE, like contours' and depth areas' qa.
+                # On 2026-11-26 Marion's tile went from 8 sub-blocks that missed their stated record
+                # count to 38, and 321 flooded timber to 47, because Garmin wrote a 4-byte variant of
+                # a block the grammar held at 5 (rgn4_grammar.block2_len). The counts were in `_st`
+                # all along and were thrown away here, so nothing could compare them with the last
+                # extract. check_extract.py reads this block.
+                pdoc = fc(pf, path, "pois")
+                pdoc["properties"]["qa"] = {
+                    "count_mismatch": sum(v for k, v in _st.items() if k.startswith("count_mismatch_")),
+                    "box_violation": _st.get("box_violation", 0),
+                    "out_of_tile": _st.get("out_of_tile", 0),
+                    "framed_count": _st.get("framed_count", 0),
+                    "framed_fit": _st.get("framed_fit", 0),
+                    "framed_uniform": _st.get("framed_uniform", 0),
+                    "framed_unframed": _st.get("framed_unframed", 0),
+                    "by_type": {k[5:]: v for k, v in _st.items() if k.startswith("type_")},
+                }
+                _write(outdir, "pois", tid, pdoc)
                 res["counts"]["pois"] = len(pf)
                 for k in ("box_violation", "out_of_tile", "navaids_gated_out_vocab_residue"):
                     if _st.get(k): res["counts"]["pois_" + k] = _st[k]
+                if pdoc["properties"]["qa"]["count_mismatch"]:
+                    res["counts"]["pois_count_mismatch"] = pdoc["properties"]["qa"]["count_mismatch"]
             else:
                 # C declares RGN4 with length 0 - there are no POIs to find. Still write the
                 # empty collection, or --resume would re-run every C tile forever.
