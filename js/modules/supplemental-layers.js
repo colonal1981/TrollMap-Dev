@@ -563,6 +563,11 @@ const POI_STYLE = {
   // Garmin's charted marker buoy. Distinct symbol from the DNR attractor record
   // it sits above -- one is a float you can see, the other is brush on the bottom.
   fish_attractor_buoy: { emoji: '🎯', color: '#00e5ff' },
+  // The brush on the bottom, as Garmin charts it: "Fish Haven", the fish in a dotted oval (mode
+  // 4/7). Filed as `obstruction` until Ryan tapped one on 2026-11-26.
+  fish_haven:          { emoji: '🎯', color: '#00e5ff' },
+  // Garmin's "Special Purpose Buoy" (mode 2/11), yellow, unnumbered. Was filed as a marker number.
+  special_purpose_buoy: { emoji: '🟡', color: '#FFD600' },
   boat_ramp:       { emoji: '⛵', color: '#4fc3f7' },
   trailer_ramp:    { emoji: '⛵', color: '#4fc3f7' },
   generic_ramp:    { emoji: '⛵', color: '#4fc3f7' },
@@ -605,6 +610,10 @@ const POI_STYLE = {
   fuel_dock:        { emoji: '⛽', color: '#43a047' },
   boat_club:        { emoji: '🏛️', color: '#5c6bc0' },
   recreation:       { emoji: '🏕️', color: '#7cb342' },
+  // Ryan's purple triangles (mode 3/26): "they mark docks/piers/ramps they don't label them but
+  // they sit on those things". Identified 2026-11-26; until then `garmin_3_26`, hidden.
+  dock:             { emoji: '🔺', color: '#ab47bc' },
+  marine_farm:      { emoji: '🦪', color: '#8d6e63' },
   campground:       { emoji: '⛺', color: '#8bc34a' },
   picnic:           { emoji: '🧺', color: '#8bc34a' },
   // ── land, kept but filtered out by default (see _poiOnWaterOnly) ──
@@ -612,6 +621,10 @@ const POI_STYLE = {
   marine_dealer:    { emoji: '🛠️', color: '#78909c' },
   parking:          { emoji: '🅿️', color: '#90a4ae' },
   height_marker:    { emoji: '📏', color: '#b0bec5' },
+  // Garmin: "OVHD PWR CBL" -- the double circles at each end of a line crossing (mode 7/0, which
+  // was filed as `height_marker` until Ryan tapped one on Moultrie).
+  power_cable:      { emoji: '⚡', color: '#b0bec5' },
+  landmark:         { emoji: '🗼', color: '#90a4ae' },
   road_shield:      { emoji: '🛣️', color: '#b0bec5' },
   // ── decoded geometry, undecoded meaning ──
   // `garmin_3_26` is the purple triangle Ryan counts about a hundred of on Wateree: one symbol
@@ -629,6 +642,15 @@ export function channelMarkerColor(p) {
   if (!p || p.poi_type !== 'channel_marker') return null;
   return p.side === 'red' ? '#e53935' : p.side === 'green' ? '#43a047' : null;
 }
+
+// The shapes for `properties.symbol`. Grey with a light edge so they read on the dark chart.
+export const SHAPE_ICON = {
+  square: () => L.divIcon({ className: 'poi-shape', iconSize: [10, 10], iconAnchor: [5, 5],
+    html: '<div style="width:8px;height:8px;background:#9e9e9e;border:1px solid #eceff1"></div>' }),
+  cross: () => L.divIcon({ className: 'poi-shape', iconSize: [14, 14], iconAnchor: [7, 7],
+    html: '<div style="font:700 15px/14px sans-serif;width:14px;text-align:center;color:#eceff1;'
+        + 'text-shadow:0 0 2px #000,0 0 2px #000">+</div>' }),
+};
 
 function poiStyleFor(type) {
   return POI_STYLE[type] || (/^garmin_/.test(type) ? POI_STYLE_UNKNOWN : POI_STYLE.place_name);
@@ -660,6 +682,11 @@ const POI_LABEL = {
   boat_ramp:        'Boat ramp',
   fish_attractor:      'Fish attractor',
   fish_attractor_buoy: 'Fish attractor buoy',
+  fish_haven:          'Fish haven',
+  special_purpose_buoy: 'Special purpose buoy',
+  dock:             'Dock, pier or ramp',
+  power_cable:      'Overhead power cable',
+  marine_farm:      'Marine farm',
 };
 
 function poiLabel(type) {
@@ -1050,7 +1077,12 @@ async function buildPoiLayer(lakeKey) {
       const sub   = type === 'channel_marker'
         ? (p.side ? `${p.side} side (${p.side === 'red' ? 'even' : 'odd'} number)` : '')
         : (p.name || p.card) ? label : (p.mode ? `Garmin mode ${p.mode}` : '');
-      const m = L.circleMarker([coords[1], coords[0]], { radius: 5, color: '#ffffff', weight: 1.5, fillColor: style.color, fillOpacity: 0.9 });
+      // Garmin draws two classes as a plain shape it never names -- the grey square and the "+"
+      // (modes 3/4 and 3/6, `symbol` set by the reader). Drawn the same way here, so the map
+      // reads like the chart Ryan checks it against. Everything else stays a coloured dot.
+      const m = SHAPE_ICON[p.symbol]
+        ? L.marker([coords[1], coords[0]], { icon: SHAPE_ICON[p.symbol](), keyboard: false })
+        : L.circleMarker([coords[1], coords[0]], { radius: 5, color: '#ffffff', weight: 1.5, fillColor: style.color, fillOpacity: 0.9 });
       m.bindTooltip(`${style.emoji} ${esc(name)}`, { sticky: true, direction: 'top', opacity: 0.9 });
       // Garmin business cards carry a service list (20 of 25 marinas list a Ramp) and free
       // text. Both are worth showing — they are the reason a marina is identifiable as a ramp.
@@ -1643,7 +1675,7 @@ export function getSupplementalContext(lat, lon, radiusMi = 0.5) {
     const t = p.ramp_subtype || p.poi_type;
     // Both names accepted: packs already in R2 carry the old `fish_attractor`, and re-uploading
     // every lake is not a prerequisite for the app being correct.
-    if (t === 'fish_attractor' || t === 'fish_attractor_buoy')
+    if (t === 'fish_attractor' || t === 'fish_attractor_buoy' || t === 'fish_haven')
       // COORDINATES, OR IT DID NOT HAPPEN. This pushed `p` — the properties object, which
       // carries mode, zoom, source, poi_type, on_water, tile and name, and no position at
       // all. smart-plan.js:1302 guards every attractor with `if (!a.lat || !a.lon) continue`,

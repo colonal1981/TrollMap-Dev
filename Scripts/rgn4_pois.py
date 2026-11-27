@@ -119,7 +119,65 @@ TYPE_BY_NAME = {
     'boat ramp':       'boat_ramp',
     'ramp':            'boat_ramp',
     'dam':             'dam',
+    # THE WORDS GARMIN WRITES ON THE BOTTOM, 2026-11-26. Every one of these was a `place_name`, so
+    # the planner never saw them -- 108 'Stump', 73 'Pile', 34 'Obstn', 386 'Shallow' on the card.
+    # They only land here when no symbol sits under the word; see name_symbols(), which gives a
+    # word sitting ON a symbol to that symbol instead, so nothing is counted twice.
+    'stump':           'flooded_timber',
+    'stumps':          'flooded_timber',
+    'tree':            'flooded_timber',
+    'trees':           'flooded_timber',
+    'snag':            'flooded_timber',
+    'snags':           'flooded_timber',
+    'submerged timber': 'flooded_timber',
+    'pile':            'pile',
+    'piles':           'pile',
+    'piling':          'pile',
+    'pilings':         'pile',
+    'subm pile':       'pile',
+    'subm piles':      'pile',
+    'obstn':           'obstruction',
+    'obstruction':     'obstruction',
+    'underwater rock': 'rock',
+    'underwater rocks': 'rock',
+    'fish attractor':  'fish_haven',
+    'fish haven':      'fish_haven',
+    'hazard':          'hazard_area',
+    'shallow':         'shallow_area',
+    'shallows':        'shallow_area',
+    'shlw':            'shallow_area',
+    'subm railroad':   'road_bed',
+    'subm culvert':    'road_bed',   # a culvert is the pipe under an old road; the road bed is the structure
 }
+# A label that is a class and a name, "River Bed - Santee River", "Creek Bed - Rocks Creek". Garmin
+# writes the class first. The exact-match table above never saw these, so every named creek, river
+# and road bed on the card was a place name. Typed by the part before " - ", once the words Garmin
+# puts in front of the class ("Submerged", "Major", "Minor") are taken off.
+_CLASS_PREFIX = re.compile(r'^(?:submerged |subm )?(?:major |minor )?')
+# Chart suffixes that qualify a position and are not part of the class: Position Approximate,
+# Existence Doubtful, Position Doubtful, Reported. "Piles PA" is piles.
+_POS_SUFFIX = re.compile(r'\s+(?:pa|ed|pd|rep)$')
+
+
+def name_key(nm):
+    """The lookup form of a label: one line, lower case, unquoted, position qualifier removed."""
+    k = re.sub(r'\s+', ' ', (nm or '').strip().lower().strip('"'))
+    return _POS_SUFFIX.sub('', k)
+
+
+# Only bottom structure may be read off a prefix. "Dam - Old Mill" or "Submerged Dam" must not
+# become `dam`, which the planner treats as a place you cannot go.
+_PREFIX_TYPES = {'road_bed', 'creek_bed', 'river_bed', 'submerged_bridge', 'flooded_timber',
+                 'shallow_area', 'rock', 'wreck', 'pile', 'obstruction'}
+
+
+def type_by_name(k):
+    """TYPE_BY_NAME on the whole key, then on the class before ' - '. None if neither matches."""
+    if k in TYPE_BY_NAME: return TYPE_BY_NAME[k]
+    head = k.split(' - ', 1)[0].strip()
+    for h in (head, _CLASS_PREFIX.sub('', head)):
+        if h != k and TYPE_BY_NAME.get(h) in _PREFIX_TYPES: return TYPE_BY_NAME[h]
+    return None
 # Mode 5/1 ONLY, matched as a whole word anywhere in the name.
 #
 # TYPE_BY_NAME above is an exact match on the whole string, so it catches Garmin's generic
@@ -198,37 +256,66 @@ TYPE_BY_MODE = {
     '13/6':  'picnic',
     '2/9':   'mile_marker',   # names are quoted numbers: "17", "11", "23"
     '2/10':  'mile_marker',
-    '2/11':  'mile_marker',
+    # IDENTIFIED BY TAPPING, 2026-11-26. Ryan tapped each symbol in Garmin's app on Marion, Moultrie
+    # and the Cape Romain coast, and each tap was matched to a point in the November extract, most
+    # within 25 m. What Garmin calls it is in the comment; what the planner does with it is in
+    # POI_TYPE_KINDS (plan-candidates.js), which owns that join.
+    '2/11':  'special_purpose_buoy',  # Garmin: "Special Purpose Buoy" (Marion). Numbered ones are
+                                      # still caught first as numbers; this is the unnamed 1,616.
     '7/4':   'pile',          # bridge piling; Ryan's photo, matched at 3 m
-    '7/0':   'height_marker', # off-water; two header signatures, see RGN4_HEADER_IS_A_COUNT
+    '7/0':   'power_cable',   # Garmin: "OVHD PWR CBL" (Moultrie, the double circles at each end of a
+                              # crossing). Was `height_marker`. Off the water.
     '7/12':  'garmin_7_12',
+    '7/17':  'mile_marker',   # Garmin: "Mile Marker" -- the small open circle on the ICW (33.11013, 0 m).
+                              # Coast only. Was a place name.
     '6/0':   'garmin_6_0',
-    '3/4':   'garmin_3_4',
-    '3/6':   'garmin_3_6',
-    '3/8':   'garmin_3_8',
-    '3/26':  'garmin_3_26',   # the purple triangles; B5, single symbol class, name unknown
-    '4/1':   'obstruction',
-    '4/7':   'obstruction',
-    '4/8':   'obstruction',
-    '4/10':  'obstruction',
-    '4/12':  'obstruction',
+    # THE GREY SQUARES AND THE "+". Garmin draws them and names neither on a tap -- it answers with
+    # the depth area underneath. 98-99% sit in charted water (Murray to 138 ft, Watauga's "+" to
+    # 180), so they are things on the bottom; the square is the chart sign for a building and the
+    # cross for a church or cemetery, i.e. the flooded farms and settlements, but that part is
+    # inference. Filed as obstructions, which the planner already scores as structure; `symbol`
+    # (set below) is how the app draws them the way Garmin does.
+    '3/4':   'obstruction',
+    '3/6':   'obstruction',
+    '3/8':   'landmark',      # a tower drawn on land, no name on a tap (Cape Romain, 15 m). Off the water.
+    '3/26':  'dock',          # the purple triangles. Ryan: "they mark docks/piers/ramps they don't
+                              # label them but they sit on those things". Measured on Wateree:
+                              # median 0.2 m from a dock polygon.
+    '4/1':   'obstruction',   # Garmin: "Obstruction" -- the dotted circle
+    '4/3':   'wreck',         # Garmin: "Exposed Wreck" (Bulls Bay, 7 m and 18 m). Coast only.
+    '4/7':   'fish_haven',    # Garmin: "Fish Haven" -- the fish in the dotted oval. The brush pile
+                              # itself, under the spar buoy that marks it. Was `obstruction`.
+    '4/8':   'obstruction',   # Garmin: "Obstruction that Covers" -- the asterisk
+    '4/9':   'marine_farm',   # Garmin: "Marine Farm" (Cape Romain Harbor, 25 m). Coast only.
+    '4/10':  'rock',          # Garmin: "Dangerous Rock", labelled "Underwater Rocks". Was `obstruction`.
+    '4/12':  'rock',          # Garmin: "Exposed Rock" (Cape Romain, 8 m) -- the dot in a ring. Coast
+                              # only. Was `obstruction`.
     '5/1':   'place_name',    # only reached when the 5/1 record has no name at all
 }
+# How the app should draw a class Garmin draws with a plain shape and never names.
+SYMBOL_BY_MODE = {'3/4': 'square', '3/6': 'cross'}
 # Land classes. Kept in the output -- dropping them would be a decode decision dressed up as a
 # display one -- but marked so the chartpack can filter to "on the water" in one predicate.
-OFF_WATER = {'store', 'marine_dealer', 'height_marker', 'parking', 'road_shield'}
+OFF_WATER = {'store', 'marine_dealer', 'height_marker', 'power_cable', 'landmark', 'parking',
+             'road_shield'}
 
 
 def poi_type(p):
     """Resolve one record's poi_type. Returns (type, on_water)."""
     nm = (p.get('name') or '').strip().lower().strip('"')
+    if p.get('named_by_label'):
+        # A symbol that took its name from the word Garmin printed beside it (name_symbols). The
+        # symbol is what Garmin's own tap reports -- "Obstruction", with "Stump" written next to it
+        # -- so its class comes from its mode, never from the borrowed word.
+        t = TYPE_BY_MODE.get(p.get('mode'), 'place_name')
+        return t, t not in OFF_WATER
     if p.get('navaid'):
         for key, t in NAVAID_CLASS:
             if key in nm: break
         else:
             t = 'nav_buoy'
-    elif nm in TYPE_BY_NAME:
-        t = TYPE_BY_NAME[nm]
+    elif type_by_name(name_key(nm)):
+        t = type_by_name(name_key(nm))
     elif nm.isdigit():
         # A bare number in mode 5/1 is a highway shield -- 97, 521, 601, 321, 77, 378 are all US
         # and SC routes through these tiles. Numeric NAVAID labels are a different thing and are
@@ -258,6 +345,11 @@ u16 = lambda b, p: struct.unpack_from('<H', b, p)[0]
 u32 = lambda b, p: struct.unpack_from('<I', b, p)[0]
 s16 = lambda b, p: int.from_bytes(b[p:p+2], 'little', signed=True)
 OKTEXT = re.compile(r'^[ -~]{2,60}$')
+
+
+def one_line(s):
+    """A label Garmin wrapped onto two lines, joined back onto one."""
+    return re.sub(r'\s*[\r\n]+\s*', ' ', s).strip()
 
 
 def s24(b, p):
@@ -578,6 +670,13 @@ def extract(path):
                 # That is only true if the records are in the output. Dropping them turns every
                 # unsolved symbol class into a re-extraction of the whole card.
                 name = B.label(pool, r['ref']) if r['ref'] is not None else None
+                # TWO-LINE LABELS. Garmin breaks a long label onto two lines with a '\n' in the
+                # string -- "River Bed -\nSantee River", "Santee Cooper\nLake Marion". OKTEXT is
+                # printable ASCII only, so every one of them was thrown away as garbage and the
+                # point came out unnamed: about 12,600 on the card, August tiles included. Joined
+                # onto one line BEFORE the check, which is what the `.replace('\n', ' ')` further
+                # down was always meant to do and never reached.
+                if name: name = one_line(name)
                 if name and not OKTEXT.match(name): name = None
                 # POOL-2 PHRASE, EVERY MODE -- not just 2/7. See phrase_ref().
                 # It is richer than the pool-1 label (`Stono River Light 55, Stake/Pole,
@@ -711,14 +810,87 @@ def extract(path):
         kept += acc
         st['merged_zoom_copies'] += len(pts) - len(acc)
 
+    # Words printed on symbols name those symbols, before anything is typed.
+    kept = name_symbols(kept, st)
     # Assign the field the app renders from. Done once, after dedupe, so the surviving copy of a
     # feature is the one that gets typed and the counts in `st` match the output exactly.
     for _lat, _lon, p in kept:
         t, on_water = poi_type(p)
         p['poi_type'] = t
         p['on_water'] = on_water
+        if p.get('mode') in SYMBOL_BY_MODE: p['symbol'] = SYMBOL_BY_MODE[p['mode']]
         st['type_' + t] += 1
     return T, kept, st, card_off
+
+
+# A WORD PRINTED ON A SYMBOL IS THAT SYMBOL'S NAME, NOT A SECOND THING (2026-11-26).
+#
+# Ryan tapped two dotted circles on Moultrie with "Stump" printed over one of them: Garmin answered
+# "Obstruction" for both. The word and the circle are two records in the file -- the circle in mode
+# 4/1 with no name, the word in mode 5/1 21-24 m north of it -- and Garmin draws the word as the
+# circle's label. Measured at the closest zoom across the card: 33 of 50 'Stump' sit on an
+# obstruction, 40 of 42 'Pile' on a pile or obstruction, 12 of 19 'Obstn', every 'Underwater Rocks'
+# on a Dangerous Rock. Filing the word as its own timber or pile would count each of those twice.
+#
+# So a structure word within reach of an unnamed symbol gives the symbol its name and is dropped.
+# A word whose class a nearby NAMED symbol already says ("Hazard" beside a "Hazard Buoy") is the
+# same thing printed twice and is dropped too. A word with nothing under it stands on its own and
+# is typed by TYPE_BY_NAME -- 17 of the 50 stumps, and the area words (Shallow Area, Danger Area,
+# Building), which have nothing under them because they name an area, not a point.
+LABEL_WORDS = {'stump', 'stumps', 'tree', 'trees', 'snag', 'snags', 'submerged timber',
+               'pile', 'piles', 'piling', 'pilings', 'subm pile', 'subm piles',
+               'obstn', 'obstruction', 'rock', 'rocks', 'underwater rock', 'underwater rocks',
+               'fish attractor', 'fish haven', 'hazard', 'wreck'}
+# Symbols that carry no name of their own and can take one from a word.
+SYMBOL_MODES = {'3/4', '3/6', '4/1', '4/3', '4/7', '4/8', '4/10', '4/12', '7/4'}
+# The word sits 15-30 m from its symbol at the closest zoom (median 28 m for Stump). At a coarser
+# level positions are quantised 2^zoom times more coarsely, so the reach grows with it -- up to two
+# levels, so a word on a very coarse level cannot reach a symbol a kilometre away.
+LABEL_REACH_M = 60.0
+LABEL_REACH_LEVELS = 2
+
+
+def _first_word(k):
+    return k.split()[0] if k else ''
+
+
+def name_symbols(kept, st):
+    """Give each structure word to the symbol it is printed on. Returns the records to keep."""
+    sym = []; named = []
+    for i, (lat, lon, p) in enumerate(kept):
+        if p.get('mode') == '5/1': continue
+        if p.get('mode') in SYMBOL_MODES and not p.get('name'): sym.append(i)
+        elif p.get('name'): named.append(i)
+    if not sym and not named: return kept
+
+    def near(idx, lat, lon, reach):
+        best = None
+        for j in idx:
+            la, lo, _q = kept[j]
+            dy = (lat - la) * 111320.0; dx = (lon - lo) * 111320.0 * 0.83
+            d = (dx * dx + dy * dy) ** 0.5
+            if d <= reach and (best is None or d < best[0]): best = (d, j)
+        return best
+
+    words = sorted((p.get('zoom') or 0, i) for i, (_la, _lo, p) in enumerate(kept)
+                   if p.get('mode') == '5/1' and name_key(p.get('name')) in LABEL_WORDS)
+    drop = set()
+    for z, i in words:
+        lat, lon, p = kept[i]
+        k = name_key(p['name']); reach = LABEL_REACH_M * (2 ** min(z, LABEL_REACH_LEVELS))
+        hit = near(sym, lat, lon, reach)
+        if hit:
+            q = kept[hit[1]][2]
+            if not q.get('name'):
+                q['name'] = p['name']; q['named_by_label'] = True
+            drop.add(i); st['label_named_symbol_' + k] += 1
+            continue
+        hit = near(named, lat, lon, reach)
+        if hit and _first_word(k).rstrip('s') in (kept[hit[1]][2].get('name') or '').lower():
+            drop.add(i); st['label_repeats_named_' + k] += 1
+            continue
+        st['label_alone_' + k] += 1
+    return [t for i, t in enumerate(kept) if i not in drop]
 
 
 def main():

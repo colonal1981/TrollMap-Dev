@@ -904,6 +904,10 @@ export const POI_TYPE_KINDS = {
   // name, three files: this table, fit_trolling_runs.py and supplemental-layers.js.
   obstruction:         'obstruction',
   fish_attractor_buoy: 'attractor',
+  // Garmin's "Fish Haven" (mode 4/7), the pile itself. Until 2026-11-26 it was filed as
+  // `obstruction`, which is why the obstruction layer sat a median 26-49 m from the state's
+  // attractor coordinates on eight waters (DEFAULT_WEIGHTS). It is what that measurement found.
+  fish_haven:          'attractor',
   // BOTH, decided by the leg type, which this table does not have. Left as one kind, as before.
   shallow_area:        'shallow',
   // AVOID. Only the two the old name keys actually caught — 'Hazard Area' and the hazard buoy.

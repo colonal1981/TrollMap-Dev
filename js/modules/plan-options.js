@@ -769,7 +769,8 @@ function featuresOf(net0, L) {
   pointLayer('shallow-area marks', 'shallow-area marks', P(po, kind('shallow_area', 'poi_type')));
   pointLayer('obstructions and piles', 'obstructions and piles',
              P(po, (f) => f && f.properties && ['obstruction', 'pile'].includes(f.properties.poi_type)));
-  pointLayer('fish attractors', 'fish attractors', P(po, kind('fish_attractor_buoy', 'poi_type')));
+  pointLayer('fish attractors', 'fish attractors',
+             P(po, (f) => f && f.properties && ['fish_attractor_buoy', 'fish_haven'].includes(f.properties.poi_type)));
   pointLayer('docks', 'docks', P(dk, () => true));
   // ISLANDS: land inside the lake (not joined to the land at the edge of the grid), in acres.
   {
