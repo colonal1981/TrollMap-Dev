@@ -146,8 +146,12 @@ function checkOne(slug) {
   for (let i = 0; i < n; i++) {
     const a = mid >= 0 ? depthAt(i, 0.5) : null;
     const b = depthAt(i, fracAt[i]);
-    if (a != null) { midSum += a; midN++; }
-    if (b != null) { chanSum += b; chanN++; }
+    // ON THE SAME STATIONS, OR IT IS NOT A COMPARISON. Counting each line on its own charted stations
+    // failed two rivers on the November 2026 charts that were deeper on the channel lane at every
+    // station: the new charts gave the banks depths where the middle has none, and those shallow
+    // bank stations went into the channel lane's average only. Rediversion Canal on the same 7
+    // stations is 26.7 ft against 26.4, and Uwharrie 6.3 against 5.4, never shallower at one.
+    if (a != null && b != null) { midSum += a; midN++; chanSum += b; chanN++; }
   }
   const midMean = midN ? midSum / midN : 0;
   const chanMean = chanN ? chanSum / chanN : 0;

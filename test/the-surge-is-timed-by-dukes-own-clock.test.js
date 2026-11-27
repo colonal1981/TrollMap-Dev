@@ -94,7 +94,7 @@ describe('the real Wateree pack, when it is on this machine', () => {
   const f = new URL('../../chartpack/wateree_river/centreline.geojson', import.meta.url);
   const l = new URL('../../chartpack/wateree_river/launches.json', import.meta.url);
   const have = existsSync(f) && existsSync(l);
-  it(have ? 'the dam is the top of the pack, and Highway 1/601 is 7.5 miles below it'
+  it(have ? 'the dam is the top of the pack, and Highway 1/601 is within 0.2 miles of USGS\'s 7.4 below it'
           : 'skipped: the Wateree pack is not on this machine', () => {
     if (!have) return;
     const g = slimCentreline(JSON.parse(readFileSync(f, 'utf8')));
@@ -104,6 +104,9 @@ describe('the real Wateree pack, when it is on this machine', () => {
     expect(d.off_m <= g.snap_cap_m).toBe(true);
     expect(d.station_m).toBe(0);
     const m = markerStation(g, 'Highway 1/Highway 601 Landing');
-    expect(Math.round((m.station_m - d.station_m) / 1609.344 * 10) / 10).toBe(7.5);
+    // The pack places Duke's marker at Patriots Landing (Hwy 1), 30 m from the USGS Camden gauge, which
+    // USGS puts 7.4 miles below the dam. The September line read 7.5 and the November one 7.3, so this
+    // asks how close, as the-boat-does-five-and-a-half... does for the gauge (2026-11-26).
+    expect(Math.abs((m.station_m - d.station_m) / 1609.344 - 7.4) <= 0.2).toBe(true);
   });
 });
