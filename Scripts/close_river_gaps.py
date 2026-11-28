@@ -6,7 +6,7 @@ Personal use only, not for distribution or resale. NOT FOR NAVIGATION.
     py F:\TrollMapPipeline\TrollMap-Dev\Scripts\close_river_gaps.py --registry F:\TrollMapPipeline\registry `
        --chartpack F:\TrollMapPipeline\chartpack --extract F:\TrollMapPipeline\extract
     ... --go        write the boundaries it lists (a REGISTRY change: Ryan runs it)
-    ... --check     write nothing; exit 1 if any river still has a gap (the pipeline step, after the cut)
+    ... --check     write nothing; exit 1 if any river still has a gap (NOT a pipeline step yet: see below)
 
 WHY. 2026-11-27, after three runs of the November rebuild: check_pack_against_app.mjs flagged the Savannah's
 last 1.2 km as "nothing charted", twice, and it was called "already shipping that way" twice. Ryan: *"Savannah
@@ -33,10 +33,16 @@ WHAT A GAP IS, AND NOTHING IN IT IS A TUNED NUMBER.
     gave rivers what was really lakes' water: 293 acres of Lake James's shoreline to the Catawba, a strip down the
     middle of Norris to the Clinch, slivers round Fontana to the Tuckasegee, Sinclair's coves to the Oconee, and
     the upper Pigeon on the far side of Waterville Lake to the Pigeon below it. Drawn end by end afterwards, the
-    gaps that were real lie along their own banks: of the acres part 4 gave the lower Savannah, 100% are in pieces
-    with under a fifth of their edge on another water's outline; the Cooper's tailrace 99%, the Holston to Fort
-    Loudoun 80%. Lake James's shoreline is the reverse, 83% in pieces with four-fifths or more on the lake's
-    outline, and Sinclair's coves 96%. The upper Pigeon lies along nothing; it never touches the river.
+    lower Savannah lies along its own banks: 100% of its acres are in pieces with under a fifth of their edge on
+    another water's outline. Lake James's shoreline is the reverse, 83% in pieces with four-fifths or more on the
+    lake's outline, and Sinclair's coves 96%. The upper Pigeon lies along nothing; it never touches the river.
+
+NOT FIT TO RUN ON ITS OWN, AND OUT OF THE PIPELINE UNTIL IT IS (2026-11-28). Even with both rules, checked against
+3DHP's names at every big piece it adds: the Holston's 482 acres are the lower FRENCH BROAD (it walked up the other
+river from the confluence at Knoxville), the Cooper's are ponds beside the West Branch, and the Altamaha's include
+81 acres of Rayonier Lake. It cannot tell a river from the next river or from a pond, so it never decides alone:
+run it dry, draw every end it would take, check each piece's name, and --go with --only on the ends that are the
+river's own channel. Part 5 of the November rebuild extended the Savannah only.
 
 WHAT IS ADDED. The channel polygons, the shallower polygons of any depth touching them (the margin the clip would
 otherwise drop), less every offered boundary -- so nothing is drawn twice and every new edge is Garmin's own except
