@@ -464,6 +464,84 @@ def _partition(todo, by_lake, tiles, k):
     return [w for w in W if w['lakes']]
 
 
+class Rivals:
+    """The waters the app serves that sit on a tile but are NOT being built in this run.
+
+    2026-11-28. THE CONTEST IN main() ONLY EVER SAW THE WATERS IN THE RUN. A feature two waters
+    both touch goes to whichever one's water holds more of it -- but `live` is the waters being
+    built, so a partial run (--only-lakes) never heard from the lake next door and the river
+    kept the lake's features. Part 5 of the November rebuild re-cut 40 rivers that way: 29 of the
+    39 whose boundaries had not changed came out with 1,755 more depth areas and 1,555 more
+    contours than the same boundaries gave in the full run (the Cooper +1,259 depth areas at
+    Moultrie, the Diversion Canal +125), every one of them a feature the neighbour also ships.
+    The same water drawn twice -- against Ryan's 2026-08-19 rule. And --jobs is a partial run
+    per worker, so two neighbours split across workers did the same thing in full runs.
+
+    So every served water on the tile now has a say. A rival is never built here and has no
+    mask -- rasterising Marion or a coastal zone just to count would cost what the mask's own
+    docstring warns about -- so its water is its boundary polygon (exterior rings, as the masks
+    read them) and a vertex counts when the polygon contains it. A coastal zone's water is its
+    polygon less every water that owns its own boundary, the same exclusion its mask is built
+    with (owned_inside()), or the zone would out-count the river inside the river.
+    """
+    def __init__(self, registry, meta, served):
+        self.registry, self.meta, self.served = registry, meta, served
+        self.geo = {}
+        try:
+            import numpy, shapely
+            from shapely.geometry import Polygon
+            from shapely.ops import unary_union
+            self._np, self._sh, self._P, self._uu = numpy, shapely, Polygon, unary_union
+        except Exception:
+            self._sh = None
+
+    def enabled(self):
+        return self._sh is not None and bool(self.served)
+
+    def _poly(self, rings):
+        ps = []
+        for r in rings or []:
+            if len(r) >= 4:
+                p = self._P(r)
+                ps.append(p if p.is_valid else p.buffer(0))
+        return self._uu(ps) if ps else None
+
+    def water(self, s):
+        if s not in self.geo:
+            g = self._poly(load_boundary(self.registry, s))
+            if g is not None and s.startswith('coast_'):
+                ex = [self._poly(r) for r in owned_inside(s, self.meta, self.registry)]
+                ex = [e for e in ex if e is not None]
+                if ex:
+                    g = g.difference(self._uu(ex))
+            if g is not None and not g.is_empty:
+                self._sh.prepare(g)
+                self.geo[s] = g
+            else:
+                self.geo[s] = None
+        return self.geo[s]
+
+    def on_tile(self, tile_lakes, todo):
+        if not self.enabled():
+            return []
+        return [s for s in tile_lakes if s not in todo and s in self.served and s in self.meta
+                and self.water(s) is not None]
+
+    def count(self, s, geom):
+        """How many of the feature's vertices this rival's water holds."""
+        g = self.geo.get(s)
+        v = verts(geom)
+        if g is None or not v:
+            return 0
+        a = self._np.asarray(v, dtype=float)
+        if a.ndim != 2 or a.shape[1] < 2:
+            return 0
+        x0, y0, x1, y1 = g.bounds
+        if a[:, 0].max() < x0 or a[:, 0].min() > x1 or a[:, 1].max() < y0 or a[:, 1].min() > y1:
+            return 0
+        return int(self._sh.contains_xy(g, a[:, 0], a[:, 1]).sum())
+
+
 def load_boundary(registry, slug):
     fp = os.path.join(registry, 'boundaries', slug + '.geojson')
     if not os.path.exists(fp):
@@ -792,6 +870,19 @@ def main():
     # {host: [waters nested inside it]}, computed once. The contest below reads it so a host
     # cannot take a feature from a water it is about to give that water back to.
     nested = nested_inside(meta, a.registry)
+    # Every served water, so the contest hears from the neighbours this run is not building (Rivals).
+    _ip = os.path.join(a.registry, 'lake_index.json')
+    _served = set()
+    if os.path.exists(_ip):
+        try:
+            _served = {k for k, v in json.load(open(_ip, encoding='utf-8')).items() if isinstance(v, dict)}
+        except Exception:
+            _served = set()
+    rivals = Rivals(a.registry, meta, _served)
+    if not rivals.enabled():
+        print('   !! the contest cannot hear from waters outside this run (%s): a partial run keeps '
+              'features its neighbours would win' % ('no lake_index.json' if not _served else 'shapely missing'))
+    rival_wins = 0
     masks, waters, acc, remaining = {}, {}, defaultdict(dict), {}
     dropped = defaultdict(int)
     trimmed = defaultdict(int)
@@ -844,6 +935,7 @@ def main():
                 waters[s] = load_water(os.path.join(a.registry, 'boundaries', s + '.geojson'),
                                        os.path.join(a.registry, 'annex', s + '.geojson'))
             live.append(s)
+        tile_rivals = rivals.on_tile(by_tile.get(tid, []), todo) if live else []
 
         # ONE LAYER AT A TIME, and this is not a style choice.
         #
@@ -994,7 +1086,9 @@ def main():
                         claims.setdefault(fi, []).append((s, at, len(keep)))
             if layer in OWNED_LAYERS:
                 for fi, rows in claims.items():
-                    if len(rows) < 2:
+                    # A single claimant used to be the end of it. Now a served water outside this run
+                    # may hold more of the feature (Rivals), so one claimant is still a contest.
+                    if len(rows) < 2 and not tile_rivals:
                         continue
                     best_s, best_n = None, 0
                     for s, _a, _b in rows:
@@ -1005,8 +1099,15 @@ def main():
                                 n += 1
                         if n > best_n:
                             best_s, best_n = s, n
+                    # A rival takes it only by holding MORE, so a tie stays with the water being built.
+                    for r in tile_rivals:
+                        n = rivals.count(r, feats[fi]['geometry'])
+                        if n > best_n:
+                            best_s, best_n = r, n
                     if best_s is None:
                         continue          # nobody's water holds it -- everyone keeps their cut
+                    if best_s in tile_rivals:
+                        rival_wins += 1
                     for s, a0, b0 in rows:
                         if s == best_s:
                             continue
@@ -1120,6 +1221,8 @@ def main():
         # a silent removal is indistinguishable from never having built it.
         print('features handed to the lake whose water holds more of them: %s'
               % dict(stolen))
+    if rival_wins:
+        print('   of which %d went to a served water outside this run (it keeps its own copy)' % rival_wins)
     if cut_stats:
         print('unsurveyed cut to the water: %s' % dict(cut_stats))
         if cut_stats.get('no_shapely'):
