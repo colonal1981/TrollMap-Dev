@@ -122,7 +122,9 @@ export const COLORS_BY_ID = {
     ['Silver Flash Minnow', 8, 'Keitech Swing Impact 4"'], ['blue/black', 7, 'Keitech Easy Shiner 4"'],
     ['Flash', 7, 'Keitech Easy Shiner 4" (color name worn)'], ['Pinfish', 4, 'Z-Man DieZel MinnowZ 4"'],
     ['Bloody Mary Sunday', 5, 'Z-Man DieZel MinnowZ 4"'], ['Green Pumpkin Disco', 6, 'Rapala CrushCity The Mayor 4"'],
-    ['Sight Flash', 5, 'Berkley PowerBait PowerStinger 4.25"'], ['chartreuse/yellow', 1, 'loose'],
+    ['Sight Flash', 5, 'Berkley PowerBait PowerStinger 4.25"'],
+    // Bought 11/27, read off the front of the package: PBBRS4-GC, 4 in / 10 cm, 5 count, "Hook to use: swimbait jighead".
+    ['Glow/Chartreuse', 5, 'Berkley PowerBait Ripple Shad 4"'], ['chartreuse/yellow', 1, 'loose'],
     ['brown/green pumpkin flake', 5, 'loose (segmented)'], ['tan/gold flake', 2, 'loose (ribbed)'], ['brown/gold scale', 1, 'loose'],
     ['pearl/black flake (on a jighead)', 1, 'loose'], ['smoke/purple', null, 'in the swimbait box'], ['pearl', null, 'in the swimbait box'],
     ['perch bars', null, 'in the swimbait box'],

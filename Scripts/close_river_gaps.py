@@ -27,6 +27,16 @@ WHAT A GAP IS, AND NOTHING IN IT IS A TUNED NUMBER.
     Lake, which the app does not offer -- and taking that would turn a river into a lake. Reported, never taken.
   * Charted water that runs on and reaches nothing we offer is a water the app does not have (the New River below
     the South Fork, the lower Chattahoochee). Reported, never taken: adding a water is a decision, not a repair.
+  * The walk starts only from water within a step of the RIVER'S OWN BOUNDARY, and never steps onto a piece that
+    lies along ANOTHER water's outline for at least half its edge. That piece is the other water's own margin or a
+    hole inside it, not a channel between the two. Part 4 of the November rebuild (2026-11-27) had neither rule and
+    gave rivers what was really lakes' water: 293 acres of Lake James's shoreline to the Catawba, a strip down the
+    middle of Norris to the Clinch, slivers round Fontana to the Tuckasegee, Sinclair's coves to the Oconee, and
+    the upper Pigeon on the far side of Waterville Lake to the Pigeon below it. Drawn end by end afterwards, the
+    gaps that were real lie along their own banks: of the acres part 4 gave the lower Savannah, 100% are in pieces
+    with under a fifth of their edge on another water's outline; the Cooper's tailrace 99%, the Holston to Fort
+    Loudoun 80%. Lake James's shoreline is the reverse, 83% in pieces with four-fifths or more on the lake's
+    outline, and Sinclair's coves 96%. The upper Pigeon lies along nothing; it never touches the river.
 
 WHAT IS ADDED. The channel polygons, the shallower polygons of any depth touching them (the margin the clip would
 otherwise drop), less every offered boundary -- so nothing is drawn twice and every new edge is Garmin's own except
@@ -38,7 +48,9 @@ digitising gap; a water within 150 m is "reached" because boundaries are cut on 
 and drawn with a collar. They decide what is connected, never how much is taken -- that is Garmin's chart.
 """
 import argparse, json, math, os, shutil, sys
-from shapely.geometry import shape, Point, box, MultiPolygon, Polygon, mapping
+import numpy as np
+import shapely
+from shapely.geometry import shape, Point, box, MultiPolygon, Polygon, LineString, mapping
 from shapely.ops import unary_union
 from shapely.strtree import STRtree
 from shapely.prepared import prep
@@ -53,7 +65,39 @@ STEP_M = 60.0             # same water across a seam
 REACH_M = 150.0           # another water's boundary is this close: reached
 SEED_M = 1500.0           # the end of a centreline is the river's last station, not its last drop of water
 CHANNEL_FT = 2.0          # follow the channel, not the 0-1 ft outline Garmin draws round every marsh
+HUG_M = 22.0              # "along another water's outline": within the boundary grid's finer step of it
+HUG_SAMPLE_M = 10.0       # the edge is read every 10 m
+HUG_SHARE = 0.5           # at least half its edge along another water: that water's, not a channel
 ACRES = 1.0 / 4046.8564224
+
+
+def _rings(g):
+    for p in getattr(g, 'geoms', [g]):
+        if p.geom_type == 'Polygon':
+            yield p.exterior
+            yield from p.interiors
+
+
+def outline_tree(geoms, win):
+    """Every other offered water's outline inside the window, in short pieces a point can be tested against."""
+    segs = []
+    for g in geoms:
+        for r in _rings(g.intersection(win)):
+            c = list(r.coords)
+            for i in range(0, len(c) - 1, 32):
+                segs.append(LineString(c[i:i + 33]))
+    return STRtree(segs) if segs else None
+
+
+def hug_share(g, tree, k):
+    """The share of a piece's edge that lies within HUG_M of another offered water's outline."""
+    if tree is None: return 0.0
+    pts = []
+    for r in _rings(g):
+        pts.extend(shapely.segmentize(r, HUG_SAMPLE_M / (M * k)).coords[:-1])
+    if not pts: return 0.0
+    hit = tree.query(shapely.points(np.array(pts)), predicate='dwithin', distance=HUG_M / (M * k))
+    return len(set(hit[0].tolist())) / len(pts)
 
 
 class TileCache(dict):
@@ -123,23 +167,42 @@ def main():
             continue
         line = load(cp)['features'][0]['geometry']['coordinates']
         grew = False
+        # UNTIL NOTHING IS LEFT, NOT ONE PASS. The first run of this closed the Oconee's 3 acres at Lake
+        # Sinclair, the rebuild moved the centreline's end onto the new water, and the check after it found
+        # half an acre more that the first pass's seed had not reached. So once a gap is closed the next
+        # pass seeds from the water just added, and an end is done only when a pass adds nothing.
         for which, pt in (('upstream', line[0]), ('downstream', line[-1])):
+          k = math.cos(math.radians(pt[1]))
+          zone = Point(pt[0], pt[1]).buffer(SEED_M / (M * k))
+          for rnd in range(8):
             own = B[slug]
-            k = math.cos(math.radians(pt[1]))
             dl, dt = WINDOW_M / (M * k), WINDOW_M / 110540.0
             bbox = (pt[0] - dl, pt[1] - dt, pt[0] + dl, pt[1] + dt)
             polys, _n, deep = water_polys(a.extract, a.registry, slug, bbox, with_depth=True, cache=cache)
-            if not polys: continue
+            if not polys: break
             win = box(*bbox)
             names = [s for s in B if B[s].intersects(win)]
             preps = [prep(B[s]) for s in names]
             orphan = [i for i, g in enumerate(polys)
                       if not any(p.contains(g.representative_point()) for p in preps)]
             chan = [i for i in orphan if deep[i] >= CHANNEL_FT]
-            if not chan: continue
+            if not chan: break
             tree = STRtree([polys[i] for i in chan])
-            seen = set(int(j) for j in tree.query(Point(pt[0], pt[1]).buffer(SEED_M / (M * k)),
-                                                  predicate='intersects'))
+            step = STEP_M / (M * k)
+            # NOT ANOTHER WATER'S OWN EDGE (module docstring). A piece along another water's outline for half
+            # its edge or more is that water's margin, or a hole inside it, and the walk never steps onto it.
+            others_t = outline_tree([B[s] for s in names if s != slug], win)
+            _hug = {}
+            def lakes(i):
+                if i not in _hug: _hug[i] = hug_share(polys[i], others_t, k) >= HUG_SHARE
+                return _hug[i]
+            # A SEED MUST TOUCH THE RIVER. Near the end is not enough: next to a lake almost any scrap of charted
+            # water "reaches" the lake. After part 4 joined the Oconee to Lake Sinclair, its check took half an
+            # acre of Sinclair's coves 120 m from the Oconee, and repeating from there hopped from cove to cove
+            # through 153 acres of the lake.
+            seen = set(int(j) for j in tree.query(zone, predicate='intersects')
+                       if own.distance(polys[chan[int(j)]]) <= step and not lakes(chan[int(j)]))
+            if not seen: break
             # Depth bands do not overlap, so the running sum IS the area. Once it passes the river's own
             # area the answer is already "another water", so the walk stops there: the Dan's Kerr Lake is
             # 42,000 polygons and was being followed to the last one only to be turned away.
@@ -150,9 +213,8 @@ def main():
                 j = todo.pop()
                 for q in tree.query(polys[chan[j]], predicate='dwithin', distance=STEP_M / (M * k)):
                     q = int(q)
-                    if q not in seen:
+                    if q not in seen and not lakes(chan[q]):
                         seen.add(q); todo.append(q); gap_ac += acres(polys[chan[q]], pt[1])
-            if not seen: continue
             comp = [polys[chan[j]] for j in seen]
             others_n = [s for s in names if s != slug]
             btree = STRtree([B[s] for s in others_n])
@@ -163,7 +225,7 @@ def main():
             reach = sorted(reach)
             row = {'slug': slug, 'end': which, 'end_at': [round(pt[1], 5), round(pt[0], 5)],
                    'charted_acres': round(gap_ac, 1), 'river_acres': round(own_ac, 1),
-                   'reaches': reach}
+                   'reaches': reach, 'pass': rnd + 1}
             if gap_ac > own_ac:
                 row['verdict'] = 'bigger than the river: another water, not taken (walk stopped there)'
             elif not reach:
@@ -174,7 +236,7 @@ def main():
                 add = list(comp)
                 for i in orphan:
                     if deep[i] < CHANNEL_FT and len(ctree.query(polys[i], predicate='dwithin',
-                                                                  distance=STEP_M / (M * k))):
+                                                                  distance=STEP_M / (M * k))) and not lakes(i):
                         add.append(polys[i])
                 others = unary_union([B[s] for s in names if s != slug])
                 piece = unary_union([g.buffer(0) for g in add]).difference(others).difference(own)
@@ -182,7 +244,12 @@ def main():
                 row['added_acres'] = round(acres(new, pt[1]) - own_ac, 1)
                 B[slug] = new
                 grew = True
-            rows.append(row)
+            # A later pass that finds only water it will not take has nothing to say the first did not.
+            if row['verdict'] == 'gap' or rnd == 0:
+                rows.append(row)
+            if row['verdict'] != 'gap' or piece.is_empty:
+                break
+            zone = piece.buffer(SEED_M / (M * k))
         if grew: changed.append(slug)
         print('%2d/%d %s' % (n, len(rivers), slug), flush=True)
 

@@ -386,12 +386,16 @@ def compare(old, new, tol):
                 imp.append('%s %s zoom stacking cleared' % (slug, name))
         od, nd = o.get('depth') or {}, n.get('depth') or {}
         if 'gap_ft' in od and 'gap_ft' in nd:
-            # A gap that GROWS is the regression, and any gap above zero is an issue on its own
-            # -- the tolerance is in percentage points and does not apply to a depth in feet.
-            if nd['gap_ft'] > od['gap_ft']:
+            # A gap that GROWS PAST ZERO is the regression, and any gap above zero is an issue on its
+            # own -- the tolerance is in percentage points and does not apply to a depth in feet.
+            # Below zero the bands still close past the deepest sounding, which is the invariant
+            # holding, so a move from -1.1 to -0.9 is not "behind". Part 4 of the November rebuild
+            # printed five of those as WORSE: each river had grown into deeper water (the Pigeon's
+            # deepest contour went 7 ft -> 62 ft) and its band went down with it, a foot past as before.
+            if nd['gap_ft'] > od['gap_ft'] and nd['gap_ft'] > 0:
                 reg.append('%s depth areas fell further behind the contours: %.0f ft -> %.0f ft'
                            % (slug, od['gap_ft'], nd['gap_ft']))
-            elif nd['gap_ft'] < od['gap_ft']:
+            elif nd['gap_ft'] < od['gap_ft'] and od['gap_ft'] > 0:
                 imp.append('%s depth areas caught up with the contours: %.0f ft -> %.0f ft'
                            % (slug, od['gap_ft'], nd['gap_ft']))
 
